@@ -6,15 +6,15 @@ This is the durable record of what the user understands, what evidence supports 
 
 | Field | Value |
 |---|---|
-| Implementation phase | S00 — Foundation and Contracts |
-| Current user gate | S00 CUDA execution model — L1 |
+| Implementation phase | S01 — Artifact and IR |
+| Current user gate | Gate A — semantic IR/compiler boundaries — L2 |
 | User status | Not started |
 | Highest passed L2 gate | None |
 | Outstanding L2 gates | None |
 | Debt distance | 0 |
-| Allowed autonomous work | Execute S00; prepare S01. Do not reach Gate B while Gate A is unpassed. |
-| Next user action | Explain why a CUDA launch can appear fast to CPU wall timing while GPU work is still running. |
-| Last updated | Planning packet governance update |
+| Allowed autonomous work | Execute S01-01 through Gate A evidence preparation; do not cross Gate A. |
+| Next user action | Explain why a CUDA launch can appear fast to CPU wall timing while GPU work is still running; answer the Gate A packet when presented. |
+| Last updated | S00 transition on 2026-08-15 |
 
 ## Status Vocabulary
 

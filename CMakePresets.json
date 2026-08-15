@@ -1,0 +1,49 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "cpu-dev",
+      "displayName": "CPU developer",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cpu-dev",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "SUPERINFER_ENABLE_CUDA": "OFF",
+        "SUPERINFER_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "cpu-sanitize",
+      "displayName": "CPU sanitizer",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cpu-sanitize",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "SUPERINFER_ENABLE_CUDA": "OFF",
+        "SUPERINFER_ENABLE_SANITIZERS": "ON",
+        "SUPERINFER_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "cuda-sm120a",
+      "displayName": "CUDA sm_120a",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cuda-sm120a",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "SUPERINFER_ENABLE_CUDA": "ON",
+        "SUPERINFER_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "cpu-dev", "configurePreset": "cpu-dev" },
+    { "name": "cpu-sanitize", "configurePreset": "cpu-sanitize" },
+    { "name": "cuda-sm120a", "configurePreset": "cuda-sm120a" }
+  ],
+  "testPresets": [
+    { "name": "cpu-dev", "configurePreset": "cpu-dev", "output": { "outputOnFailure": true } },
+    { "name": "cpu-sanitize", "configurePreset": "cpu-sanitize", "output": { "outputOnFailure": true } },
+    { "name": "cuda-sm120a", "configurePreset": "cuda-sm120a", "output": { "outputOnFailure": true } }
+  ]
+}

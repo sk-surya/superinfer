@@ -1,0 +1,12 @@
+file(GLOB_RECURSE RUNTIME_HEADERS "${SUPERINFER_SOURCE_DIR}/include/superinfer/runtime/*")
+foreach(HEADER IN LISTS RUNTIME_HEADERS)
+  file(READ "${HEADER}" CONTENTS)
+  if(CONTENTS MATCHES "compiler/|ModelFrontend|Qwen|Gemma")
+    message(FATAL_ERROR "runtime boundary contains a forbidden frontend/model dependency: ${HEADER}")
+  endif()
+endforeach()
+
+file(READ "${SUPERINFER_SOURCE_DIR}/CMakeLists.txt" BUILD_CONTENTS)
+if(BUILD_CONTENTS MATCHES "target_link_libraries\\(superinfer_runtime[^)]*superinfer_compiler")
+  message(FATAL_ERROR "runtime target depends directly on semantic compiler implementation")
+endif()

@@ -8,13 +8,13 @@ This is the durable record of what the user understands, what evidence supports 
 |---|---|
 | Implementation phase | S01 — Artifact and IR |
 | Current user gate | Gate A — semantic IR/compiler boundaries — L2 |
-| User status | Not started |
+| User status | Packet presented |
 | Highest passed L2 gate | None |
-| Outstanding L2 gates | None |
-| Debt distance | 0 |
-| Allowed autonomous work | Execute S01-01 through Gate A evidence preparation; do not cross Gate A. |
-| Next user action | Explain why a CUDA launch can appear fast to CPU wall timing while GPU work is still running; answer the Gate A packet when presented. |
-| Last updated | S00 transition on 2026-08-15 |
+| Outstanding L2 gates | Gate A — semantic IR/compiler boundaries |
+| Debt distance | 1 |
+| Allowed autonomous work | Mechanical S01 closeout and reversible S02 preparation only. |
+| Next user action | Read the three packet files, perform the Gate A experiment, and answer its five questions. |
+| Last updated | Gate A reached on 2026-08-15 |
 
 ## Status Vocabulary
 
@@ -27,7 +27,7 @@ This is the durable record of what the user understands, what evidence supports 
 | Gate | Phase | Level | Implementation | User | Packet / evidence |
 |---|---|---|---|---|---|
 | S00 CUDA execution model | S00 | L0/L1 | Not reached | Not started | No packet required |
-| Gate A — semantic IR/compiler boundaries | S01 | L2 | Not reached | Not started | Pending |
+| Gate A — semantic IR/compiler boundaries | S01 | L2 | Reached | Packet presented | [GATE-A.md](understanding-packets/GATE-A.md) |
 | Gate B — one-token transformer execution | S02 | L2 | Not reached | Not started | Pending |
 | Gate C.1 — dense/NVFP4/Tensor Core mechanism | S04 | L2 | Not reached | Not started | Pending |
 | Gate C.2 — attention/KV mechanism | S04 | L2 | Not reached | Not started | Pending |
@@ -91,6 +91,35 @@ Copy this section for each reached L2 gate. Keep the packet itself in `.planning
 **Remaining unknowns:** Specific gaps, whether they block ownership, and the next learning action.
 
 **Agent assessment:** `passed` or `in progress`, with evidence and date.
+
+### Gate A — semantic IR/compiler boundaries
+
+| Field | Value |
+|---|---|
+| Level | L2 |
+| Implementation status | Reached |
+| User status | Packet presented |
+| Reached at | `c5d23d8`, `b30777e`, `8d4ed65`; S01 evidence; 2026-08-15 |
+| Packet | [understanding-packets/GATE-A.md](understanding-packets/GATE-A.md) |
+| Debt distance after update | 1 |
+
+**Mental model:** Pending user explanation; do not self-certify.
+
+**Can explain:** Pending the five packet answers.
+
+**Can predict:** Pending the operation-kind experiment and answer 2.
+
+**Can trace:** Pending the `hidden [2,4]` execution trace in answer 3.
+
+**Can diagnose:** Pending answer 4 and artifact/plan failure diagnosis.
+
+**Hands-on experiment:** Pending the semantic operation-kind change and `ctest` result.
+
+**Five answers:** Not yet provided.
+
+**Remaining unknowns:** Whether the user can distinguish semantic meaning, target lowering, and physical execution boundaries; this is the only blocker to S02 implementation.
+
+**Agent assessment:** `in progress`, packet presented 2026-08-15.
 
 ## Update Discipline
 

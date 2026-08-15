@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: S01
-status: ready
-last_updated: "2026-08-15T03:16:00Z"
+status: gate_a_reached
+last_updated: "2026-08-15T03:35:00Z"
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 25
-  completed_plans: 2
+  completed_plans: 5
 current_phase_name: artifact-ir
 ---
 
@@ -17,7 +17,7 @@ current_phase_name: artifact-ir
 
 **Project:** SuperInfer
 **Milestone:** V0 — Qwen proof, research loop, second-model validation
-**Status:** S01 ready to execute
+**Status:** Gate A reached; awaiting user ownership exercise
 **Current phase:** S01 — Artifact and IR
 **Branch intent:** `planning/ultraplan-v0`
 
@@ -26,7 +26,7 @@ current_phase_name: artifact-ir
 | Phase | Status | Plans | Evidence |
 |---|---|---:|---|
 | S00 | Complete | 2 | [S00-01](phases/S00-foundation/S00-01-SUMMARY.md), [S00-02](phases/S00-foundation/S00-02-SUMMARY.md) |
-| S01 | Ready to execute | 3 | Pending |
+| S01 | Complete — Gate A reached | 3 | [S01-01](phases/S01-artifact-ir/S01-01-SUMMARY.md), [S01-02](phases/S01-artifact-ir/S01-02-SUMMARY.md), [S01-03](phases/S01-artifact-ir/S01-03-SUMMARY.md) |
 | S02 | Planned | 3 | Pending |
 | S03 | Planned | 3 | Pending |
 | S04 | Planned | 3 | Pending |
@@ -37,26 +37,26 @@ current_phase_name: artifact-ir
 
 ## Current Focus
 
-Start S01-01 only. S00 foundation, reference testing, and CPU CI are complete. Do not cross Gate A without presenting its evidence packet. Protect the S00–S06 critical path: correct Qwen3.8 from `.sinf` and the first reproducible RTX 5090 graph.
+S01 is complete. Gate A is reached and its packet is presented. Only mechanical documentation and reversible S02 preparation may continue until the user passes Gate A. Protect the S00–S06 critical path: correct Qwen3.8 from `.sinf` and the first reproducible RTX 5090 graph.
 
 ## Understanding Gate State
 
 | Field | Current value |
 |---|---|
-| Current gate | Gate A — semantic IR/compiler boundaries — L2, not reached |
-| User status | Not started |
+| Current gate | Gate A — semantic IR/compiler boundaries — L2, reached; packet presented |
+| User status | Packet presented |
 | Implementation phase | S01 — Artifact and IR |
 | Highest passed L2 gate | None |
-| Debt distance | 0 |
-| Allowed next autonomous work | Execute S01-01 through the Gate A evidence boundary; prepare but do not cross the packet |
-| Blocked boundary | Gate A at S01 completion until the user ownership exercise is answered |
-| Next required user action | Explain why a CUDA launch can appear fast to CPU wall timing, then complete the Gate A packet when presented |
+| Debt distance | 1 |
+| Allowed next autonomous work | Mechanical S01 closeout and reversible S02 preparation only |
+| Blocked boundary | S02 implementation / Gate B; crossing would create a second unpassed L2 gate |
+| Next required user action | Read the three packet files, perform the semantic operation experiment, and answer all five Gate A questions |
 
 Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md). Durable user ledger: [`.planning/UNDERSTANDING.md`](UNDERSTANDING.md).
 
 ## Next Command
 
-Review `.planning/phases/S01-artifact-ir/S01-CONTEXT.md`, then execute `S01-01-PLAN.md`.
+Read `.planning/understanding-packets/GATE-A.md`, perform its experiment, and answer its five questions before S02 implementation.
 
 ## Known Blockers
 

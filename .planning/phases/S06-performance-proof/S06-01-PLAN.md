@@ -10,8 +10,10 @@ files_modified:
   - benchmarks/{manifests,baselines}/**
   - tests/{unit,integration}/bench/**
   - .github/workflows/benchmark.yml
+  - .planning/{UNDERSTANDING.md,STATE.md}
 autonomous: false
-requirements_addressed: [BEN-001, BEN-002, BEN-003, BEN-004, QUA-002, QUA-003]
+understanding_gate: "D-entry"
+requirements_addressed: [BEN-001, BEN-002, BEN-003, BEN-004, QUA-002, QUA-003, GOV-001, GOV-002, GOV-004]
 must_haves:
   truths:
     - "The runner refuses incomplete, semantically mismatched, incorrect or environmentally invalid runs."
@@ -28,6 +30,10 @@ must_haves:
 ## Objective
 
 Make benchmark execution a schema-validated, correctness-gated measurement process that can reproduce equivalent SuperInfer and baseline workloads.
+
+## Gate D Entry Contract
+
+Read the Gate D packet and current ledger before implementation. Benchmark mechanics may proceed within the recorded window, but this plan must not silently cross a later L2 boundary when Gate D or an older gate would make debt exceed one. Emit the phase-transition `UNDERSTANDING STATUS` with the concrete proposal-width experiment and blocked boundary.
 
 ## Tasks
 

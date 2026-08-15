@@ -27,6 +27,14 @@ Implement declarative experiments, isolated patch execution, immutable workload 
 - Exact DSpark proposal/verifier mechanics only after pinned primary evidence; classification is locked, details are not.
 </decisions>
 
+<understanding>
+## Understanding Gate
+
+**Level:** L1 for individual mutations; conditional L2 for experimental methodology.
+
+The user owns why an experiment is valid: noise, warmup, environment rejection, sampling, uncertainty, practical significance, and workload scope. A material change to those decision rules triggers a methodology mini-gate; routine candidate mutations do not. `S05-03` also creates Gate D's packet on vanilla speculative decoding economics for presentation at the S05→S06 transition.
+</understanding>
+
 <canonical_refs>
 ## Canonical References
 
@@ -35,6 +43,7 @@ Implement declarative experiments, isolated patch execution, immutable workload 
 - `.planning/BENCHMARKS.md` — environment/correctness/run validity.
 - `.planning/REQUIREMENTS.md` — RES-001–005 and DEC-001–004.
 - `.planning/RISKS.md` — R-07, R-08, R-16, R-17.
+- `.planning/UNDERSTANDING-GATES.md` — conditional methodology gate and Gate D handoff.
 </canonical_refs>
 
 <deferred>

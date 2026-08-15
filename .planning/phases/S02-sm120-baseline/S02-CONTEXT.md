@@ -27,6 +27,14 @@ Implement target probing/profile, `sm120` lowering decisions, memory/workspace p
 - CPU oracle versus external trusted reference bridge per operation.
 </decisions>
 
+<understanding>
+## Understanding Gate B
+
+**Level:** L2 — own one-token transformer execution.
+
+At S02 completion, produce and present Gate B's packet. Trace one token through embedding, normalization, attention/KV, residual, FFN/MoE where applicable, LM head, and sampling, with important tensor shapes derived from the Qwen config pinned during S03 preparation. Explain which dimensions change between prefill and decode and where memory/workspace and launches are fixed. The hands-on exercise runs a tiny reference transformer, captures selected intermediates, changes one shape/config value, and predicts the resulting tensor/plan changes. Pinning config evidence is preparation, not Qwen implementation in S02.
+</understanding>
+
 <canonical_refs>
 ## Canonical References
 
@@ -34,6 +42,7 @@ Implement target probing/profile, `sm120` lowering decisions, memory/workspace p
 - `.planning/REQUIREMENTS.md` — BCK-001–006 and KER-001/002/005.
 - `.planning/QUALITY.md` — differential, lifecycle, sanitizer and hot-path tests.
 - `.planning/RISKS.md` — R-02, R-05, R-12, R-17.
+- `.planning/UNDERSTANDING-GATES.md` — Gate B packet and debt protocol.
 </canonical_refs>
 
 <deferred>

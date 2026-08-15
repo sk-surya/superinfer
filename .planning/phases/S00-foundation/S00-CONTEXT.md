@@ -28,12 +28,21 @@ Create the repository skeleton, build/toolchain policy, five extension interface
 - Header/source subdivision consistent with `.planning/ARCHITECTURE.md`.
 </decisions>
 
+<understanding>
+## Understanding Gate
+
+**Level:** L0/L1 — non-blocking.
+
+Agents continue autonomously. Teach only the basic CUDA execution model: host/device memory, asynchronous launches, streams/events, synchronization, kernel launch, and thread/warp/block/SM hierarchy. Ask: “Why can CPU wall time report 0.01 ms while the GPU is still working?” The hands-on exercise compares unsynchronized CPU timing, synchronized CPU timing, and CUDA-event timing for one small kernel.
+</understanding>
+
 <canonical_refs>
 ## Canonical References
 
 - `.planning/ARCHITECTURE.md` — layers, interfaces, dependency rules, source layout.
 - `.planning/REQUIREMENTS.md` — ARCH-001/004/005/008 and QUA-001/003.
 - `.planning/QUALITY.md` — test pyramid and CPU CI lanes.
+- `.planning/UNDERSTANDING-GATES.md` — non-blocking S00 behavior and transition output.
 - `AGENTS.md` — coding, ownership, evidence, and hot-path rules.
 </canonical_refs>
 

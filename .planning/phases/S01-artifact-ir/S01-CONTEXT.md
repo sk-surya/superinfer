@@ -27,6 +27,14 @@ Implement canonical Semantic IR, target-aware Lowered IR, immutable Physical Pla
 - Choose canonical JSON/CBOR/binary encoding for manifests so long as byte reproducibility and schema validation hold.
 </decisions>
 
+<understanding>
+## Understanding Gate A
+
+**Level:** L2 — own semantic IR and compiler boundaries.
+
+At S01 completion, produce and present Gate A's packet. The user must explain and trace `HF -> ModelFrontend -> Semantic IR -> GraphPasses -> Lowered IR -> kernel selection/memory planning -> Physical Plan -> runtime`, say which decisions are legal at each boundary, and diagnose model-specific logic leaking into the executor. The hands-on exercise changes one synthetic semantic operation or pass input, predicts the Lowered IR/Physical Plan diff, and checks the actual dumps. Agents may continue only within the one-L2 debt window in `.planning/UNDERSTANDING-GATES.md`.
+</understanding>
+
 <canonical_refs>
 ## Canonical References
 
@@ -34,6 +42,7 @@ Implement canonical Semantic IR, target-aware Lowered IR, immutable Physical Pla
 - `.planning/REQUIREMENTS.md` — ARCH-001–003/007, FMT-001–006, MOD-002/003.
 - `.planning/QUALITY.md` — parser, golden, property, fuzz, and compatibility tests.
 - `.planning/DECISIONS.md` — D-002, D-005, D-010, D-012.
+- `.planning/UNDERSTANDING-GATES.md` — Gate A packet and debt protocol.
 </canonical_refs>
 
 <deferred>

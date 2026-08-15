@@ -9,8 +9,11 @@ files_modified:
   - backends/sm120/compiler/passes/attention/**
   - tests/{unit,gpu,bench}/kernels/{attention,kv}/**
   - benchmarks/manifests/{micro,component}/attention/**
+  - .planning/understanding-packets/GATE-C2.md
+  - .planning/{UNDERSTANDING.md,STATE.md}
 autonomous: false
-requirements_addressed: [KER-002, KER-003, KER-004, KER-005, KER-006, BCK-002, BCK-004, BEN-002]
+understanding_gate: "C.2"
+requirements_addressed: [KER-002, KER-003, KER-004, KER-005, KER-006, BCK-002, BCK-004, BEN-002, GOV-002, GOV-003, GOV-004]
 must_haves:
   truths:
     - "Prefill and decode attention have separate capability-selected portfolios."
@@ -20,6 +23,7 @@ must_haves:
     - "Prefill/decode attention and KV-update provider families"
     - "KV layout compatibility/invariant suite"
     - "Attention selection and promotion evidence"
+    - "Gate C.2 Understanding Packet with profiler prediction"
 ---
 
 # S04-02 — Attention and KV-Cache Portfolio
@@ -72,3 +76,7 @@ Optimize prefill and iterative decode attention as separate workload families wh
 - Prefill/decode capability and measured envelope tables.
 - KV layout/version/invariant specification.
 - Promoted/rejected candidate records with raw evidence.
+
+## Understanding Gate C.2
+
+Create the L2 packet for attention/KV mechanisms: prefill versus decode traffic, online-softmax/reduction behavior, cache layout, occupancy/resources, and the reason speculative policy stays outside attention. Require a profiler prediction tied to one context/head shape before capture. Update both state files and emit `UNDERSTANDING STATUS` before C.3 if debt would otherwise exceed one.

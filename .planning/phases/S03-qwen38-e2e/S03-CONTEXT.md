@@ -27,6 +27,14 @@ Pin the exact Qwen3.8-27B source/revision; implement its ModelFrontend, config/t
 - Small generic IR/pass/provider additions needed by the pinned source, provided names/semantics are model-independent.
 </decisions>
 
+<understanding>
+## Understanding Gate
+
+**Level:** L1 — non-blocking.
+
+Trace one real weight from its pinned Hugging Face tensor name through validation, quantization/packing, `.sinf` offset and metadata, host/device materialization, plan binding, and the GPU operation that consumes it. Record the shape/layout/dtype changes and the first diagnostic at each boundary. No code-reading-completeness or hard stop is required.
+</understanding>
+
 <canonical_refs>
 ## Canonical References
 
@@ -35,6 +43,7 @@ Pin the exact Qwen3.8-27B source/revision; implement its ModelFrontend, config/t
 - `.planning/REQUIREMENTS.md` — MOD-001–004, DEC-001, KER-006, FMT-003, BCK-004.
 - `.planning/QUALITY.md` — full-model differential and numerical contracts.
 - `.planning/RISKS.md` — R-01, R-03, R-11, R-12, R-15.
+- `.planning/UNDERSTANDING-GATES.md` — S03 L1 behavior.
 </canonical_refs>
 
 <deferred>

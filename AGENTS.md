@@ -9,8 +9,9 @@ Before implementation, read:
 1. `.planning/PROJECT.md`
 2. `.planning/ARCHITECTURE.md`
 3. `.planning/REQUIREMENTS.md`
-4. the active phase `CONTEXT.md` and `PLAN.md`
-5. `.planning/QUALITY.md` and `.planning/BENCHMARKS.md` when changing numerics or performance
+4. `.planning/UNDERSTANDING-GATES.md` and `.planning/UNDERSTANDING.md`
+5. the active phase `CONTEXT.md` and `PLAN.md`
+6. `.planning/QUALITY.md` and `.planning/BENCHMARKS.md` when changing numerics or performance
 
 Decisions in `.planning/DECISIONS.md` are binding until replaced by a recorded decision.
 
@@ -51,6 +52,16 @@ Decisions in `.planning/DECISIONS.md` are binding until replaced by a recorded d
 - Every requirement referenced by a plan must name the evidence produced to prove it.
 - CI must be useful without a GPU; GPU correctness and benchmark lanes are additive and clearly labeled.
 
+## Understanding Governance
+
+- Treat `.planning/UNDERSTANDING-GATES.md` as a binding cross-cutting protocol and `.planning/UNDERSTANDING.md` as durable user state.
+- Before starting a plan and at every phase transition, read the active gate state in `.planning/STATE.md`; update both state files when implementation or user status changes.
+- Work autonomously within the allowed window. Mechanical work, routine tests, refactors inside an approved boundary, and L0/L1 topics do not wait for the user.
+- Never let reached-but-unpassed L2 debt exceed one gate. Do not silently cross the next L2 boundary; preparation and reversible investigation may continue.
+- The plan that reaches an L2 gate owns its evidence-based Understanding Packet and must proactively present it before proceeding beyond the allowed debt window.
+- At every phase transition and L2 event, emit the exact `UNDERSTANDING STATUS` block defined in `.planning/UNDERSTANDING-GATES.md`, including one concrete exercise or question.
+- A user need not understand every task or read every changed file. Gate conceptual ownership only; an L2 pass requires explanation, prediction, one execution trace, and a small predicted change.
+
 ## Ownership and Change Discipline
 
 - Each plan declares the files it owns. Do not modify files owned by another active plan without coordinating the dependency.
@@ -61,4 +72,4 @@ Decisions in `.planning/DECISIONS.md` are binding until replaced by a recorded d
 
 ## Definition of Done
 
-A plan is done only when its required artifacts exist, all named verification commands pass, evidence is stored in the documented location, requirement coverage is updated, and no blocker is hidden behind a TODO.
+A plan is done only when its required artifacts exist, all named verification commands pass, evidence is stored in the documented location, requirement coverage is updated, applicable understanding state/packet obligations are complete, and no blocker is hidden behind a TODO.

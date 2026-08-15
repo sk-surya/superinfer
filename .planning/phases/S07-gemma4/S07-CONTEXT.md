@@ -25,6 +25,14 @@ Pin and implement Gemma 4 26B-A4B through the existing ModelFrontend, GraphPass,
 - Initial quantization/context envelope based on a transparent RTX 5090 memory ledger.
 </decisions>
 
+<understanding>
+## Understanding Gate
+
+**Level:** L1 architecture audit; conditional L2 before a core-boundary change.
+
+Inspect every core modification proposed for Gemma, map it to an approved extension surface or canonical IR schema, and challenge model-specific branching. If implementation would modify the executor or alter a core extension boundary, stop before that change, create an L2 packet, and apply the one-gate debt rule. Otherwise the audit is non-blocking L1 evidence.
+</understanding>
+
 <canonical_refs>
 ## Canonical References
 
@@ -32,6 +40,7 @@ Pin and implement Gemma 4 26B-A4B through the existing ModelFrontend, GraphPass,
 - `.planning/RESEARCH.md` — model support research contract.
 - `.planning/REQUIREMENTS.md` — MOD-005, ARCH-005/006, KER-002, FMT-004, QUA-004.
 - `.planning/RISKS.md` — R-03, R-11, R-12, R-15, R-18.
+- `.planning/UNDERSTANDING-GATES.md` — S07 conditional elevation rule.
 </canonical_refs>
 
 <deferred>

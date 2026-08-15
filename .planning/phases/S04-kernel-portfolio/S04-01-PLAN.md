@@ -9,8 +9,11 @@ files_modified:
   - backends/sm120/compiler/passes/fusion/**
   - tests/{unit,gpu,bench}/kernels/**
   - benchmarks/manifests/micro/**
+  - .planning/understanding-packets/GATE-C1.md
+  - .planning/{UNDERSTANDING.md,STATE.md}
 autonomous: false
-requirements_addressed: [KER-002, KER-003, KER-004, KER-005, BCK-002, BCK-004, BEN-002]
+understanding_gate: "C.1"
+requirements_addressed: [KER-002, KER-003, KER-004, KER-005, BCK-002, BCK-004, BEN-002, GOV-002, GOV-003, GOV-004]
 must_haves:
   truths:
     - "Core dense/support kernels have explicit capability and numerical envelopes."
@@ -20,6 +23,7 @@ must_haves:
     - "Linear/norm/RoPE/embedding/LM-head/sampling provider families"
     - "Differential and boundary matrix plus micro/component results"
     - "Promotion records and selector/fallback rules"
+    - "Gate C.1 Understanding Packet with profiler prediction"
 ---
 
 # S04-01 — Dense and Support Kernel Portfolio
@@ -72,3 +76,7 @@ Build measured `sm120` candidates for dense projections and ubiquitous support o
 - Kernel registry matrix and plan selection explanation.
 - One promotion/rejection record per candidate family.
 - Before/after raw samples for declared Qwen regions.
+
+## Understanding Gate C.1
+
+Create the L2 packet for the dense-mechanism transition: roofline position, memory hierarchy, CUDA-core versus Tensor Core/NVFP4 execution, occupancy/resource limits, and fusion tradeoffs. Require a written Nsight prediction before the profiler capture. Update gate state and emit `UNDERSTANDING STATUS` before C.2 if advancing would exceed one outstanding L2 gate.

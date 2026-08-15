@@ -9,8 +9,11 @@ files_modified:
   - schemas/research/promotion.schema.json
   - tests/{unit,integration}/research/{gates,statistics,promotion}/**
   - artifacts/S05/fixtures/**
+  - .planning/understanding-packets/EXPERIMENTAL-METHODOLOGY.md
+  - .planning/{UNDERSTANDING.md,STATE.md}
 autonomous: true
-requirements_addressed: [RES-002, RES-003, RES-004, KER-004, BEN-001]
+understanding_gate: "experimental-methodology"
+requirements_addressed: [RES-002, RES-003, RES-004, KER-004, BEN-001, GOV-002, GOV-003, GOV-004]
 must_haves:
   truths:
     - "Candidates are ranked only after every correctness/safety/environment gate passes."
@@ -20,6 +23,7 @@ must_haves:
     - "Ordered gate engine and outcome schema"
     - "Validated performance decision/statistics module"
     - "Promotion record/commit workflow and rollback rehearsal"
+    - "Experimental-methodology Understanding Packet"
 ---
 
 # S05-02 — Correctness-First Gates and Promotion
@@ -70,3 +74,7 @@ Implement the fail-closed decision pipeline that determines whether an isolated 
 - Gate matrix with passed/rejected fixtures.
 - Statistical validation report.
 - Full promotion and rollback rehearsal bundle.
+
+## Experimental-Methodology Gate
+
+The initial validity/noise/statistical decision system is a conditional L2 trigger. Create one packet showing why known false wins are rejected, what uncertainty/practical significance mean for a pinned workload, and one prediction on an unseen fixture before its result is revealed. Do not gate later candidate mutations unless they materially change methodology. Update gate state and emit `UNDERSTANDING STATUS` under the canonical debt rule.

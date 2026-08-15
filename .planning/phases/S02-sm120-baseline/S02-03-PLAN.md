@@ -9,8 +9,11 @@ files_modified:
   - tools/runtime_trace/**
   - .github/workflows/gpu-smoke.yml
   - docs/gpu-validation.md
+  - .planning/understanding-packets/GATE-B.md
+  - .planning/{UNDERSTANDING.md,STATE.md}
 autonomous: false
-requirements_addressed: [BCK-001, BCK-003, BCK-004, BCK-005, KER-001, QUA-002]
+understanding_gate: "B"
+requirements_addressed: [BCK-001, BCK-003, BCK-004, BCK-005, KER-001, QUA-002, GOV-002, GOV-003, GOV-004]
 must_haves:
   truths:
     - "Invalid plans cannot allocate or launch."
@@ -20,6 +23,7 @@ must_haves:
     - "GPU smoke lane and target qualification record"
     - "Hot-path allocation/synchronization trace assertion"
     - "Sanitizer/lifecycle evidence bundle"
+    - "Gate B Understanding Packet linked from the ledger"
 ---
 
 # S02-03 — GPU Safety and Hot-Path Qualification
@@ -66,3 +70,7 @@ Turn architectural hot-path and lifecycle rules into blocking executable evidenc
 - RTX 5090 qualification manifest.
 - Passing sanitizer and allocation/synchronization trace bundle.
 - GPU smoke workflow run and documented reproduction command.
+
+## Understanding Gate B
+
+Create the L2 packet from a one-token execution trace, the tiny reference-transformer intermediates, and tensor/plan shapes derived from the Qwen config pinned during S03 preparation. The hands-on change must have a prediction recorded before execution. Mark Gate B reached, update both state files, and proactively emit `UNDERSTANDING STATUS` before work could reach Gate C with Gate B still outstanding.

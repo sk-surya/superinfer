@@ -10,8 +10,11 @@ files_modified:
   - tests/{unit,gpu,bench}/kernels/{ffn,moe}/**
   - benchmarks/manifests/{micro,component}/moe/**
   - artifacts/S04/**
+  - .planning/understanding-packets/GATE-C3.md
+  - .planning/{UNDERSTANDING.md,STATE.md}
 autonomous: false
-requirements_addressed: [KER-002, KER-003, KER-004, KER-005, BCK-002, BCK-004, BEN-002]
+understanding_gate: "C.3"
+requirements_addressed: [KER-002, KER-003, KER-004, KER-005, BCK-002, BCK-004, BEN-002, GOV-002, GOV-003, GOV-004]
 must_haves:
   truths:
     - "FFN/MoE routing, expert compute and combine are correct across sparse low-token decode cases."
@@ -21,6 +24,7 @@ must_haves:
     - "Gated FFN and MoE provider families"
     - "Complete Qwen kernel operation matrix"
     - "S04 full-model correctness/performance qualification bundle"
+    - "Gate C.3 Understanding Packet with profiler prediction"
 ---
 
 # S04-03 — FFN/MoE Portfolio and Full-Model Qualification
@@ -72,3 +76,7 @@ Complete the Qwen-critical kernel portfolio, focus on sparse/imbalanced decode b
 - Final S04 provider/tuning catalog IDs and optimized artifact hash.
 - Complete promotion/operation matrix.
 - Full-model correctness, trace, memory and diagnostic performance bundle.
+
+## Understanding Gate C.3
+
+Create the L2 packet for fusion and persistent/megakernel tradeoffs, including intermediate traffic removed, resource/occupancy costs, workload applicability, fallbacks, and a profiler prediction made before capture. Mark C.3 reached, update the ledger/state, and proactively emit `UNDERSTANDING STATUS`; do not enter another L2 methodology boundary if that would create debt distance `2`.

@@ -27,6 +27,14 @@ Build controlled benchmark manifests/runner, baseline adapters, environment vali
 - Statistical presentation consistent with `.planning/BENCHMARKS.md`.
 </decisions>
 
+<understanding>
+## Understanding Gate D
+
+**Level:** L2 at S06 entry; packet produced by `S05-03`.
+
+Before crossing the allowed debt window, the user must explain vanilla speculative decoding's draft/verify/accept/rollback flow, predict acceptance and cost behavior, trace tokens and KV state, and explain why larger proposal width `k` can hurt and why acceptance depends on workload. The hands-on exercise changes `k` in a bounded reference experiment, predicts acceptance-adjusted latency, then compares the result. Benchmark/report mechanics remain autonomous within the recorded window.
+</understanding>
+
 <canonical_refs>
 ## Canonical References
 
@@ -34,6 +42,7 @@ Build controlled benchmark manifests/runner, baseline adapters, environment vali
 - `.planning/PROJECT.md` — first public proof success criterion.
 - `.planning/REQUIREMENTS.md` — BEN-001–005 and QUA-002/003/005.
 - `.planning/RISKS.md` — R-07, R-08, R-09, R-15, R-17.
+- `.planning/UNDERSTANDING-GATES.md` — Gate D entry enforcement and transition output.
 </canonical_refs>
 
 <deferred>

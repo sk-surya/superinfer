@@ -10,8 +10,11 @@ files_modified:
   - artifacts/S07/**
   - docs/models/gemma4-26b-a4b.md
   - docs/architecture/extensibility-proof.md
+  - .planning/understanding-packets/S07-ARCHITECTURE-AUDIT.md
+  - .planning/{UNDERSTANDING.md,STATE.md}
 autonomous: false
-requirements_addressed: [MOD-005, ARCH-005, ARCH-006, QUA-004, REL-002]
+understanding_gate: "conditional-architecture-audit"
+requirements_addressed: [MOD-005, ARCH-005, ARCH-006, QUA-004, REL-002, GOV-002, GOV-004]
 must_haves:
   truths:
     - "Gemma generates reference-aligned outputs from `.sinf` on RTX 5090."
@@ -68,3 +71,7 @@ Prove both user-visible Gemma correctness and the architectural claim that a sec
 - Gemma acceptance and cross-model compatibility bundles.
 - Extensibility proof with executor unchanged result.
 - Explicit statement of supported Gemma scope and limitations.
+
+## Conditional Architecture Gate
+
+Present the five-surface diff as an L1 audit. If any proposed Gemma change would modify the executor or alter a core extension boundary, stop before implementation, elevate the audit to L2, create the canonical packet, update state, and emit `UNDERSTANDING STATUS`. If no trigger occurs, record the unchanged-executor evidence without adding understanding debt.

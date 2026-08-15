@@ -81,6 +81,13 @@ Requirements are evidence-oriented. A requirement is complete only when its name
 - **REL-001** — V0 ships install/build instructions, converter/runtime CLIs, sample manifests, changelog, security/reporting policy, and known limitations. Evidence: clean-machine release rehearsal.
 - **REL-002** — Unsupported hardware, model configs, kernels, and artifacts fail safely with diagnostic context. Evidence: negative integration suite.
 
+## Understanding Governance
+
+- **GOV-001** — Phase transitions record implementation phase, current user gate/status, debt distance, allowed autonomous work, blocked boundary, and next user action in both state and user-facing output. Evidence: transition commit and `UNDERSTANDING STATUS` transcript.
+- **GOV-002** — Reached-but-unpassed L2 debt never exceeds one gate; agents stop before a second L2 boundary while mechanical, planning, and reversible preparation may continue. Evidence: `.planning/STATE.md`/ledger history and phase-transition audit.
+- **GOV-003** — Every reached L2 gate has an evidence-based Understanding Packet with the canonical ten contents, exactly three reading files, one hands-on experiment, and exactly five user questions. Evidence: packet schema review and linked phase evidence.
+- **GOV-004** — An L2 gate passes only with recorded evidence that the user can explain, predict, trace, diagnose, and complete a small predicted change; L0/L1 work remains non-blocking unless explicitly elevated. Evidence: `.planning/UNDERSTANDING.md` gate record and agent assessment.
+
 ## Coverage Policy
 
-Every phase in `ROADMAP.md` lists the requirement IDs it owns. Cross-cutting requirements may appear in multiple phases; the last owning phase must supply the final milestone evidence. No requirement may be marked complete based only on an implementation commit.
+Every phase in `ROADMAP.md` lists the requirement IDs it owns. Cross-cutting requirements may appear in multiple phases; the last owning phase must supply the final milestone evidence. No requirement—including understanding governance—may be marked complete based only on an implementation commit.

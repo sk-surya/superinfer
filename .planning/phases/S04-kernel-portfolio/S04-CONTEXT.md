@@ -27,6 +27,18 @@ Implement and tune a capability-described portfolio for Qwen-critical dense, att
 - Which lower-value candidate variants are deferred after operation-matrix coverage and profiling.
 </decisions>
 
+<understanding>
+## Understanding Gate C
+
+**Level:** L2, repeated by major mechanism.
+
+- **C.1:** GEMV/GEMM to NVFP4/Tensor Core mechanisms and dense-support kernels (`S04-01`).
+- **C.2:** prefill/decode attention and KV traffic (`S04-02`).
+- **C.3:** fusion, grouped/MoE work, and persistent/megakernel tradeoffs (`S04-03`).
+
+Each mini-gate produces a packet and counts as an L2 boundary. The user should apply a roofline model, distinguish memory hierarchy and Tensor Core/CUDA-core work, reason about occupancy/resources and fusion costs, predict an Nsight result before profiling, and diagnose a likely bottleneck. Agents continue between mechanisms only while debt remains at most one.
+</understanding>
+
 <canonical_refs>
 ## Canonical References
 
@@ -35,6 +47,7 @@ Implement and tune a capability-described portfolio for Qwen-critical dense, att
 - `.planning/BENCHMARKS.md` — micro/component/E2E measurement rules.
 - `.planning/REQUIREMENTS.md` — KER-002–006, BCK-002/004, BEN-002.
 - `.planning/RISKS.md` — R-06, R-08, R-12, R-17.
+- `.planning/UNDERSTANDING-GATES.md` — Gate C mini-gates and debt protocol.
 </canonical_refs>
 
 <deferred>

@@ -11,8 +11,11 @@ files_modified:
   - python/superinfer/{convert,inspect}/**
   - tests/{unit,property,golden,fuzz,integration}/artifact/**
   - docs/sinf-format.md
+  - .planning/understanding-packets/GATE-A.md
+  - .planning/{UNDERSTANDING.md,STATE.md}
 autonomous: true
-requirements_addressed: [FMT-001, FMT-002, FMT-003, FMT-004, FMT-005, FMT-006]
+understanding_gate: "A"
+requirements_addressed: [FMT-001, FMT-002, FMT-003, FMT-004, FMT-005, FMT-006, GOV-002, GOV-003, GOV-004]
 must_haves:
   truths:
     - "A `.sinf` is deterministic, inspectable, integrity-checked, and validated before allocation."
@@ -22,6 +25,7 @@ must_haves:
     - "Published V0 `.sinf` binary/schema specification"
     - "Atomic writer, defensive reader, manifest and section integrity implementation"
     - "CPU converter shell plus inspect/validate CLI and fuzz corpus"
+    - "Gate A Understanding Packet linked from the ledger"
 ---
 
 # S01-03 — `.sinf` Artifact, StoragePolicy, and Tooling
@@ -80,3 +84,7 @@ Turn a verified synthetic Physical Plan and tensor inventory into a deterministi
 - `.sinf` V0 format document and schema compatibility table.
 - Golden artifact hashes and deterministic rebuild transcript.
 - Negative/fuzz corpus summary and stable CLI JSON examples.
+
+## Understanding Gate A
+
+After implementation evidence is complete, create the canonical L2 packet for the semantic/compiler boundary. Use the synthetic IR/pass/plan dumps for the predicted-change experiment and architecture-boundary questions. Mark Gate A reached, update `.planning/UNDERSTANDING.md` and `.planning/STATE.md`, and proactively emit `UNDERSTANDING STATUS`. This plan remains autonomous; advancement stops only when the next L2 boundary would make debt exceed one.

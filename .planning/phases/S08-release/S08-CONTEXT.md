@@ -27,6 +27,14 @@ Complete negative/security/compatibility hardening, stable GPU CI tiers, packagi
 - Version numbering consistent with a pre-1.0 artifact/ABI policy.
 </decisions>
 
+<understanding>
+## Understanding Gate
+
+**Level:** L0/L1 — generally non-blocking.
+
+Packaging, compatibility plumbing, and release mechanics continue autonomously. The release audit verifies that all reached gate packets, ledger records, phase-transition status, and remaining unknowns are coherent and included or referenced in milestone evidence; it does not require the user to master every productization detail.
+</understanding>
+
 <canonical_refs>
 ## Canonical References
 
@@ -35,6 +43,7 @@ Complete negative/security/compatibility hardening, stable GPU CI tiers, packagi
 - `.planning/REQUIREMENTS.md` — QUA-001–005, REL-001/002, FMT-002, BCK-003.
 - `.planning/RISKS.md` — complete register, especially Critical/High release risks.
 - `AGENTS.md` — project definition of done and change discipline.
+- `.planning/UNDERSTANDING-GATES.md` — release-time governance audit.
 </canonical_refs>
 
 <deferred>

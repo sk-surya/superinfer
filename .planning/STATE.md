@@ -24,6 +24,21 @@
 
 Start S00 only. Do not begin model- or kernel-specific work until repository boundaries, interfaces, reference testing, and CI exist. Protect the S00–S06 critical path: correct Qwen3.8 from `.sinf` and the first reproducible RTX 5090 graph.
 
+## Understanding Gate State
+
+| Field | Current value |
+|---|---|
+| Current gate | S00 CUDA execution model — L1, non-blocking |
+| User status | Not started |
+| Implementation phase | S00 — Foundation and Contracts |
+| Highest passed L2 gate | None |
+| Debt distance | 0 |
+| Allowed next autonomous work | Execute S00 and prepare S01 |
+| Blocked boundary | None now; Gate B becomes blocked if Gate A remains unpassed |
+| Next required user action | Explain the asynchronous launch/timing issue; then run the three-way timing experiment in `.planning/UNDERSTANDING.md` |
+
+Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md). Durable user ledger: [`.planning/UNDERSTANDING.md`](UNDERSTANDING.md).
+
 ## Next Command
 
 Review `.planning/phases/S00-foundation/S00-CONTEXT.md`, then execute `S00-01-PLAN.md` followed by `S00-02-PLAN.md`.

@@ -12,8 +12,11 @@ files_modified:
   - python/superinfer/research/strategies/**
   - tests/{unit,property,integration,gpu}/decode/**
   - experiments/dspark/**
+  - .planning/understanding-packets/GATE-D.md
+  - .planning/{UNDERSTANDING.md,STATE.md}
 autonomous: false
-requirements_addressed: [DEC-001, DEC-002, DEC-003, DEC-004, RES-001, RES-002]
+understanding_gate: "D-packet"
+requirements_addressed: [DEC-001, DEC-002, DEC-003, DEC-004, RES-001, RES-002, GOV-002, GOV-003, GOV-004]
 must_haves:
   truths:
     - "Decode strategies declare all graphs/state/workspace before runtime execution."
@@ -23,6 +26,7 @@ must_haves:
     - "DecodeStrategy conformance suite and speculative state machine"
     - "Pinned DSpark research note/manifest with unknowns made explicit"
     - "Correctness-gated DSpark experiment(s), whether positive or negative"
+    - "Gate D Understanding Packet for S06 entry"
 ---
 
 # S05-03 — Speculative Decode Framework and DSpark Track
@@ -78,3 +82,7 @@ Make decoding policy genuinely composable, establish a correct speculative state
 - DecodeStrategy/speculative state specification and conformance results.
 - DSpark source/provenance mapping and experiment bundle.
 - Architecture diff/test proving DSpark remains out of attention interfaces.
+
+## Gate D Handoff
+
+Create Gate D's L2 packet from the vanilla speculative state machine and bounded experiment—not from DSpark novelty alone. It must cover draft/verify/accept/rollback economics, proposal width `k`, workload-dependent acceptance, KV correctness, and a predicted `k` experiment. At the S05→S06 transition, mark Gate D reached, update both state files, and present the packet with `UNDERSTANDING STATUS`; S06 owns enforcement of the debt boundary.

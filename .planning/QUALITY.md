@@ -84,6 +84,17 @@ Each operation documents input/output dtype, accumulation dtype, deterministic g
 - every requirement has at least one named automated or manual evidence producer;
 - line coverage is reported for trend/debugging but never substitutes for the above contract coverage.
 
+## Understanding-Gate Evidence
+
+Understanding governance is a project quality control, not optional mentoring:
+
+- `.planning/STATE.md` and `.planning/UNDERSTANDING.md` agree at every phase transition;
+- reached-but-unpassed L2 debt is `0` or `1`, never greater;
+- every reached L2 gate has a concise packet containing all fields required by `.planning/UNDERSTANDING-GATES.md`, exactly three reading files, one hands-on experiment, and exactly five user questions;
+- L2 passage is supported by the user's explanation, prediction, execution trace, diagnostic reasoning, and experiment result;
+- gate packets reference retained implementation evidence; code-reading completeness and agent assertions are not evidence of user ownership;
+- L0/L1 and mechanical work remain non-blocking unless a documented conditional L2 trigger occurs.
+
 ## Review Checklist
 
 Reviewers verify:
@@ -96,7 +107,8 @@ Reviewers verify:
 - schema/ABI/artifact compatibility impact is declared;
 - benchmark methodology is unchanged or versioned;
 - docs/evidence are sufficient to reproduce the conclusion.
+- understanding status is current, debt remains within the allowed window, and any newly reached L2 packet has been presented proactively.
 
 ## Release Gate
 
-V0 requires all blocking CI green, zero unresolved correctness/security-critical findings, supported `.sinf` compatibility tests, Qwen and Gemma clean-machine demos, a verified benchmark evidence bundle, install/build documentation, license inventory, known limitations, and rollback/recovery guidance.
+V0 requires all blocking CI green, zero unresolved correctness/security-critical findings, supported `.sinf` compatibility tests, Qwen and Gemma clean-machine demos, a verified benchmark evidence bundle, coherent understanding-gate evidence, install/build documentation, license inventory, known limitations, and rollback/recovery guidance.

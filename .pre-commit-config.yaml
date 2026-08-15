@@ -1,0 +1,14 @@
+repos:
+  - repo: local
+    hooks:
+      - id: superinfer-python-check
+        name: SuperInfer Python syntax/import check
+        entry: python3 tools/check_python.py
+        language: system
+        pass_filenames: false
+      - id: superinfer-python-tests
+        name: SuperInfer Python tests
+        entry: env PYTHONPATH=python python3 -m unittest discover -s tests -p 'test_*.py'
+        language: system
+        pass_filenames: false
+

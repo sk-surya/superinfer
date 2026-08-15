@@ -1,0 +1,25 @@
+name: CPU fast
+
+on:
+  pull_request:
+  push:
+    branches: [main, "work/**"]
+
+jobs:
+  fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python syntax and import boundary
+        run: python tools/check_python.py
+      - name: Python tests
+        run: PYTHONPATH=python python -m unittest discover -s tests -p 'test_*.py'
+      - name: C++ configure and build
+        run: cmake --preset cpu-dev && cmake --build --preset cpu-dev
+      - name: C++ architecture and unit tests
+        run: ctest --preset cpu-dev
+

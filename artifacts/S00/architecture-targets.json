@@ -1,0 +1,9 @@
+{
+  "superinfer_base": [],
+  "superinfer_ir": ["superinfer_base"],
+  "superinfer_compiler": ["superinfer_ir"],
+  "superinfer_artifact": ["superinfer_base", "superinfer_ir"],
+  "superinfer_kernels": ["superinfer_base", "superinfer_ir"],
+  "superinfer_decode": ["superinfer_base", "superinfer_ir", "superinfer_kernels"],
+  "superinfer_runtime": ["superinfer_base", "superinfer_artifact", "superinfer_kernels", "superinfer_decode"]
+}

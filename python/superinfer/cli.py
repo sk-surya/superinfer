@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import sys
 import json
+import sys
 from enum import IntEnum
 from pathlib import Path
 from typing import Sequence

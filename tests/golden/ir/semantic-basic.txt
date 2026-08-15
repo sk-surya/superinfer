@@ -1,0 +1,6 @@
+semantic-ir:v1
+tensor name=hidden role=activation dtype=f32 quant=none shape=[2,4]
+tensor name=norm_weight role=weight dtype=f32 quant=none shape=[4]
+tensor name=normalized role=activation dtype=f32 quant=none shape=[2,4]
+operation name=norm kind=rms_norm inputs=[hidden,norm_weight] outputs=[normalized]
+entry name=decode inputs=[hidden] outputs=[normalized]

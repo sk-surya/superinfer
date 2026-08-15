@@ -45,6 +45,9 @@ class Status final {
   static Status unsupported(std::string message) {
     return {StatusCode::unsupported, std::move(message)};
   }
+  static Status resource_exhausted(std::string message) {
+    return {StatusCode::resource_exhausted, std::move(message)};
+  }
   static Status internal(std::string message) { return {StatusCode::internal, std::move(message)}; }
 
   [[nodiscard]] bool ok() const noexcept { return code_ == StatusCode::ok; }

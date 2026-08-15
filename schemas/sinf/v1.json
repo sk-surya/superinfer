@@ -1,0 +1,15 @@
+{
+  "format": "sinf",
+  "major": 1,
+  "minor": 0,
+  "endianness": "little",
+  "alignment": 8,
+  "checksum": "fnv1a-64",
+  "sections": [
+    {"kind": 1, "name": "manifest", "required": true, "encoding": "canonical-utf8-json"},
+    {"kind": 2, "name": "tensor_table", "required": true, "encoding": "canonical-utf8-json"},
+    {"kind": 3, "name": "physical_plan", "required": true, "encoding": "canonical-text"},
+    {"kind": 4, "name": "payload", "required": true, "encoding": "opaque-bytes"},
+    {"kind": 5, "name": "integrity", "required": true, "encoding": "little-endian-records"}
+  ]
+}

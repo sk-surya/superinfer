@@ -83,3 +83,15 @@
 **Decision:** Buffers, streams, events, plans, and artifact mappings each have one visible owner; views are non-owning and named as such.
 **Why:** GPU lifecycle ambiguity creates correctness and synchronization defects that are difficult to reproduce.
 **Consequence:** APIs document lifetime and thread-safety contracts and are tested with sanitizers.
+
+## D-013 — Fixed Sectioned `.sinf` Encoding for V0
+
+**Status:** Accepted
+**Decision:** V0 uses a fixed little-endian section directory with canonical JSON/text metadata,
+8-byte alignment, FNV-1a per-section checksums, and an explicit integrity table. C++ and Python
+implementations share the byte layout without a generated schema dependency.
+**Why:** The format must be deterministic, inspectable, CPU-only, fuzzable, and easy to validate
+before any storage/device materialization. A small explicit encoding keeps those properties visible
+while the semantic and physical schemas are still evolving.
+**Consequence:** Major/minor compatibility rules and bounds are part of the checked-in format
+document; FNV-1a is integrity protection, not a cryptographic authenticity claim.

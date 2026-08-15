@@ -1,0 +1,17 @@
+"""Synthetic normalized-input converter shell; model frontends remain separate contracts."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from superinfer.artifact import write_artifact
+
+
+def convert_file(source: Path, output: Path) -> None:
+    """Convert normalized JSON frontend output into a deterministic `.sinf` artifact."""
+
+    normalized: dict[str, Any] = json.loads(source.read_text(encoding="utf-8"))
+    write_artifact(normalized, output)
+

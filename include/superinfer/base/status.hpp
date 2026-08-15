@@ -48,6 +48,12 @@ class Status final {
   static Status resource_exhausted(std::string message) {
     return {StatusCode::resource_exhausted, std::move(message)};
   }
+  static Status unavailable(std::string message) {
+    return {StatusCode::unavailable, std::move(message)};
+  }
+  static Status data_loss(std::string message) {
+    return {StatusCode::data_loss, std::move(message)};
+  }
   static Status internal(std::string message) { return {StatusCode::internal, std::move(message)}; }
 
   [[nodiscard]] bool ok() const noexcept { return code_ == StatusCode::ok; }

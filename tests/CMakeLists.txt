@@ -33,8 +33,14 @@ add_executable(superinfer_pass_manager unit/compiler/pass_manager_test.cpp)
 target_link_libraries(superinfer_pass_manager PRIVATE superinfer_compiler)
 add_test(NAME superinfer.compiler.pass_manager COMMAND superinfer_pass_manager)
 
+add_executable(superinfer_artifact_test integration/artifact/artifact_test.cpp)
+target_link_libraries(superinfer_artifact_test PRIVATE superinfer_artifact)
+add_test(NAME superinfer.artifact.binary COMMAND superinfer_artifact_test)
+
 if(SUPERINFER_ENABLE_SANITIZERS)
   set_tests_properties(
-    superinfer.base.contracts superinfer.architecture
+    superinfer.base.contracts superinfer.architecture superinfer.ir.semantic
+    superinfer.ir.semantic.properties superinfer.ir.lowered_plan
+    superinfer.compiler.pass_manager superinfer.artifact.binary
     PROPERTIES ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
 endif()

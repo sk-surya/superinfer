@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string_view>
+#include <cstdint>
 #include <type_traits>
 
 #include <superinfer/base/status.hpp>
@@ -15,6 +16,11 @@ struct PassDescriptor final {
   std::string_view name;
   std::string_view effects;
   std::string_view invalidated_analyses;
+  std::uint32_t version{1};
+  std::string_view configuration{};
+  std::string_view preconditions{};
+  std::string_view postconditions{};
+  bool deterministic{true};
 };
 
 /** Applies one verified, deterministic graph transformation during compilation. */
@@ -29,4 +35,3 @@ template <typename T>
 inline constexpr bool is_graph_pass = std::is_base_of_v<GraphPass, T>;
 
 }  // namespace superinfer::compiler
-

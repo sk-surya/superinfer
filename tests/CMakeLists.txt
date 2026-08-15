@@ -23,6 +23,16 @@ add_executable(superinfer_semantic_ir_properties property/ir/semantic_property_t
 target_link_libraries(superinfer_semantic_ir_properties PRIVATE superinfer_ir)
 add_test(NAME superinfer.ir.semantic.properties COMMAND superinfer_semantic_ir_properties)
 
+add_executable(superinfer_lowered_plan unit/ir/lowered_plan_test.cpp)
+target_link_libraries(superinfer_lowered_plan PRIVATE superinfer_ir superinfer_runtime)
+target_compile_definitions(superinfer_lowered_plan PRIVATE
+  SUPERINFER_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME superinfer.ir.lowered_plan COMMAND superinfer_lowered_plan)
+
+add_executable(superinfer_pass_manager unit/compiler/pass_manager_test.cpp)
+target_link_libraries(superinfer_pass_manager PRIVATE superinfer_compiler)
+add_test(NAME superinfer.compiler.pass_manager COMMAND superinfer_pass_manager)
+
 if(SUPERINFER_ENABLE_SANITIZERS)
   set_tests_properties(
     superinfer.base.contracts superinfer.architecture

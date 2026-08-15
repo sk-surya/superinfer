@@ -1,0 +1,6 @@
+physical-plan:v1 capability=120 catalog=fixture-catalog
+resources arena=128 workspace=64 max_commands=4
+buffer id=0 offset=0 size=32 alignment=16
+buffer id=1 offset=32 size=32 alignment=16
+command id=0 kernel=1 stream=0 workspace=0+0
+command id=1 kernel=2 stream=0 workspace=16+0

@@ -1,0 +1,2 @@
+lowered-ir:v1
+tensor id=0 layout=row_major memory=device alignment=16 shape=[2,4]

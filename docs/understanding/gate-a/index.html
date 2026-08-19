@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Gate A Studio · SuperInfer</title>
+  <style>
+    :root {
+      --ink: #eaf3ff;
+      --muted: #9db0c9;
+      --faint: #6d8099;
+      --canvas: #09111f;
+      --panel: #111d2e;
+      --panel-2: #16263b;
+      --line: #29415c;
+      --mint: #72e2c3;
+      --blue: #77b8ff;
+      --gold: #ffc979;
+      --coral: #ff8f86;
+      --purple: #b8a0ff;
+      --shadow: 0 24px 80px rgba(0, 0, 0, .25);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: radial-gradient(circle at 75% -10%, #1d3d57 0, transparent 35%), var(--canvas);
+      font: 16px/1.6 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--mint); }
+    button, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .wrap { width: min(1160px, calc(100% - 40px)); margin: 0 auto; }
+    .hero { padding: 62px 0 42px; position: relative; overflow: hidden; }
+    .hero::after {
+      content: ""; position: absolute; width: 440px; height: 440px; right: -160px; top: -160px;
+      border: 1px solid rgba(114,226,195,.22); border-radius: 50%; box-shadow: 0 0 0 28px rgba(114,226,195,.03), 0 0 0 58px rgba(114,226,195,.025); pointer-events: none;
+    }
+    .eyebrow { color: var(--mint); font-size: .77rem; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { max-width: 780px; margin: 14px 0 16px; font-size: clamp(2.4rem, 6vw, 5rem); letter-spacing: -.065em; line-height: .98; }
+    h2 { font-size: clamp(1.7rem, 3vw, 2.5rem); letter-spacing: -.035em; line-height: 1.1; }
+    h3 { margin-bottom: 8px; font-size: 1.1rem; }
+    .lede { max-width: 700px; color: var(--muted); font-size: 1.14rem; }
+    .status-row, .hero-actions, .chip-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .status, .chip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; color: var(--muted); background: rgba(17,29,46,.72); font-size: .85rem; }
+    .status strong { color: var(--mint); }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 13px var(--mint); }
+    .button { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; color: var(--ink); background: var(--panel); text-decoration: none; transition: .2s ease; }
+    .button:hover, .button:focus-visible { border-color: var(--mint); transform: translateY(-1px); }
+    .button.primary { border-color: transparent; color: #071c1c; background: var(--mint); font-weight: 800; }
+    .section { padding: 62px 0 18px; }
+    .section-head { display: flex; justify-content: space-between; gap: 24px; align-items: end; margin-bottom: 24px; }
+    .section-head p { max-width: 600px; margin-bottom: 0; color: var(--muted); }
+    .grid { display: grid; gap: 16px; }
+    .grid.three { grid-template-columns: repeat(3, 1fr); }
+    .grid.two { grid-template-columns: repeat(2, 1fr); }
+    .card { border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(145deg, rgba(22,38,59,.96), rgba(13,24,40,.96)); box-shadow: var(--shadow); }
+    .card.pad { padding: 22px; }
+    .card p, .card li { color: var(--muted); }
+    .card ul { margin: 10px 0 0; padding-left: 19px; }
+    .metric { padding: 18px; }
+    .metric .number { display: block; color: var(--ink); font-size: 2rem; font-weight: 800; letter-spacing: -.05em; }
+    .metric .label { color: var(--faint); font-size: .83rem; text-transform: uppercase; letter-spacing: .1em; }
+    .pipeline { display: grid; grid-template-columns: 1fr 46px 1fr 46px 1fr; gap: 10px; align-items: stretch; }
+    .stage { position: relative; padding: 25px; min-height: 270px; overflow: hidden; }
+    .stage::before { content: attr(data-step); position: absolute; right: 18px; top: 12px; color: rgba(255,255,255,.08); font-size: 5rem; font-weight: 900; line-height: 1; }
+    .stage .tag { display: inline-block; border-radius: 5px; padding: 3px 7px; color: #09111f; background: var(--mint); font-size: .72rem; font-weight: 900; text-transform: uppercase; letter-spacing: .1em; }
+    .stage.lower .tag { background: var(--gold); }
+    .stage.physical .tag { background: var(--coral); }
+    .stage h3 { position: relative; margin: 26px 0 8px; font-size: 1.45rem; }
+    .stage code, code { color: var(--gold); font: .91em/1.4 "SFMono-Regular", Consolas, monospace; }
+    .arrow { display: grid; place-items: center; color: var(--mint); font-size: 1.6rem; }
+    .rep-card { padding: 0; overflow: hidden; }
+    .rep-button { width: 100%; border: 0; border-bottom: 1px solid var(--line); padding: 18px 20px; color: var(--ink); background: transparent; text-align: left; }
+    .rep-button:hover, .rep-button:focus-visible, .rep-card.active .rep-button { background: rgba(114,226,195,.08); }
+    .rep-button .mini { display: block; margin-bottom: 5px; color: var(--mint); font-size: .72rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+    .rep-button strong { font-size: 1.15rem; }
+    .rep-detail { display: none; padding: 17px 20px 20px; }
+    .rep-card.active .rep-detail { display: block; }
+    .rep-detail p { margin-bottom: 10px; font-size: .93rem; }
+    .rule { display: grid; grid-template-columns: 17px 1fr; gap: 9px; margin: 9px 0; color: var(--muted); font-size: .9rem; }
+    .rule::before { content: "✓"; color: var(--mint); font-weight: 900; }
+    .rule.no::before { content: "×"; color: var(--coral); }
+    .trace-shell { padding: 25px; }
+    .trace-bar { display: flex; gap: 0; margin: 22px 0 28px; }
+    .trace-node { flex: 1; position: relative; border-top: 2px solid var(--line); padding-top: 15px; color: var(--faint); font-size: .8rem; text-align: center; }
+    .trace-node::before { content: ""; position: absolute; left: 50%; top: -7px; width: 11px; height: 11px; border: 3px solid var(--panel); border-radius: 50%; background: var(--line); transform: translateX(-50%); }
+    .trace-node.active { border-color: var(--mint); color: var(--ink); }
+    .trace-node.active::before { background: var(--mint); box-shadow: 0 0 17px var(--mint); }
+    .trace-copy { display: grid; grid-template-columns: 1.1fr .9fr; gap: 20px; align-items: start; }
+    .trace-copy h3 { color: var(--mint); }
+    .trace-code { min-height: 150px; margin: 0; border: 1px solid #31516c; border-radius: 12px; padding: 16px; overflow: auto; color: #c9e5ff; background: #081522; font: .84rem/1.7 "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; }
+    .lab { padding: 24px; }
+    .lab .label { color: var(--gold); font-size: .75rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+    .compare { display: grid; grid-template-columns: 1fr 34px 1fr; align-items: center; gap: 8px; margin: 18px 0; }
+    .compare-box { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: rgba(9,17,31,.55); }
+    .compare-box small { display: block; color: var(--faint); }
+    .reveal { border: 1px solid var(--line); border-radius: 10px; padding: 10px 13px; color: var(--ink); background: transparent; }
+    .reveal:hover, .reveal:focus-visible { border-color: var(--gold); }
+    .answer { display: none; margin-top: 13px; border-left: 3px solid var(--mint); padding: 11px 14px; color: var(--muted); background: rgba(114,226,195,.06); }
+    .answer.show { display: block; }
+    .diagnostic { display: grid; grid-template-columns: auto 1fr; gap: 15px; align-items: start; padding: 17px 19px; }
+    .diagnostic .icon { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 10px; color: #09111f; background: var(--coral); font-weight: 900; }
+    .diagnostic.good .icon { background: var(--mint); }
+    .diagnostic p { margin: 0; font-size: .92rem; }
+    .questions { counter-reset: question; }
+    .question { counter-increment: question; margin-bottom: 16px; padding: 20px; }
+    .question h3::before { content: counter(question, decimal-leading-zero) "  "; color: var(--mint); font: .78rem "SFMono-Regular", Consolas, monospace; }
+    .question textarea { display: block; width: 100%; min-height: 82px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; padding: 12px; color: var(--ink); background: #0b1726; outline: none; }
+    .question textarea:focus { border-color: var(--mint); box-shadow: 0 0 0 3px rgba(114,226,195,.12); }
+    .hint { margin: 9px 0 0; color: var(--faint); font-size: .84rem; }
+    .footer { margin-top: 70px; padding: 34px 0 70px; border-top: 1px solid var(--line); color: var(--muted); }
+    .footer strong { color: var(--ink); }
+    .tiny { color: var(--faint); font-size: .83rem; }
+    .toast { position: fixed; right: 22px; bottom: 22px; z-index: 5; border: 1px solid var(--mint); border-radius: 10px; padding: 12px 15px; color: var(--ink); background: #122e32; box-shadow: var(--shadow); opacity: 0; transform: translateY(10px); pointer-events: none; transition: .22s; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    @media (max-width: 850px) {
+      .grid.three, .grid.two, .trace-copy { grid-template-columns: 1fr; }
+      .pipeline { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); height: 24px; }
+      .section-head { display: block; }
+    }
+    @media (max-width: 560px) { .wrap { width: min(100% - 24px, 1160px); } .hero { padding-top: 36px; } h1 { font-size: 2.8rem; } .compare { grid-template-columns: 1fr; } .compare > span { text-align: center; transform: rotate(90deg); } }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <div class="status-row"><span class="status"><strong>Gate A reached</strong> · user ownership pending</span><span class="chip">S01 · Artifact and IR</span><span class="chip">debt distance: 1</span></div>
+      <p class="eyebrow" style="margin-top:28px">SuperInfer / understanding studio</p>
+      <h1>Meaning becomes machinery—one boundary at a time.</h1>
+      <p class="lede">A guided visual tour of the three representations that keep model semantics, target decisions, and runtime execution from collapsing into one dynamic interpreter.</p>
+      <div class="hero-actions" style="margin-top:25px"><a class="button primary" href="#pipeline">Start the tour ↓</a><a class="button" href="field-guide.html">Open print field guide ↗</a></div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="grid three" aria-label="Gate status">
+      <div class="card metric"><span class="number">3</span><span class="label">representation levels</span></div>
+      <div class="card metric"><span class="number">5</span><span class="label">ownership questions</span></div>
+      <div class="card metric"><span class="number">0</span><span class="label">physical choices in Semantic IR</span></div>
+    </section>
+
+    <section class="section" id="pipeline">
+      <div class="section-head"><div><p class="eyebrow">01 / The invariant</p><h2>Semantic composition → compile-time specialization → minimal physical runtime</h2></div><p>Keep this sentence in your head while exploring. Every later detail is a consequence of it.</p></div>
+      <div class="pipeline">
+        <article class="card stage" data-step="01"><span class="tag">Meaning</span><h3>Semantic IR</h3><p>What the model computes: tensors, shapes, operations, state edges, and entry points.</p><code>hidden [2,4] → rms_norm → normalized [2,4]</code></article>
+        <div class="arrow" aria-hidden="true">→</div>
+        <article class="card stage lower" data-step="02"><span class="tag">Specialization</span><h3>Lowered IR</h3><p>How that meaning maps to a target: layout, storage, alignment, fusion, and kernel requirements.</p><code>f16 storage · f32 accumulate · align 16</code></article>
+        <div class="arrow" aria-hidden="true">→</div>
+        <article class="card stage physical" data-step="03"><span class="tag">Execution</span><h3>Physical Plan</h3><p>What the runtime executes: validated resources, buffers, commands, and dependencies.</p><code>buffer 0 → command 0 → command 1</code></article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><p class="eyebrow">02 / Click to inspect</p><h2>Three levels, three owners</h2></div><p>Click each card. Notice what information is allowed to appear—and what is deliberately absent.</p></div>
+      <div class="grid three">
+        <article class="card rep-card active"><button class="rep-button" type="button"><span class="mini">Level 01 · model-independent</span><strong>Semantic IR</strong></button><div class="rep-detail"><p>Owns model meaning before target-specific decisions.</p><div class="rule">Tensor names, symbolic dimensions, dtypes</div><div class="rule">Operation kind and semantic attributes</div><div class="rule no">No device addresses, kernel handles, or CUDA calls</div></div></article>
+        <article class="card rep-card"><button class="rep-button" type="button"><span class="mini">Level 02 · target-aware</span><strong>Lowered IR</strong></button><div class="rep-detail"><p>Owns compile-time layout and storage decisions while preserving semantic origin.</p><div class="rule">Physical shape, row-major layout, alignment</div><div class="rule">Storage/accumulation dtypes and fusion metadata</div><div class="rule no">No executable addresses or runtime ownership</div></div></article>
+        <article class="card rep-card"><button class="rep-button" type="button"><span class="mini">Level 03 · immutable contract</span><strong>Physical Plan</strong></button><div class="rep-detail"><p>Owns the exact resource graph consumed by the executor.</p><div class="rule">Validated buffers, commands, workspace bounds</div><div class="rule">Dependencies and capability fingerprint</div><div class="rule no">No model-family branching or graph rewriting</div></div></article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><p class="eyebrow">03 / Execution trace</p><h2>Follow <code>hidden [2,4]</code> across the boundary</h2></div><p>The same semantic value is progressively constrained. Its meaning persists; its physical representation becomes more specific.</p></div>
+      <div class="card trace-shell">
+        <div class="trace-bar" role="tablist" aria-label="Tensor trace steps">
+          <button class="trace-node active" type="button" data-trace-step="0">Builder</button><button class="trace-node" type="button" data-trace-step="1">Semantic</button><button class="trace-node" type="button" data-trace-step="2">Lowered</button><button class="trace-node" type="button" data-trace-step="3">Physical</button><button class="trace-node" type="button" data-trace-step="4">Artifact</button>
+        </div>
+        <div class="trace-copy"><div><h3 id="trace-title">1 · Builder intent</h3><p id="trace-text">The frontend describes an activation named <code>hidden</code> with shape <code>[2,4]</code>. No target has been selected; this is model meaning.</p><div class="chip-row"><span class="chip" id="trace-chip">semantic origin: hidden</span><span class="chip">ownership: compiler</span></div></div><pre class="trace-code" id="trace-code">TensorSpec {
+  name: hidden
+  shape: [2, 4]
+  dtype: f32
+  producer: entry_input
+}</pre></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><p class="eyebrow">04 / Prediction lab</p><h2>Predict before you reveal</h2></div><p>Gate A is not memorization. Make a prediction, then use the reveal to sharpen your boundary model.</p></div>
+      <div class="grid two">
+        <article class="card lab"><span class="label">semantic operation experiment</span><h3>Change <code>rms_norm</code> to <code>layer_norm</code></h3><p>The operation’s meaning changes, but the tensor topology and shapes do not.</p><div class="compare"><div class="compare-box"><small>current fixture</small><code>kind=rms_norm<br>output=[2,4]</code></div><span aria-hidden="true">→</span><div class="compare-box"><small>your prediction</small><code>kind=layer_norm<br>output=[2,4]</code></div></div><button class="reveal" type="button" data-reveal="op-answer">Reveal expected result</button><div class="answer" id="op-answer">The semantic golden fails on the <code>kind=rms_norm</code> line. Shapes and the independent Lowered/Physical fixtures remain unchanged. Restore the source after the experiment.</div></article>
+        <article class="card lab"><span class="label">boundary prediction</span><h3>Rename symbolic dimension <code>seq</code> → <code>context</code></h3><p>Which representation is allowed to know about the symbol’s name?</p><div class="compare"><div class="compare-box"><small>before</small><code>shape=[batch, seq]</code></div><span aria-hidden="true">→</span><div class="compare-box"><small>after</small><code>shape=[batch, context]</code></div></div><button class="reveal" type="button" data-reveal="dim-answer">Reveal expected result</button><div class="answer" id="dim-answer">The Semantic IR dump changes because the symbolic name is semantic. A Lowered/Physical dump must not gain a model-meaning dependency merely because the name changed; target decisions are derived from resolved shape/layout contracts.</div></article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><p class="eyebrow">05 / Boundary diagnostics</p><h2>Spot the leak</h2></div><p>These are fast architecture tests. Say the violated invariant out loud before opening the answer.</p></div>
+      <div class="grid two">
+        <div class="card diagnostic"><div class="icon">!</div><div><h3>Runtime branches on <code>Qwen</code></h3><p>Model-specific behavior has crossed into the physical executor. The runtime must consume a validated Physical Plan, not identify model families or select rewrites.</p></div></div>
+        <div class="card diagnostic good"><div class="icon">✓</div><div><h3>Reader rejects a checksum mismatch</h3><p>This is a healthy fail-closed boundary: the versioned <code>.sinf</code> reader validates sections and integrity before exposing read-only views.</p></div></div>
+      </div>
+    </section>
+
+    <section class="section" id="questions">
+      <div class="section-head"><div><p class="eyebrow">06 / Ownership check-in</p><h2>The five questions that clear Gate A</h2></div><p>These five ownership questions are the user exercise. Answer in your own words. This page saves drafts locally in your browser and can export a response pack; it does not mark the gate passed.</p></div>
+      <div class="questions">
+        <article class="card question"><h3>Why are Semantic IR, Lowered IR, and Physical Plan three representations rather than three names for one mutable graph?</h3><textarea data-answer="q1" aria-label="Answer to question 1" placeholder="Explain the ownership boundary and what would go wrong if the graph stayed mutable..."></textarea><p class="hint">Useful anchors: meaning, target/layout decisions, immutable runtime contract.</p></article>
+        <article class="card question"><h3>Predict which dump changes when <code>seq</code> becomes <code>context</code>, and which dump must not.</h3><textarea data-answer="q2" aria-label="Answer to question 2" placeholder="Name the representation that owns the symbolic dimension..."></textarea><p class="hint">Useful anchors: semantic naming versus resolved physical layout.</p></article>
+        <article class="card question"><h3>Trace <code>hidden [2,4]</code> from the semantic builder through the lowered descriptor into a physical command buffer reference.</h3><textarea data-answer="q3" aria-label="Answer to question 3" placeholder="Describe the object at each boundary and what new information appears..."></textarea><p class="hint">Useful anchors: semantic origin ID, alignment/storage, buffer and command IDs.</p></article>
+        <article class="card question"><h3>If runtime code branches on <code>Qwen</code>, which invariant is violated and which test should fail first?</h3><textarea data-answer="q4" aria-label="Answer to question 4" placeholder="Identify the boundary leak and the architecture/dependency evidence..."></textarea><p class="hint">Useful anchors: physical executor, model independence, dependency test.</p></article>
+        <article class="card question"><h3>Run the operation-kind experiment: what failed, why did it fail, and what remained invariant?</h3><textarea data-answer="q5" aria-label="Answer to question 5" placeholder="Record the observed golden failure and the unchanged data..."></textarea><p class="hint">Useful anchors: one semantic line changes; topology and independent physical fixtures do not.</p></article>
+      </div>
+      <div class="card pad" style="margin-top:20px"><div class="hero-actions"><button class="button primary" id="save-button" type="button">Save draft</button><button class="button" id="export-button" type="button">Export my answers</button><a class="button" href="field-guide.html">Print field guide</a></div><p class="tiny" id="save-status" style="margin:12px 0 0">Drafts stay in this browser only. Export creates a local JSON file you can bring back for review.</p></div>
+    </section>
+  </main>
+
+  <footer class="footer"><div class="wrap"><p><strong>Next concrete action:</strong> read exactly three implementation files, perform the operation-kind experiment, then answer the five questions above.</p><p class="tiny"><code>include/superinfer/ir/semantic/module.hpp</code> · <code>include/superinfer/ir/lowered/module.hpp</code> · <code>include/superinfer/ir/physical_plan.hpp</code></p><p class="tiny">Gate A remains pending until the user demonstrates explanation, prediction, one execution trace, and a concrete small experiment.</p></div></footer>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script>
+    const trace = [
+      { title: '1 · Builder intent', text: 'The frontend describes an activation named hidden with shape [2,4]. No target has been selected; this is model meaning.', chip: 'semantic origin: hidden', code: 'TensorSpec {\n  name: hidden\n  shape: [2, 4]\n  dtype: f32\n  producer: entry_input\n}' },
+      { title: '2 · Semantic module', text: 'The immutable semantic module verifies names, dimensions, producers, topology, and operation attributes.', chip: 'module: verified', code: 'Tensor { id: 0, name: hidden, shape: [2,4] }\nOperation { kind: rms_norm, input: hidden }' },
+      { title: '3 · Lowered descriptor', text: 'The tensor keeps its semantic origin while gaining target/layout facts: row-major memory, alignment 16, f16 storage, and f32 accumulation.', chip: 'origin id: hidden → 0', code: 'LoweredTensor {\n  semantic_origin: hidden\n  shape: [2, 4]\n  layout: row_major\n  alignment: 16\n  storage: f16 / accumulate: f32\n}' },
+      { title: '4 · Physical command', text: 'The plan assigns a validated buffer reference and command dependency. The executor sees IDs and resources, not model identity.', chip: 'buffer 0 · command 0', code: 'BufferRef { id: 0, bytes: 32, align: 16 }\nCommand { id: 0, op: rms_norm, input: buffer 0 }\nDependsOn: command 1 → command 0' },
+      { title: '5 · .sinf artifact', text: 'The artifact packages manifest, tensor table, physical plan, payload, and integrity sections. The reader validates before exposing views.', chip: 'read-only · checksummed', code: 'SINF {\n  manifest ✓\n  tensor_table ✓\n  physical_plan ✓\n  payload ✓\n  integrity ✓\n}' }
+    ];
+    const $ = (selector) => document.querySelector(selector);
+    const $$ = (selector) => [...document.querySelectorAll(selector)];
+    const toast = (message) => { const node = $('#toast'); node.textContent = message; node.classList.add('show'); setTimeout(() => node.classList.remove('show'), 2200); };
+
+    $$('.rep-button').forEach((button) => button.addEventListener('click', () => {
+      const card = button.closest('.rep-card');
+      $$('.rep-card').forEach((item) => item.classList.toggle('active', item === card));
+    }));
+    $$('.reveal').forEach((button) => button.addEventListener('click', () => {
+      const answer = $('#' + button.dataset.reveal);
+      answer.classList.toggle('show');
+      button.textContent = answer.classList.contains('show') ? 'Hide expected result' : 'Reveal expected result';
+    }));
+    $$('.trace-node').forEach((button) => button.addEventListener('click', () => {
+      const step = Number(button.dataset.traceStep);
+      const item = trace[step];
+      $$('.trace-node').forEach((node, index) => node.classList.toggle('active', index === step));
+      $('#trace-title').textContent = item.title;
+      $('#trace-text').textContent = item.text;
+      $('#trace-chip').textContent = item.chip;
+      $('#trace-code').textContent = item.code;
+    }));
+
+    const answerNodes = $$('[data-answer]');
+    const storageKey = 'superinfer-gate-a-answers';
+    const loadDraft = () => { try { const saved = JSON.parse(localStorage.getItem(storageKey) || '{}'); answerNodes.forEach((node) => { node.value = saved[node.dataset.answer] || ''; }); } catch (_) {} };
+    const collectAnswers = () => Object.fromEntries(answerNodes.map((node) => [node.dataset.answer, node.value]));
+    const saveDraft = () => { localStorage.setItem(storageKey, JSON.stringify(collectAnswers())); $('#save-status').textContent = 'Saved locally just now. Keep writing until each answer can stand without the hints.'; toast('Draft saved in this browser'); };
+    $('#save-button').addEventListener('click', saveDraft);
+    $('#export-button').addEventListener('click', () => {
+      const payload = { gate: 'A', topic: 'semantic IR and compiler boundaries', exported_at: new Date().toISOString(), answers: collectAnswers() };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'superinfer-gate-a-answers.json'; link.click(); URL.revokeObjectURL(link.href); toast('Answer pack downloaded');
+    });
+    loadDraft();
+  </script>
+</body>
+</html>

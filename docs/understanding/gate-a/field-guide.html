@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gate A Field Guide · SuperInfer</title>
+  <style>
+    :root { --ink:#172538; --muted:#52647a; --line:#cbd7e4; --mint:#147b68; --blue:#1f5d99; --paper:#f6f9fc; }
+    * { box-sizing: border-box; }
+    body { margin:0; color:var(--ink); background:var(--paper); font:15px/1.55 Inter, ui-sans-serif, system-ui, sans-serif; }
+    .sheet { width:min(900px, calc(100% - 36px)); margin:0 auto; }
+    header { padding:52px 0 34px; border-bottom:3px solid var(--ink); }
+    .eyebrow { color:var(--mint); font-size:.72rem; font-weight:900; letter-spacing:.16em; text-transform:uppercase; }
+    h1 { margin:10px 0 10px; font-size:clamp(2.7rem, 7vw, 5rem); letter-spacing:-.065em; line-height:.95; }
+    h2 { margin:0 0 14px; font-size:1.75rem; letter-spacing:-.035em; }
+    h3 { margin:0 0 5px; font-size:1rem; }
+    p { margin:0 0 10px; color:var(--muted); }
+    code { color:var(--blue); font: .92em "SFMono-Regular", Consolas, monospace; }
+    .lede { max-width:670px; font-size:1.08rem; }
+    .badge { display:inline-block; border:1px solid #92cdbf; border-radius:999px; padding:5px 10px; color:var(--mint); font-size:.8rem; font-weight:800; }
+    section { padding:30px 0 0; }
+    .pipeline { display:grid; grid-template-columns:1fr 28px 1fr 28px 1fr; gap:8px; align-items:stretch; }
+    .stage { border:1px solid var(--line); border-top:5px solid var(--mint); border-radius:10px; padding:15px; background:white; }
+    .stage:nth-child(3) { border-top-color:#c1841d; }.stage:nth-child(5) { border-top-color:#bf594f; }
+    .stage h3 { font-size:1.2rem; }.stage p { font-size:.9rem; }.arrow { display:grid; place-items:center; color:var(--mint); font-size:1.35rem; }
+    table { width:100%; border-collapse:collapse; background:white; }
+    th, td { border:1px solid var(--line); padding:11px 12px; vertical-align:top; text-align:left; }
+    th { width:22%; color:var(--ink); background:#eaf1f7; }.no { color:#9c443b; }
+    .callout { margin:14px 0; border-left:4px solid var(--mint); padding:13px 15px; background:#e7f5f1; }
+    .trace { counter-reset:step; display:grid; gap:9px; }
+    .trace-item { counter-increment:step; display:grid; grid-template-columns:42px 1fr; gap:12px; align-items:start; padding:12px; border:1px solid var(--line); background:white; }
+    .trace-item::before { content:counter(step); display:grid; place-items:center; width:30px; height:30px; border-radius:50%; color:white; background:var(--blue); font-weight:900; }
+    ol { margin:0; padding-left:27px; }.question { margin:10px 0; padding:12px 14px; border:1px solid var(--line); background:white; }.question strong { color:var(--blue); }
+    .files { padding:13px 16px; border:1px dashed #91a7bc; background:white; }.files code { display:block; margin:5px 0; }
+    footer { margin-top:36px; padding:22px 0 50px; border-top:1px solid var(--line); }
+    @media (max-width:700px) { .pipeline { grid-template-columns:1fr; }.arrow { transform:rotate(90deg); height:20px; } }
+    @media print {
+      @page { size: A4; margin: 14mm; }
+      body { background:white; font-size:10.5pt; }
+      .sheet { width:auto; }
+      header { padding-top:0; }
+      section { padding-top:18px; break-inside:avoid; }
+      h1 { font-size:34pt; }.pipeline { grid-template-columns:1fr 18px 1fr 18px 1fr; }
+      .stage, table, .trace-item, .question, .files { box-shadow:none; }
+      a { color:inherit; text-decoration:none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <header><span class="badge">Gate A · reached, not yet passed</span><p class="eyebrow" style="margin-top:25px">SuperInfer / S01 artifact and IR</p><h1>Semantic meaning has a boundary.</h1><p class="lede">Use this sheet to explain how SuperInfer moves from model meaning to target specialization to a minimal physical runtime.</p></header>
+    <section><h2>The governing invariant</h2><div class="callout"><strong>semantic composition → compile-time specialization → minimal physical runtime</strong><br><span>Genericity belongs above compilation. Specialization belongs below compilation.</span></div><div class="pipeline"><div class="stage"><h3>Semantic IR</h3><p>Meaning: tensors, shapes, operations, state edges, entry points.</p><code>hidden [2,4] → rms_norm</code></div><div class="arrow">→</div><div class="stage"><h3>Lowered IR</h3><p>Target facts: layout, storage, alignment, fusion, kernel requirements.</p><code>f16 / f32 · align 16</code></div><div class="arrow">→</div><div class="stage"><h3>Physical Plan</h3><p>Runtime contract: buffers, commands, workspace, dependencies.</p><code>buffer 0 → command 0</code></div></div></section>
+    <section><h2>Boundary ownership</h2><table><thead><tr><th>Representation</th><th>It owns</th><th>It must not own</th></tr></thead><tbody><tr><th>Semantic IR</th><td>Tensor names, symbolic dimensions, dtypes, operation kind and semantic attributes.</td><td class="no">Device addresses, executable handles, CUDA calls, physical storage choices.</td></tr><tr><th>Lowered IR</th><td>Physical shape, layout, alignment, storage/accumulation dtype, fusion metadata; semantic-origin ID.</td><td class="no">Runtime allocation ownership, live device addresses, model-family decisions.</td></tr><tr><th>Physical Plan</th><td>Validated buffers, commands, resource bounds, capability fingerprint, dependencies.</td><td class="no">Graph rewriting, model identity checks, token-loop allocation or parsing.</td></tr></tbody></table></section>
+    <section><h2>Execution trace: <code>hidden [2,4]</code></h2><div class="trace"><div class="trace-item"><div><h3>Builder intent</h3><p>Frontend declares <code>hidden</code>, shape <code>[2,4]</code>, dtype <code>f32</code>.</p></div></div><div class="trace-item"><div><h3>Semantic module</h3><p>Immutable module verifies names, dimensions, producers, topology, and attributes.</p></div></div><div class="trace-item"><div><h3>Lowered descriptor</h3><p>Preserves semantic origin; adds row-major layout, alignment <code>16</code>, f16 storage, f32 accumulation.</p></div></div><div class="trace-item"><div><h3>Physical command</h3><p>Validated buffer and command IDs connect the value to an executable resource graph.</p></div></div><div class="trace-item"><div><h3><code>.sinf</code> artifact</h3><p>Manifest, tensor table, physical plan, payload, and integrity sections are checked before read-only views are exposed.</p></div></div></div></section>
+    <section><h2>Core invariants</h2><ol><li>A Semantic IR dump contains no physical target/storage decisions.</li><li>A Lowered IR tensor retains semantic origin but contains no device addresses or executable handles.</li><li>A Physical Plan is immutable after finalization; all references are validated before runtime use.</li><li>Required artifact versions/capabilities fail closed; unknown optional sections may be skipped.</li><li>Identical normalized inputs and tool version produce identical dumps and artifact bytes.</li></ol></section>
+    <section><h2>Required experiment</h2><div class="callout"><strong>semantic operation experiment</strong><p>Change <code>OperationKind::rms_norm</code> to <code>OperationKind::layer_norm</code> in <code>tests/unit/ir/semantic_ir_test.cpp</code>.</p><p>Run <code>cmake --build --preset cpu-dev</code>, then <code>ctest --preset cpu-dev -R superinfer.ir.semantic --output-on-failure</code>.</p><p>Predict first: only the semantic golden line <code>kind=rms_norm</code> should fail; shapes and independent Lowered/Physical fixtures remain unchanged. Restore the source afterwards.</p></div></section>
+    <section><h2>Exactly three files</h2><div class="files"><code>include/superinfer/ir/semantic/module.hpp</code><code>include/superinfer/ir/lowered/module.hpp</code><code>include/superinfer/ir/physical_plan.hpp</code></div></section>
+    <section><h2>Exactly five questions</h2><div class="question"><strong>1.</strong> Why are the three representations separate rather than one mutable graph?</div><div class="question"><strong>2.</strong> Which dump changes when <code>seq</code> becomes <code>context</code>, and which must not?</div><div class="question"><strong>3.</strong> Trace <code>hidden [2,4]</code> from builder to lowered descriptor to physical command buffer reference.</div><div class="question"><strong>4.</strong> If runtime branches on <code>Qwen</code>, which invariant is violated and which test should fail first?</div><div class="question"><strong>5.</strong> Perform the operation-kind experiment: what failed, why, and what remained invariant?</div></section>
+    <footer><p><strong>Gate A ownership means:</strong> explanation, prediction, one execution trace, and a small hands-on experiment in your own words.</p><p>Return to the <a href="index.html">interactive studio</a> to write and export your answers.</p></footer>
+  </div>
+</body>
+</html>

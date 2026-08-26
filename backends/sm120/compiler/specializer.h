@@ -207,7 +207,8 @@ class Specializer final {
       storage_dtype = dtype_name(lowered.tensors()[requirement.operands[1].value()].storage_dtype);
     }
     const auto candidates = provider.enumerate(
-        {requirement.operation, requirement.target_capability, storage_dtype});
+        {requirement.operation, requirement.target_capability, storage_dtype,
+         requirement.operands.size()});
     if (!candidates.has_value()) return candidates.error();
     if (candidates.value().empty()) {
       return base::Status::unsupported("kernel provider returned no candidates");

@@ -33,6 +33,32 @@ add_executable(superinfer_pass_manager unit/compiler/pass_manager_test.cpp)
 target_link_libraries(superinfer_pass_manager PRIVATE superinfer_compiler)
 add_test(NAME superinfer.compiler.pass_manager COMMAND superinfer_pass_manager)
 
+add_executable(superinfer_sm120_target_profile unit/sm120/compiler/target_profile_test.cpp)
+target_link_libraries(superinfer_sm120_target_profile PRIVATE superinfer_compiler)
+target_include_directories(superinfer_sm120_target_profile PRIVATE
+  "${CMAKE_SOURCE_DIR}/backends")
+add_test(NAME superinfer.sm120.target_profile COMMAND superinfer_sm120_target_profile)
+
+add_executable(superinfer_sm120_memory_planner unit/sm120/compiler/memory_planner_test.cpp)
+target_link_libraries(superinfer_sm120_memory_planner PRIVATE superinfer_compiler)
+add_test(NAME superinfer.sm120.memory_planner COMMAND superinfer_sm120_memory_planner)
+
+add_executable(superinfer_sm120_memory_property property/sm120/compiler/memory_planner_property_test.cpp)
+target_link_libraries(superinfer_sm120_memory_property PRIVATE superinfer_compiler)
+add_test(NAME superinfer.sm120.memory_property COMMAND superinfer_sm120_memory_property)
+
+add_executable(superinfer_sm120_memory_golden golden/sm120/compiler/memory_plan_golden_test.cpp)
+target_link_libraries(superinfer_sm120_memory_golden PRIVATE superinfer_compiler)
+target_compile_definitions(superinfer_sm120_memory_golden PRIVATE
+  SUPERINFER_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME superinfer.sm120.memory_golden COMMAND superinfer_sm120_memory_golden)
+
+add_executable(superinfer_sm120_specializer unit/sm120/compiler/specializer_test.cpp)
+target_link_libraries(superinfer_sm120_specializer PRIVATE superinfer_compiler)
+target_include_directories(superinfer_sm120_specializer PRIVATE
+  "${CMAKE_SOURCE_DIR}/backends")
+add_test(NAME superinfer.sm120.specializer COMMAND superinfer_sm120_specializer)
+
 add_executable(superinfer_artifact_test integration/artifact/artifact_test.cpp)
 target_link_libraries(superinfer_artifact_test PRIVATE superinfer_artifact)
 add_test(NAME superinfer.artifact.binary COMMAND superinfer_artifact_test)
@@ -41,6 +67,8 @@ if(SUPERINFER_ENABLE_SANITIZERS)
   set_tests_properties(
     superinfer.base.contracts superinfer.architecture superinfer.ir.semantic
     superinfer.ir.semantic.properties superinfer.ir.lowered_plan
-    superinfer.compiler.pass_manager superinfer.artifact.binary
+    superinfer.compiler.pass_manager superinfer.sm120.target_profile
+    superinfer.sm120.memory_planner superinfer.sm120.memory_property
+    superinfer.sm120.memory_golden superinfer.sm120.specializer superinfer.artifact.binary
     PROPERTIES ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
 endif()

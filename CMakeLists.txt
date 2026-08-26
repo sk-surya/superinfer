@@ -19,8 +19,9 @@ superinfer_apply_warnings(superinfer_base)
 add_library(superinfer_ir INTERFACE)
 target_link_libraries(superinfer_ir INTERFACE superinfer_base)
 
-add_library(superinfer_compiler INTERFACE)
-target_link_libraries(superinfer_compiler INTERFACE superinfer_ir)
+add_library(superinfer_compiler STATIC src/compiler/memory_planner.cc)
+target_compile_features(superinfer_compiler PUBLIC cxx_std_20)
+target_link_libraries(superinfer_compiler PUBLIC superinfer_ir)
 
 add_library(superinfer_artifact INTERFACE)
 target_link_libraries(superinfer_artifact INTERFACE superinfer_base superinfer_ir)

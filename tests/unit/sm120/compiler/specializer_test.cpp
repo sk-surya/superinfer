@@ -1,0 +1,56 @@
+#include <superinfer/compiler/target.h>
+#include <superinfer/ir/lowered/module.hpp>
+#include <sm120/compiler/specializer.h>
+
+#include <cassert>
+#include <string>
+
+namespace {
+
+superinfer::ir::lowered::Module make_fixture() {
+  using namespace superinfer;
+  ir::lowered::ModuleBuilder builder;
+  const auto hidden = builder.add_tensor(
+      ir::semantic::TensorId{0}, {2, 4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f16, ir::semantic::DType::f32);
+  assert(hidden.has_value());
+  assert(builder.add_kernel_requirement("rms_norm", 120).ok());
+  const auto module = std::move(builder).build();
+  assert(module.has_value());
+  return std::move(module).value();
+}
+
+}  // namespace
+
+int main() {
+  using namespace superinfer;
+  const auto target = compiler::TargetProfile::offline_sm120a(1ULL << 30U, "baseline-v1");
+  sm120::Specializer specializer;
+  const auto result = specializer.compile(make_fixture(), {target, 256, 64});
+  assert(result.has_value());
+  assert(result.value().plan.verify().ok());
+  assert(result.value().plan.capability().target_capability == 120);
+  assert(result.value().plan.capability().kernel_catalog == "baseline-v1");
+  assert(result.value().memory.device_arena_bytes == 16);
+  assert(result.value().memory.allocations.size() == 1);
+  assert(result.value().memory.allocations.front().offset == 0);
+  assert(result.value().plan.commands().size() == 1);
+  assert(result.value().plan.commands().front().kernel.value() == 5);
+
+  const auto second = specializer.compile(make_fixture(), {target, 256, 64});
+  assert(second.has_value());
+  assert(second.value().plan.dump() == result.value().plan.dump());
+  assert(second.value().memory.dump() == result.value().memory.dump());
+
+  auto incompatible = target;
+  incompatible.compute_capability = 89;
+  const auto rejected = specializer.compile(make_fixture(), {incompatible, 256, 64});
+  assert(!rejected.has_value());
+  assert(rejected.error().code() == base::StatusCode::unsupported);
+
+  const auto low_budget = specializer.compile(
+      make_fixture(), {compiler::TargetProfile::offline_sm120a(8, "baseline-v1"), 256, 64});
+  assert(!low_budget.has_value());
+  assert(low_budget.error().code() == base::StatusCode::resource_exhausted);
+  return 0;
+}

@@ -1,0 +1,5 @@
+memory-plan:v1 peak device=48 workspace=24
+allocation id=0 name=activation_a class=activation arena=device offset=0 bytes=32 alignment=16 lifetime=0..2
+allocation id=1 name=activation_b class=activation arena=device offset=0 bytes=32 alignment=16 lifetime=2..4
+allocation id=2 name=activation_c class=activation arena=device offset=32 bytes=16 alignment=16 lifetime=1..3
+allocation id=3 name=workspace class=activation arena=workspace offset=0 bytes=24 alignment=16 lifetime=0..4

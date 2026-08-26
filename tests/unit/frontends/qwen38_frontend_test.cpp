@@ -7,7 +7,9 @@
 int main() {
   using namespace superinfer;
   frontends::qwen38::Frontend frontend;
-  compiler::SourceInventory source{std::string{frontends::qwen38::kSourceIdentity}};
+  compiler::SourceInventory source{std::string{frontends::qwen38::kSourceIdentity},
+                                   frontends::qwen38::kTensorCount,
+                                   std::string{frontends::qwen38::kTensorInventorySha256}};
   assert(frontend.validate(source).ok());
   const auto module = frontend.emit(source);
   assert(module.has_value());
@@ -36,7 +38,10 @@ int main() {
   assert(lowered.value().kernel_requirements()[1].operation == "rms_norm");
   assert(lowered.value().kernel_requirements()[2].operation == "gated_delta_attention");
 
-  const auto rejected = frontend.validate({"Qwen/Qwen3.8-27B@wrong"});
+  const auto rejected_inventory = frontend.validate({std::string{frontends::qwen38::kSourceIdentity}, 1,
+                                                     std::string{frontends::qwen38::kTensorInventorySha256}});
+  assert(!rejected_inventory.ok());
+  const auto rejected = frontend.validate({"Qwen/Qwen3.8-27B@wrong", 0, {}});
   assert(!rejected.ok());
   assert(rejected.code() == base::StatusCode::failed_precondition);
   return 0;

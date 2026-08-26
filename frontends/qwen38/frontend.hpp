@@ -14,6 +14,9 @@ inline constexpr std::string_view kSourceIdentity =
     "Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
     "+gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@0cc27958cefbbe231782ec8511de8c4eb5233348"
     "+LMHead4@62abd1d060bd801005f47754f01619054cc248d3417699ecea414c7ede1b3a4a";
+inline constexpr std::uint64_t kTensorCount = 2402;
+inline constexpr std::string_view kTensorInventorySha256 =
+    "cab1e4afdb94d48c0a1cfe6ee3833b22d9ec856c077fb1eeef92f674032aa3ab";
 
 /**
  * Emits canonical Semantic IR for the pinned Qwen3.8 language path.
@@ -28,6 +31,9 @@ class Frontend final : public compiler::ModelFrontend {
   base::Status validate(const compiler::SourceInventory& source) const override {
     if (source.identity != kSourceIdentity) {
       return base::Status::failed_precondition("Qwen3.8 source identity is not pinned revision");
+    }
+    if (source.tensor_count != kTensorCount || source.tensor_inventory_sha256 != kTensorInventorySha256) {
+      return base::Status::failed_precondition("Qwen3.8 tensor inventory is not authenticated");
     }
     return {};
   }

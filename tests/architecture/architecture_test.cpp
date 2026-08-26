@@ -84,7 +84,7 @@ int main() {
   const FakeProvider provider;
   const FakeDecode decode;
   const FakeStorage storage;
-  assert(frontend.validate({"fixture"}).ok());
+  assert(frontend.validate({"fixture", 0, {}}).ok());
   assert(pass.apply().ok());
   assert(provider.enumerate({"embedding", 0}).has_value());
   assert(decode.requirements().workspace_bytes == 0);

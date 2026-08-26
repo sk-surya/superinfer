@@ -64,7 +64,19 @@ int main() {
       {"attention", 120, "f32", 4, {}, true});
   assert(!unsupported_attention_gate.has_value());
   assert(unsupported_attention_gate.error().code() == superinfer::base::StatusCode::unsupported);
-  for (const std::string_view operation : {"cast", "elementwise", "rope", "matmul", "moe_route",
+  const std::vector<std::string_view> bf16_to_f32{"bf16", "f32"};
+  const auto cast_bf16_to_f32 = provider.enumerate(
+      {"cast", 120, "f32", bf16_to_f32.size(), bf16_to_f32});
+  assert(cast_bf16_to_f32.has_value());
+  assert(cast_bf16_to_f32.value().front().id.value() == 16);
+  const std::vector<std::string_view> f32_to_bf16{"f32", "bf16"};
+  const auto cast_f32_to_bf16 = provider.enumerate(
+      {"cast", 120, "f32", f32_to_bf16.size(), f32_to_bf16});
+  assert(cast_f32_to_bf16.has_value());
+  assert(cast_f32_to_bf16.value().front().id.value() == 17);
+  const std::vector<std::string_view> invalid_cast{"bf16", "bf16"};
+  assert(!provider.enumerate({"cast", 120, "f32", invalid_cast.size(), invalid_cast}).has_value());
+  for (const std::string_view operation : {"elementwise", "rope", "matmul", "moe_route",
                                             "activation", "sampling"}) {
     const auto candidates = provider.enumerate({operation, 120});
     assert(!candidates.has_value());

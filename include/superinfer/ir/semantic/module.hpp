@@ -47,6 +47,7 @@ struct TensorSpec final {
 
 enum class OperationKind {
   embedding,
+  cast,
   rms_norm,
   layer_norm,
   rope,
@@ -219,6 +220,10 @@ class Module final {
         }
       }
       const OperationAttributes& attributes = operation.attributes;
+      if (operation.kind == OperationKind::cast &&
+          (operation.inputs.size() != 1 || operation.outputs.size() != 1)) {
+        return base::Status::invalid_argument("cast requires one input and one output");
+      }
       if ((operation.kind == OperationKind::rms_norm || operation.kind == OperationKind::layer_norm) &&
           (!std::isfinite(attributes.epsilon) || attributes.epsilon <= 0.0F)) {
         return base::Status::invalid_argument("normalization epsilon must be finite and positive");
@@ -387,6 +392,7 @@ class Module final {
   static std::string_view operation_kind_name(OperationKind kind) {
     switch (kind) {
       case OperationKind::embedding: return "embedding";
+      case OperationKind::cast: return "cast";
       case OperationKind::rms_norm: return "rms_norm";
       case OperationKind::layer_norm: return "layer_norm";
       case OperationKind::rope: return "rope";

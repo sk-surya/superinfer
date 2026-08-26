@@ -102,6 +102,7 @@ class SemanticLowering final {
     using ir::semantic::OperationKind;
     switch (kind) {
       case OperationKind::embedding: return "embedding";
+      case OperationKind::cast: return "cast";
       case OperationKind::rms_norm: return "rms_norm";
       case OperationKind::layer_norm: return "layer_norm";
       case OperationKind::rope: return "rope";

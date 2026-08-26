@@ -156,6 +156,9 @@ updated: 2026-08-26
 - Physical buffers and command operands now carry dtype, logical shape, layout, alignment, and
   storage encoding. Specialization materializes this metadata from Lowered IR, and provider/CUDA
   eligibility rejects BF16 activations for FP32-only kernels instead of allowing reinterpretation.
+  Generic BF16↔FP32 cast capabilities (kernel IDs 16/17) now provide the explicit conversion
+  primitive required at authored-BF16/FP32-baseline boundaries; Qwen graph insertion and full
+  projection composition remain open.
   NVFP4 packed views retain their explicit packed encoding.
 - Lowered IR now retains 128 state slots with explicit read/write/commit transitions and carries
   semantic decode entry bindings. A state transition therefore survives into the representation

@@ -54,6 +54,24 @@ __global__ inline void embedding_bf16(const std::uint32_t* token, const std::uin
   }
 }
 
+__global__ inline void cast_bf16_to_f32(const std::uint16_t* input, float* output,
+                                        std::size_t elements) {
+  for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < elements;
+       index += blockDim.x * gridDim.x) {
+    output[index] = __uint_as_float(static_cast<std::uint32_t>(input[index]) << 16U);
+  }
+}
+
+__global__ inline void cast_f32_to_bf16(const float* input, std::uint16_t* output,
+                                        std::size_t elements) {
+  for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < elements;
+       index += blockDim.x * gridDim.x) {
+    const std::uint32_t bits = __float_as_uint(input[index]);
+    const std::uint32_t rounding = ((bits >> 16U) & 1U) + 0x7FFFU;
+    output[index] = static_cast<std::uint16_t>((bits + rounding) >> 16U);
+  }
+}
+
 __device__ inline float decode_e2m1_device(std::uint8_t code) {
   constexpr float magnitudes[8] = {0.0F, 0.5F, 1.0F, 1.5F, 2.0F, 3.0F, 4.0F, 6.0F};
   const float magnitude = magnitudes[code & 0x07U];
@@ -338,6 +356,36 @@ inline cudaError_t launch_embedding_bf16(const ir::physical::CommandDescriptor& 
   return cudaGetLastError();
 }
 
+inline cudaError_t launch_cast_bf16_to_f32(const ir::physical::CommandDescriptor& command,
+                                           const ir::physical::Plan& plan, void* arena, void*,
+                                           cudaStream_t stream) {
+  if (command.buffers.size() != 2) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& output = plan.buffers()[command.buffers[1].value()];
+  if (input.size == 0 || input.size % sizeof(std::uint16_t) != 0 ||
+      output.size != input.size * 2U) return cudaErrorInvalidValue;
+  cast_bf16_to_f32<<<1, 256, 0, stream>>>(
+      static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, input.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)),
+      static_cast<std::size_t>(input.size / sizeof(std::uint16_t)));
+  return cudaGetLastError();
+}
+
+inline cudaError_t launch_cast_f32_to_bf16(const ir::physical::CommandDescriptor& command,
+                                           const ir::physical::Plan& plan, void* arena, void*,
+                                           cudaStream_t stream) {
+  if (command.buffers.size() != 2) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& output = plan.buffers()[command.buffers[1].value()];
+  if (input.size == 0 || input.size % sizeof(float) != 0 ||
+      output.size != input.size / 2U) return cudaErrorInvalidValue;
+  cast_f32_to_bf16<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+      static_cast<std::uint16_t*>(buffer_pointer(plan, arena, output.id)),
+      static_cast<std::size_t>(input.size / sizeof(float)));
+  return cudaGetLastError();
+}
+
 inline cudaError_t launch_nvfp4_dequantize(const ir::physical::CommandDescriptor& command,
                                            const ir::physical::Plan& plan, void* arena, void*,
                                            cudaStream_t stream) {
@@ -601,6 +649,26 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
             "CUDA NVFP4 dequantization requires packed, scale, and aligned f32 buffers");
       }
       return {};
+    case 16:
+      if (!exact_buffers(2) || !has_dtype(0, ir::physical::PhysicalDType::bf16) ||
+          !has_dtype(1, ir::physical::PhysicalDType::f32) ||
+          plan.buffers()[command.buffers[0].value()].size == 0 ||
+          plan.buffers()[command.buffers[0].value()].size > UINT64_MAX / 2U ||
+          plan.buffers()[command.buffers[1].value()].size !=
+              plan.buffers()[command.buffers[0].value()].size * 2U) {
+        return base::Status::invalid_argument("CUDA BF16-to-F32 cast has invalid buffers");
+      }
+      return {};
+    case 17:
+      if (!exact_buffers(2) || !has_dtype(0, ir::physical::PhysicalDType::f32) ||
+          !has_dtype(1, ir::physical::PhysicalDType::bf16) ||
+          plan.buffers()[command.buffers[0].value()].size == 0 ||
+          plan.buffers()[command.buffers[0].value()].size % sizeof(float) != 0 ||
+          plan.buffers()[command.buffers[1].value()].size !=
+              plan.buffers()[command.buffers[0].value()].size / 2U) {
+        return base::Status::invalid_argument("CUDA F32-to-BF16 cast has invalid buffers");
+      }
+      return {};
     case 10: {
       if (!exact_buffers(3) || plan.buffers()[command.buffers[0].value()].size == 0 ||
           !all_dtype(ir::physical::PhysicalDType::f32) ||
@@ -806,6 +874,8 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 1: return &launch_copy;
     case 7: return &launch_embedding;
     case 8: return &launch_embedding_bf16;
+    case 16: return &launch_cast_bf16_to_f32;
+    case 17: return &launch_cast_f32_to_bf16;
     case 9: return &launch_nvfp4_dequantize;
     case 10: return &launch_lm_head;
     case 11: return &launch_gated_dense_ffn;

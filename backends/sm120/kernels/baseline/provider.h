@@ -31,6 +31,18 @@ class BaselineProvider final : public kernels::KernelProvider {
       }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{1}, "sm120.baseline", true, 0}};
     }
+    if (query.operation == "cast") {
+      if (query.operand_dtypes.size() != 2) {
+        return base::Status::unsupported("baseline cast requires source and destination dtypes");
+      }
+      if (query.operand_dtypes[0] == "bf16" && query.operand_dtypes[1] == "f32") {
+        return std::vector<kernels::KernelCandidate>{{base::KernelId{16}, "sm120.baseline", true, 0}};
+      }
+      if (query.operand_dtypes[0] == "f32" && query.operand_dtypes[1] == "bf16") {
+        return std::vector<kernels::KernelCandidate>{{base::KernelId{17}, "sm120.baseline", true, 0}};
+      }
+      return base::Status::unsupported("baseline cast only supports BF16/F32 conversion");
+    }
     if (query.operation == "residual") {
       if (!query.operand_dtypes.empty() &&
           std::any_of(query.operand_dtypes.begin(), query.operand_dtypes.end(),

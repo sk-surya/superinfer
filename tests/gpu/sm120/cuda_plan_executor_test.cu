@@ -105,6 +105,34 @@ superinfer::ir::physical::Plan make_bf16_embedding_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_bf16_to_f32_cast_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({32, 0, 1});
+  assert(builder.add_buffer(0, 8, 8, typed_tensor(ir::physical::PhysicalDType::bf16, {4})).has_value());
+  assert(builder.add_buffer(16, 16, 8, typed_tensor(ir::physical::PhysicalDType::f32, {4})).has_value());
+  assert(builder.add_command(base::KernelId{16},
+                             {ir::physical::BufferId{0}, ir::physical::BufferId{1}}, {}, 0, 0, 0)
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
+superinfer::ir::physical::Plan make_f32_to_bf16_cast_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({32, 0, 1});
+  assert(builder.add_buffer(0, 16, 8, typed_tensor(ir::physical::PhysicalDType::f32, {4})).has_value());
+  assert(builder.add_buffer(16, 8, 8, typed_tensor(ir::physical::PhysicalDType::bf16, {4})).has_value());
+  assert(builder.add_command(base::KernelId{17},
+                             {ir::physical::BufferId{0}, ir::physical::BufferId{1}}, {}, 0, 0, 0)
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 superinfer::ir::physical::Plan make_nvfp4_dequantize_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
@@ -420,6 +448,40 @@ int main() {
       base::ByteView(reinterpret_cast<std::byte*>(bf16_embedded.data()),
                      sizeof(bf16_embedded))).ok());
   assert((bf16_embedded == std::array<float, 2>{5.0F, 6.0F}));
+
+  const auto bf16_to_f32_plan = make_bf16_to_f32_cast_plan();
+  auto bf16_to_f32 = sm120::cuda_runtime::CudaPlanSession::create(
+      bf16_to_f32_plan, 120, "baseline-v1");
+  assert(bf16_to_f32.has_value());
+  const std::array<std::uint16_t, 4> bf16_values{0x3f80, 0x4000, 0x4040, 0x4080};
+  assert(bf16_to_f32.value().copy_to_device(
+      ir::physical::BufferId{0},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(bf16_values.data()),
+                          sizeof(bf16_values))).ok());
+  assert(bf16_to_f32.value().execute().ok());
+  assert(bf16_to_f32.value().synchronize_for_test().ok());
+  std::array<float, 4> f32_values{};
+  assert(bf16_to_f32.value().copy_from_device(
+      ir::physical::BufferId{1},
+      base::ByteView(reinterpret_cast<std::byte*>(f32_values.data()), sizeof(f32_values))).ok());
+  assert((f32_values == std::array<float, 4>{1.0F, 2.0F, 3.0F, 4.0F}));
+
+  const auto f32_to_bf16_plan = make_f32_to_bf16_cast_plan();
+  auto f32_to_bf16 = sm120::cuda_runtime::CudaPlanSession::create(
+      f32_to_bf16_plan, 120, "baseline-v1");
+  assert(f32_to_bf16.has_value());
+  const std::array<float, 4> f32_input{1.0F, 2.0F, 3.0F, 4.0F};
+  assert(f32_to_bf16.value().copy_to_device(
+      ir::physical::BufferId{0},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(f32_input.data()),
+                          sizeof(f32_input))).ok());
+  assert(f32_to_bf16.value().execute().ok());
+  assert(f32_to_bf16.value().synchronize_for_test().ok());
+  std::array<std::uint16_t, 4> bf16_output{};
+  assert(f32_to_bf16.value().copy_from_device(
+      ir::physical::BufferId{1},
+      base::ByteView(reinterpret_cast<std::byte*>(bf16_output.data()), sizeof(bf16_output))).ok());
+  assert(bf16_output == bf16_values);
 
   const auto nvfp4_plan = make_nvfp4_dequantize_plan();
   auto nvfp4 = sm120::cuda_runtime::CudaPlanSession::create(nvfp4_plan, 120, "baseline-v1");

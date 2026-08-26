@@ -43,6 +43,8 @@ struct AttentionDimensions final {
   std::uint32_t key_value_heads{0};
   std::uint32_t head_dimension{0};
   std::uint32_t positions{0};
+  std::uint32_t value_heads{0};
+  std::uint32_t value_dimension{0};
 };
 
 struct CommandDescriptor final {

@@ -58,7 +58,17 @@ class BaselineProvider final : public kernels::KernelProvider {
       return std::vector<kernels::KernelCandidate>{{base::KernelId{13}, "sm120.baseline", true, 0}};
     }
     if (query.operation == "attention") {
+      if (query.operand_count != 0 && query.operand_count != 4) {
+        return base::Status::unsupported("baseline attention requires four physical operands");
+      }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{14}, "sm120.baseline", true, 0}};
+    }
+    if (query.operation == "gated_delta_attention") {
+      if (query.operand_count != 0 && query.operand_count != 7) {
+        return base::Status::unsupported(
+            "baseline gated delta attention requires seven physical operands");
+      }
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{15}, "sm120.baseline", true, 0}};
     }
     if (query.operation == "lm_head") {
       if (query.storage_dtype != "f32") {

@@ -190,6 +190,49 @@ superinfer::ir::physical::Plan make_nvfp4_linear_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_attention_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({64, 0, 1});
+  assert(builder.add_buffer(0, 16, 16).has_value());
+  assert(builder.add_buffer(16, 16, 16).has_value());
+  assert(builder.add_buffer(32, 16, 16).has_value());
+  assert(builder.add_buffer(48, 16, 16).has_value());
+  assert(builder
+             .add_command(base::KernelId{14},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}, ir::physical::BufferId{3}},
+                          {}, 0, 0, 0, 1.0e-5F, 1.0F, {2, 1, 2, 2, 0, 0})
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
+superinfer::ir::physical::Plan make_gated_delta_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({224, 0, 1});
+  assert(builder.add_buffer(0, 16, 16).has_value());
+  assert(builder.add_buffer(16, 16, 16).has_value());
+  assert(builder.add_buffer(32, 32, 16).has_value());
+  assert(builder.add_buffer(64, 16, 16).has_value());
+  assert(builder.add_buffer(80, 16, 16).has_value());
+  assert(builder.add_buffer(96, 32, 16).has_value());
+  assert(builder.add_buffer(128, 32, 16).has_value());
+  assert(builder
+             .add_command(base::KernelId{15},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}, ir::physical::BufferId{3},
+                           ir::physical::BufferId{4}, ir::physical::BufferId{5},
+                           ir::physical::BufferId{6}},
+                          {}, 0, 0, 0, 1.0e-5F, 1.0F, {1, 1, 2, 2, 2, 2})
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 }  // namespace
 
 int main() {
@@ -389,6 +432,78 @@ int main() {
       -0.0F, -1.0F, -2.0F, -3.0F, -4.0F, -6.0F, -8.0F, -12.0F};
   for (std::size_t index = 0; index < expected_nvfp4.size(); ++index) {
     assert(std::abs(dequantized_nvfp4[index] - expected_nvfp4[index]) < 1.0e-5F);
+  }
+
+  const auto attention_plan = make_attention_plan();
+  auto attention = sm120::cuda_runtime::CudaPlanSession::create(
+      attention_plan, 120, "baseline-v1");
+  assert(attention.has_value());
+  const std::array<float, 4> attention_query{1.0F, 0.0F, 0.0F, 1.0F};
+  const std::array<float, 4> attention_keys{1.0F, 0.0F, 0.0F, 1.0F};
+  const std::array<float, 4> attention_values{2.0F, 0.0F, 0.0F, 4.0F};
+  assert(attention.value().copy_to_device(
+      ir::physical::BufferId{0}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(attention_query.data()), sizeof(attention_query))).ok());
+  assert(attention.value().copy_to_device(
+      ir::physical::BufferId{1}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(attention_keys.data()), sizeof(attention_keys))).ok());
+  assert(attention.value().copy_to_device(
+      ir::physical::BufferId{2}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(attention_values.data()), sizeof(attention_values))).ok());
+  assert(attention.value().execute().ok());
+  assert(attention.value().synchronize_for_test().ok());
+  std::array<float, 4> attention_output{};
+  assert(attention.value().copy_from_device(
+      ir::physical::BufferId{3}, base::ByteView(
+          reinterpret_cast<std::byte*>(attention_output.data()), sizeof(attention_output))).ok());
+  const float attention_probability = std::exp(1.0F / std::sqrt(2.0F)) /
+                                      (std::exp(1.0F / std::sqrt(2.0F)) + 1.0F);
+  assert(std::abs(attention_output[0] - 2.0F * attention_probability) < 1.0e-5F);
+  assert(std::abs(attention_output[1] - 4.0F * (1.0F - attention_probability)) < 1.0e-5F);
+
+  const auto gated_delta_plan = make_gated_delta_plan();
+  auto gated_delta = sm120::cuda_runtime::CudaPlanSession::create(
+      gated_delta_plan, 120, "baseline-v1");
+  assert(gated_delta.has_value());
+  const std::array<float, 4> delta_query{1.0F, 0.0F, 0.0F, 1.0F};
+  const std::array<float, 4> delta_key{1.0F, 0.0F, 0.0F, 1.0F};
+  const std::array<float, 8> delta_value{2.0F, 3.0F, 4.0F, 5.0F,
+                                         6.0F, 7.0F, 8.0F, 9.0F};
+  const std::array<float, 4> delta_log_decay{0.0F, 0.0F, 0.0F, 0.0F};
+  const std::array<float, 4> delta_beta{1.0F, 1.0F, 1.0F, 1.0F};
+  const std::array<float, 8> zero_delta_state{};
+  for (const auto& upload : std::array<std::pair<ir::physical::BufferId, base::ConstByteView>, 6>{
+           {{ir::physical::BufferId{0}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(delta_query.data()), sizeof(delta_query))},
+            {ir::physical::BufferId{1}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(delta_key.data()), sizeof(delta_key))},
+            {ir::physical::BufferId{2}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(delta_value.data()), sizeof(delta_value))},
+            {ir::physical::BufferId{3}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(delta_log_decay.data()), sizeof(delta_log_decay))},
+            {ir::physical::BufferId{4}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(delta_beta.data()), sizeof(delta_beta))},
+            {ir::physical::BufferId{5}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(zero_delta_state.data()), sizeof(zero_delta_state))}}}) {
+    assert(gated_delta.value().copy_to_device(upload.first, upload.second).ok());
+  }
+  assert(gated_delta.value().execute().ok());
+  assert(gated_delta.value().synchronize_for_test().ok());
+  std::array<float, 8> delta_output{};
+  std::array<float, 8> delta_state{};
+  assert(gated_delta.value().copy_from_device(
+      ir::physical::BufferId{6}, base::ByteView(
+          reinterpret_cast<std::byte*>(delta_output.data()), sizeof(delta_output))).ok());
+  assert(gated_delta.value().copy_from_device(
+      ir::physical::BufferId{5}, base::ByteView(
+          reinterpret_cast<std::byte*>(delta_state.data()), sizeof(delta_state))).ok());
+  for (std::size_t index = 0; index < delta_output.size(); ++index) {
+    assert(std::abs(delta_output[index] - delta_value[index] / std::sqrt(2.0F)) < 1.0e-5F);
+  }
+  const std::array<float, 8> expected_delta_state{2.0F, 3.0F, 6.0F, 7.0F,
+                                                   4.0F, 5.0F, 8.0F, 9.0F};
+  for (std::size_t index = 0; index < delta_state.size(); ++index) {
+    assert(std::abs(delta_state[index] - expected_delta_state[index]) < 1.0e-5F);
   }
 
   const auto lm_head_plan = make_lm_head_plan();

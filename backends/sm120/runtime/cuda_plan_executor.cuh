@@ -178,6 +178,60 @@ __global__ inline void grouped_attention_f32(const float* query, const float* ke
   }
 }
 
+/** Reference-correct recurrent gated-delta attention with an in-place FP32 state matrix. */
+__global__ inline void gated_delta_attention_f32(
+    const float* query, const float* keys, const float* values, const float* log_decay,
+    const float* beta, float* state, float* output, std::size_t key_heads,
+    std::size_t value_heads, std::size_t key_dimension, std::size_t value_dimension,
+    std::size_t positions) {
+  const std::size_t head = blockIdx.x * blockDim.x + threadIdx.x;
+  if (head >= value_heads) return;
+  const std::size_t heads_per_value = value_heads / key_heads;
+  const std::size_t key_head = head / heads_per_value;
+  const std::size_t state_base = head * key_dimension * value_dimension;
+  const float scale = rsqrtf(static_cast<float>(key_dimension));
+  for (std::size_t position = 0; position < positions; ++position) {
+    const float decay = expf(log_decay[position * value_heads + head]);
+    for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+      for (std::size_t value_index = 0; value_index < value_dimension; ++value_index) {
+        state[state_base + key_index * value_dimension + value_index] *= decay;
+      }
+    }
+    const std::size_t query_base = (position * key_heads + key_head) * key_dimension;
+    float query_norm = 0.0F;
+    float key_norm = 0.0F;
+    for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+      query_norm += query[query_base + key_index] * query[query_base + key_index];
+      key_norm += keys[query_base + key_index] * keys[query_base + key_index];
+    }
+    const float query_scale = rsqrtf(query_norm + 1.0e-6F);
+    const float key_scale = rsqrtf(key_norm + 1.0e-6F);
+    const float beta_value = beta[position * value_heads + head];
+    const std::size_t value_base = (position * value_heads + head) * value_dimension;
+    for (std::size_t value_index = 0; value_index < value_dimension; ++value_index) {
+      float key_value = 0.0F;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        key_value += state[state_base + key_index * value_dimension + value_index] *
+                     (keys[query_base + key_index] * key_scale);
+      }
+      const float delta = (values[value_base + value_index] - key_value) * beta_value;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        state[state_base + key_index * value_dimension + value_index] +=
+            (keys[query_base + key_index] * key_scale) * delta;
+      }
+    }
+    const std::size_t output_base = value_base;
+    for (std::size_t value_index = 0; value_index < value_dimension; ++value_index) {
+      float result = 0.0F;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        result += state[state_base + key_index * value_dimension + value_index] *
+                  (query[query_base + key_index] * query_scale);
+      }
+      output[output_base + value_index] = result * scale;
+    }
+  }
+}
+
 __global__ inline void rms_norm_f32(const float* input, const float* scale, float* output,
                                     std::size_t elements, float epsilon) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
@@ -373,6 +427,24 @@ inline cudaError_t launch_attention(const ir::physical::CommandDescriptor& comma
       static_cast<const float*>(buffer_pointer(plan, arena, values.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)), dimensions.query_heads,
       dimensions.key_value_heads, dimensions.head_dimension, dimensions.positions);
+  return cudaGetLastError();
+}
+
+inline cudaError_t launch_gated_delta_attention(
+    const ir::physical::CommandDescriptor& command, const ir::physical::Plan& plan, void* arena,
+    void*, cudaStream_t stream) {
+  if (command.buffers.size() != 7) return cudaErrorInvalidValue;
+  const auto dimensions = command.attention;
+  gated_delta_attention_f32<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[0].value()].id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[1].value()].id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[2].value()].id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[3].value()].id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[4].value()].id)),
+      static_cast<float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[5].value()].id)),
+      static_cast<float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[6].value()].id)),
+      dimensions.key_value_heads, dimensions.value_heads, dimensions.head_dimension,
+      dimensions.value_dimension, dimensions.positions);
   return cudaGetLastError();
 }
 
@@ -609,6 +681,57 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       }
       return {};
     }
+    case 15: {
+      if (!exact_buffers(7)) {
+        return base::Status::invalid_argument(
+            "CUDA gated delta attention requires query, key, value, gates, state, and output buffers");
+      }
+      const auto dimensions = command.attention;
+      if (dimensions.query_heads == 0 || dimensions.key_value_heads == 0 ||
+          dimensions.value_heads == 0 || dimensions.head_dimension == 0 ||
+          dimensions.value_dimension == 0 || dimensions.positions == 0 ||
+          dimensions.query_heads != dimensions.key_value_heads ||
+          dimensions.value_heads % dimensions.key_value_heads != 0) {
+        return base::Status::invalid_argument("CUDA gated delta attention dimensions are invalid");
+      }
+      const auto product = [](std::uint64_t first, std::uint64_t second,
+                              std::uint64_t third) -> std::uint64_t {
+        if (first != 0 && second > std::numeric_limits<std::uint64_t>::max() / first) return 0;
+        const std::uint64_t first_two = first * second;
+        if (third != 0 && first_two > std::numeric_limits<std::uint64_t>::max() / third) return 0;
+        return first_two * third;
+      };
+      const std::uint64_t qk_elements = product(
+          dimensions.positions, dimensions.key_value_heads, dimensions.head_dimension);
+      const std::uint64_t value_elements = product(
+          dimensions.positions, dimensions.value_heads, dimensions.value_dimension);
+      const std::uint64_t state_elements = product(
+          dimensions.value_heads, dimensions.head_dimension, dimensions.value_dimension);
+      const auto bytes = [](std::uint64_t elements) -> std::uint64_t {
+        return elements > std::numeric_limits<std::uint64_t>::max() / sizeof(float)
+                   ? 0
+                   : elements * sizeof(float);
+      };
+      const auto& query = plan.buffers()[command.buffers[0].value()];
+      const auto& keys = plan.buffers()[command.buffers[1].value()];
+      const auto& values = plan.buffers()[command.buffers[2].value()];
+      const auto& log_decay = plan.buffers()[command.buffers[3].value()];
+      const auto& beta = plan.buffers()[command.buffers[4].value()];
+      const auto& state = plan.buffers()[command.buffers[5].value()];
+      const auto& output = plan.buffers()[command.buffers[6].value()];
+      if (qk_elements == 0 || value_elements == 0 || state_elements == 0 ||
+          query.size != bytes(qk_elements) || keys.size != bytes(qk_elements) ||
+          values.size != bytes(value_elements) ||
+          log_decay.size != bytes(static_cast<std::uint64_t>(dimensions.positions) *
+                                  dimensions.value_heads) ||
+          beta.size != bytes(static_cast<std::uint64_t>(dimensions.positions) *
+                             dimensions.value_heads) ||
+          state.size != bytes(state_elements) || output.size != bytes(value_elements)) {
+        return base::Status::invalid_argument(
+            "CUDA gated delta attention buffer sizes do not match authored dimensions");
+      }
+      return {};
+    }
     case 4:
       if (!same_sizes(3)) return base::Status::invalid_argument("CUDA residual requires three equal-sized f32 buffers");
       return {};
@@ -648,6 +771,7 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 12: return &launch_rms_norm_bf16;
     case 13: return &launch_nvfp4_linear;
     case 14: return &launch_attention;
+    case 15: return &launch_gated_delta_attention;
     case 6: return &launch_layer_norm;
     default: return nullptr;
   }

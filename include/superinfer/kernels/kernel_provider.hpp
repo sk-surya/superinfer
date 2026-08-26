@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 #include <type_traits>
@@ -16,6 +17,8 @@ struct KernelQuery final {
   std::uint32_t target_capability;
   /** Storage dtype of the operation's weight operand when a provider needs it. */
   std::string_view storage_dtype{"f32"};
+  /** Number of lowered operands, when the compiler has an explicit operation contract. */
+  std::size_t operand_count{0};
 };
 
 /** Describes a candidate's correctness and resource envelope before selection. */

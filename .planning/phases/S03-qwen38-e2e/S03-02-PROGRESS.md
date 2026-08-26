@@ -130,6 +130,15 @@ updated: 2026-08-26
   the independent softmax oracle, checking authored head attributes and contiguous cache shapes;
   the same fixture is used to validate the CUDA provider. Qwen's projection/RoPE/state lowering is
   still intentionally separate from this primitive contract.
+- A generic stateful Gated DeltaNet baseline is now provider ID 15. Its Physical Plan contract
+  authors key/value heads and dimensions, validates query/key/value/gate/state/output sizes, and
+  updates an in-place FP32 recurrent state. The RTX 5090 fixture checks both emitted values and
+  final state against the independent recurrence oracle; Qwen projection and convolution lowering
+  remain open.
+- Kernel queries now carry lowered operand count, and the baseline provider rejects attention or
+  recurrent candidates whose physical buffer contracts do not match. This prevents the current
+  Qwen Semantic IR's richer unresolved attention nodes from being falsely emitted as executable
+  primitive commands.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

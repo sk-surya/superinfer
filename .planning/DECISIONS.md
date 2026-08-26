@@ -126,3 +126,10 @@
 **Decision:** Initial 2x5090 support uses compiler-selected contiguous layer partitioning from actual packed bytes under independent device budgets/headroom. Cross-domain movement is represented as explicit Physical Plan transfer commands. PLE/N-gram tables are a first-class read-only host/mmap StoragePolicy path with sparse gather and preallocated asynchronous staging, not generic CPU offload.
 **Why:** Pipeline partitioning minimizes PCIe communication relative to expert weights and keeps execution deterministic. PLE naturally benefits from host residency because only selected vectors need transfer.
 **Consequence:** Tensor parallelism, expert parallelism and generic arbitrary offload remain deferred. A hard-coded 24/24 split is forbidden. Expert residency is decided separately by S03F-01 exact capacity/quality evidence; no silent expert paging is permitted.
+
+## D-019 — Flash-Next residency remains undecided pending source evidence
+
+**Status:** Accepted
+**Decision:** S03F-01 cannot select a full-expert residency or quantization recipe because the exact Flash-Next artifact and pinned reference revision are unavailable. Until that evidence is supplied, `full_expert_residency_feasible` is unknown, no quality-preserving quantization claim is made, and S03F implementation may not add expert staging, caching, or paging.
+**Why:** The checked-in evidence contains no exact Flash-Next safetensors headers, packed byte ranges, or reference evaluation. Parameter-count estimates and near-name model artifacts do not satisfy FN-001/FN-002.
+**Consequence:** S03F-02 remains engineering-blocked after the existing S03 dependency; the next research action is to provide the exact source/reference inputs and regenerate the canonical ledgers.

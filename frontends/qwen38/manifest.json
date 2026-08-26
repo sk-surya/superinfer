@@ -8,7 +8,9 @@
   "derivative": {
     "repository": "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
     "revision": "0cc27958cefbbe231782ec8511de8c4eb5233348",
-    "local_directory": "/srv/models/hf/Qwen3.8-27B-NVFP4-RTX5090-LMHead4"
+    "variant": "Qwen3.8-27B-NVFP4-RTX5090-LMHead4",
+    "local_directory": "/srv/models/hf/Qwen3.8-27B-NVFP4-RTX5090-LMHead4",
+    "local_variant_manifest_sha256": "8b5c890e6802402975a9aa26f28e6ad0a401ed786d24dc6b41c497d58dcab771"
   },
   "architecture": {
     "config_architecture": "Qwen3_5ForConditionalGeneration",

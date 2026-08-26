@@ -102,5 +102,24 @@ int main() {
   assert(typed_plan.value().commands().front().operands.front().dtype ==
          ir::physical::PhysicalDType::bf16);
   assert(typed_plan.value().commands().front().operands.front().shape == std::vector<std::uint64_t>({2, 4}));
+
+  ir::physical::PlanBuilder mismatched_operand_builder;
+  mismatched_operand_builder.set_resource_bounds({32, 0, 1});
+  ir::physical::PhysicalTensorDescriptor f32_tensor;
+  f32_tensor.dtype = ir::physical::PhysicalDType::f32;
+  f32_tensor.shape = {4};
+  const auto f32_buffer = mismatched_operand_builder.add_buffer(0, 16, 16, f32_tensor);
+  assert(f32_buffer.has_value());
+  const std::vector<ir::physical::PhysicalOperandDescriptor> wrong_operands{
+      {f32_buffer.value(), ir::physical::PhysicalDType::bf16, {4},
+       ir::physical::PhysicalLayout::row_major, 16, ir::physical::StorageEncoding::none}};
+  assert(mismatched_operand_builder
+             .add_command(base::KernelId{1}, {f32_buffer.value()}, {}, 0, 0, 0, 1.0e-5F, 1.0F,
+                          {}, false, wrong_operands)
+             .has_value());
+  const auto mismatched_operand_plan =
+      std::move(mismatched_operand_builder).finalize({120, "fixture-catalog"});
+  assert(!mismatched_operand_plan.has_value());
+  assert(mismatched_operand_plan.error().message().find("type") != std::string::npos);
   return 0;
 }

@@ -143,6 +143,25 @@ updated: 2026-08-26
   recurrent candidates whose physical buffer contracts do not match. This prevents the current
   Qwen Semantic IR's richer unresolved attention nodes from being falsely emitted as executable
   primitive commands.
+- Semantic RMSNorm now carries an explicit epsilon and scale convention. The pinned Qwen frontend
+  emits `epsilon=1e-6` and `one_plus_weight`; lowering, the CPU oracle, specialization metadata,
+  and both CUDA norm kernels preserve the contract. A regression covers the exact Qwen affine
+  formula rather than only the generic kernel's former direct-weight assumption.
+- Physical buffers and command operands now carry dtype, logical shape, layout, alignment, and
+  storage encoding. Specialization materializes this metadata from Lowered IR, and provider/CUDA
+  eligibility rejects BF16 activations for FP32-only kernels instead of allowing reinterpretation.
+  NVFP4 packed views retain their explicit packed encoding.
+- Lowered IR now retains 128 state slots with explicit read/write/commit transitions and carries
+  semantic decode entry bindings. A state transition therefore survives into the representation
+  consumed by physical planning instead of being reconstructed from command position.
+- Full-attention semantics explicitly declare Qwen's sigmoid output gate; the frontend never relies
+  on an unusual q-projection shape to infer model meaning. The baseline provider rejects that
+  richer contract until a compatible physical implementation exists.
+- `tools/qwen38_layer_differential.py` runs a deterministic checkpoint-backed layer 3 comparison
+  against Transformers 5.12.1 using the independent RMSNorm, gated QKV, partial RoPE, GQA,
+  sigmoid-gate, output-projection, and MLP equations. The local BF16 checkpoint result is recorded
+  in `build/evidence/qwen38-layer3-differential.json` with `delta_max=0`; this is an oracle
+  contract result, not yet SuperInfer CUDA execution evidence.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

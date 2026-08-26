@@ -20,8 +20,11 @@ def _config() -> dict[str, object]:
             "intermediate_size": 17408,
             "vocab_size": 248320,
             "max_position_embeddings": 262144,
-            "layer_types": ["linear_attention", "full_attention"] * 32,
+            "layer_types": ["linear_attention", "linear_attention", "linear_attention", "full_attention"] * 16,
             "full_attention_interval": 4,
+            "linear_key_head_dim": 128,
+            "linear_value_head_dim": 128,
+            "linear_conv_kernel_dim": 4,
             "rms_norm_eps": 1e-6,
             "bos_token_id": 1,
             "eos_token_id": 2,
@@ -33,13 +36,19 @@ def _write_source(root: Path, *, indexed_name: str = "weight") -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "config.json").write_text(json.dumps(_config()), encoding="utf-8")
     (root / "generation_config.json").write_text("{}", encoding="utf-8")
-    (root / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (root / "tokenizer.json").write_text(
+        json.dumps({
+            "model": {"type": "BPE", "vocab": {"x": 0}, "merges": []},
+            "added_tokens": [{"content": "<|im_end|>", "id": 2}],
+        }),
+        encoding="utf-8",
+    )
     (root / "tokenizer_config.json").write_text(
         json.dumps({"tokenizer_class": "Qwen2Tokenizer", "model_max_length": 262144, "eos_token": "<|im_end|>"}),
         encoding="utf-8",
     )
     (root / "chat_template.jinja").write_text("{{ messages }}", encoding="utf-8")
-    (root / "vocab.json").write_text("{}", encoding="utf-8")
+    (root / "vocab.json").write_text(json.dumps({"x": 0}), encoding="utf-8")
     (root / "merges.txt").write_text("", encoding="utf-8")
     (root / "hf_quant_config.json").write_text("{}", encoding="utf-8")
     header = json.dumps(
@@ -60,12 +69,13 @@ class Qwen38SourceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _write_source(root)
-            first = validate_source(root, upstream_revision="1" * 40, derivative_revision="2" * 40)
-            second = validate_source(root, upstream_revision="1" * 40, derivative_revision="2" * 40)
+            first = validate_source(root, enforce_pinned=False)
+            second = validate_source(root, enforce_pinned=False)
             self.assertEqual(first.manifest(), second.manifest())
             self.assertEqual(first.tensors[0].shape, (1,))
             self.assertEqual(first.tensors[0].data_end, 4)
             self.assertEqual(first.normalized_tensor_mapping()[0]["role"], "weight")
+            self.assertIn("model-00001-of-00001.safetensors", first.file_hashes)
 
     def test_config_mismatch_fails_before_tensor_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -76,7 +86,7 @@ class Qwen38SourceTests(unittest.TestCase):
             config["text_config"]["hidden_size"] = 1
             (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
             with self.assertRaisesRegex(Qwen38ValidationError, r"config_mismatch \[text_config.hidden_size\]"):
-                validate_source(root, upstream_revision="1" * 40, derivative_revision="2" * 40)
+                validate_source(root, enforce_pinned=False)
 
     def test_index_and_header_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -87,7 +97,27 @@ class Qwen38SourceTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(Qwen38ValidationError, "tensor_index_mismatch"):
+                validate_source(root, enforce_pinned=False)
+
+    def test_pinned_revision_gate_rejects_override(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_source(root)
+            with self.assertRaisesRegex(Qwen38ValidationError, "source_identity_mismatch"):
                 validate_source(root, upstream_revision="1" * 40, derivative_revision="2" * 40)
+
+    def test_shard_path_escape_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_source(root)
+            outside = root.parent / "outside.safetensors"
+            outside.write_bytes((root / "model-00001-of-00001.safetensors").read_bytes())
+            (root / "model.safetensors.index.json").write_text(
+                json.dumps({"weight_map": {"weight": "../outside.safetensors"}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(Qwen38ValidationError, "invalid_tensor_index"):
+                validate_source(root, enforce_pinned=False)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ namespace superinfer::frontends::qwen38 {
 inline constexpr std::string_view kSourceIdentity =
     "Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
     "+gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@0cc27958cefbbe231782ec8511de8c4eb5233348"
-    "+LMHead4@9a7893ae914813023309e32adc5d18cf281d0ca8ba3063ae1ba0f85b33bcbb39";
+    "+LMHead4@62abd1d060bd801005f47754f01619054cc248d3417699ecea414c7ede1b3a4a";
 
 /**
  * Emits canonical Semantic IR for the pinned Qwen3.8 language path.

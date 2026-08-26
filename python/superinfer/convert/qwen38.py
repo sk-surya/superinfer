@@ -1,7 +1,7 @@
-"""Strict, dependency-free Qwen3.8 source inventory validation.
+"""Strict, dependency-free Qwen3.8 source inventory and provenance validation.
 
-The validator reads JSON metadata and safetensors headers only. It never reads model payload bytes;
-conversion code can therefore reject a bad source before allocating bulk host/device storage.
+The validator parses JSON metadata and safetensors headers before conversion, then streams indexed
+shards to authenticate their payload hashes without materializing model weights in host memory.
 """
 
 from __future__ import annotations
@@ -84,6 +84,27 @@ class Qwen38Inventory:
         }
 
 
+PINNED_UPSTREAM_REPOSITORY = "Qwen/Qwen3.8-27B"
+PINNED_UPSTREAM_REVISION = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+PINNED_DERIVATIVE_REPOSITORY = "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090"
+PINNED_DERIVATIVE_REVISION = "0cc27958cefbbe231782ec8511de8c4eb5233348"
+PINNED_TENSOR_COUNT = 2402
+PINNED_TENSOR_INVENTORY_SHA256 = "cab1e4afdb94d48c0a1cfe6ee3833b22d9ec856c077fb1eeef92f674032aa3ab"
+PINNED_FILE_SHA256 = {
+    "config.json": "78f65e03f2ac08a39320bf4a2633f1ae1526144da0fba1904b7371e682c304ea",
+    "generation_config.json": "7ae9e193dbcef99733ccf647c95ef668c35d1a80a8aa88a51ee40a9bcacf5a74",
+    "model.safetensors.index.json": "4f0c8847dd549636c873737a4703ff1f215a98ec6d5e90b082b31e9e26f4e765",
+    "model-00001-of-00003.safetensors": "cdd37b0e61eccc8a3d7d08f9d1a4f52856a9d88e4e8b42089bd18a970e3a01ec",
+    "model-00002-of-00003.safetensors": "4b547449a2b23c6cd414da0cf65ff9d7e17ad9aa2b119beedcbba14f649eb1dd",
+    "model-00003-of-00003.safetensors": "9ce944d534eabdd493076a3a52c7ebd31f41c135b340a1ea95c5a695e6f1f6b2",
+    "tokenizer.json": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+    "tokenizer_config.json": "c873857aae349387312ff4cb76d4a17a8d5ed79f89523146200a1570739132db",
+    "chat_template.jinja": "0a20a4673d45476ed88dcb4a60b6af35ca202ae470fee6fd2bd419758aabd9ab",
+    "vocab.json": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+    "merges.txt": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+    "hf_quant_config.json": "2c30a0d7e08c5eede4a273c9862aa90f49adfda1cd661dd564742749de9c1a2b",
+}
+
 _REQUIRED_FILES = (
     "config.json",
     "generation_config.json",
@@ -104,6 +125,8 @@ def _read_json(path: Path, field: str) -> Any:
         raise Qwen38ValidationError("missing_file", field, str(path.name)) from error
     except json.JSONDecodeError as error:
         raise Qwen38ValidationError("invalid_json", field, str(error)) from error
+    except UnicodeError as error:
+        raise Qwen38ValidationError("invalid_encoding", field, str(error)) from error
 
 
 def _required_mapping(value: Any, field: str) -> Mapping[str, Any]:
@@ -142,12 +165,19 @@ def _validate_config(config: Mapping[str, Any]) -> dict[str, Any]:
         if actual != expected_value:
             raise Qwen38ValidationError("config_mismatch", f"text_config.{field}", f"expected {expected_value}, got {actual!r}")
     layers = text.get("layer_types")
-    if not isinstance(layers, list) or len(layers) != 64 or any(
-        layer not in {"linear_attention", "full_attention"} for layer in layers
-    ):
-        raise Qwen38ValidationError("config_mismatch", "text_config.layer_types", "expected 64 known layer types")
+    expected_layers = ["linear_attention"] * 64
+    expected_layers[3::4] = ["full_attention"] * 16
+    if layers != expected_layers:
+        raise Qwen38ValidationError("config_mismatch", "text_config.layer_types", "expected the pinned 3-linear/1-full schedule")
     if text.get("full_attention_interval") != 4:
         raise Qwen38ValidationError("config_mismatch", "text_config.full_attention_interval", "expected 4")
+    for field, expected_value in {
+        "linear_key_head_dim": 128,
+        "linear_value_head_dim": 128,
+        "linear_conv_kernel_dim": 4,
+    }.items():
+        if text.get(field) != expected_value:
+            raise Qwen38ValidationError("config_mismatch", f"text_config.{field}", f"expected {expected_value}")
     epsilon = text.get("rms_norm_eps")
     if not isinstance(epsilon, (int, float)) or isinstance(epsilon, bool) or not 0.0 < epsilon < 1.0:
         raise Qwen38ValidationError("invalid_value", "text_config.rms_norm_eps", "expected 0 < epsilon < 1")
@@ -157,6 +187,18 @@ def _validate_config(config: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _validate_tokenizer(model_dir: Path) -> None:
+    tokenizer_json = _required_mapping(_read_json(model_dir / "tokenizer.json", "tokenizer"), "tokenizer")
+    model = _required_mapping(tokenizer_json.get("model"), "tokenizer.model")
+    if model.get("type") != "BPE" or not isinstance(model.get("vocab"), dict) or not isinstance(model.get("merges"), list):
+        raise Qwen38ValidationError("tokenizer_mismatch", "tokenizer.model", "expected a BPE model with vocab and merges")
+    vocab = _required_mapping(_read_json(model_dir / "vocab.json", "vocab"), "vocab")
+    if len(vocab) != len(model["vocab"]):
+        raise Qwen38ValidationError("tokenizer_mismatch", "vocab", "tokenizer.json and vocab.json sizes differ")
+    added_tokens = tokenizer_json.get("added_tokens")
+    if not isinstance(added_tokens, list) or not any(
+        isinstance(token, dict) and token.get("content") == "<|im_end|>" for token in added_tokens
+    ):
+        raise Qwen38ValidationError("tokenizer_mismatch", "tokenizer.added_tokens", "<|im_end|> is absent")
     tokenizer = _required_mapping(
         _read_json(model_dir / "tokenizer_config.json", "tokenizer_config"),
         "tokenizer_config",
@@ -199,7 +241,7 @@ def _safetensors_header(path: Path) -> Mapping[str, Any]:
             if header_size == 0 or header_size > 128 * 1024 * 1024:
                 raise Qwen38ValidationError("invalid_tensor_header", path.name, "header size is unsafe")
             header = stream.read(header_size)
-    except OSError as error:
+    except (OSError, struct.error) as error:
         raise Qwen38ValidationError("tensor_io", path.name, str(error)) from error
     if len(header) != header_size:
         raise Qwen38ValidationError("truncated_tensor_file", path.name, "header is truncated")
@@ -208,6 +250,32 @@ def _safetensors_header(path: Path) -> Mapping[str, Any]:
     except json.JSONDecodeError as error:
         raise Qwen38ValidationError("invalid_tensor_header", path.name, str(error)) from error
     return _required_mapping(value, path.name)
+
+
+def _safe_shard_path(model_dir: Path, shard: str) -> Path:
+    candidate = Path(shard)
+    if candidate.is_absolute() or candidate.name != shard or ".." in candidate.parts:
+        raise Qwen38ValidationError("invalid_tensor_index", "weight_map", "shard must be a plain basename")
+    root = model_dir.resolve()
+    path = (root / candidate).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as error:
+        raise Qwen38ValidationError("invalid_tensor_index", shard, "shard resolves outside model directory") from error
+    if not path.is_file():
+        raise Qwen38ValidationError("missing_file", shard, "indexed shard is absent")
+    return path
+
+
+def _file_sha256(path: Path, field: str) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as error:
+        raise Qwen38ValidationError("tensor_io", field, str(error)) from error
+    return digest.hexdigest()
 
 
 def _inventory(model_dir: Path, index: Mapping[str, Any]) -> tuple[TensorRecord, ...]:
@@ -219,12 +287,15 @@ def _inventory(model_dir: Path, index: Mapping[str, Any]) -> tuple[TensorRecord,
         grouped.setdefault(shard, []).append(name)
     records: list[TensorRecord] = []
     for shard, expected_names in sorted(grouped.items()):
-        path = model_dir / shard
+        path = _safe_shard_path(model_dir, shard)
         header = _safetensors_header(path)
-        file_size = path.stat().st_size
-        with path.open("rb") as stream:
-            raw_header_size = stream.read(8)
-        header_size = struct.unpack("<Q", raw_header_size)[0]
+        try:
+            file_size = path.stat().st_size
+            with path.open("rb") as stream:
+                raw_header_size = stream.read(8)
+            header_size = struct.unpack("<Q", raw_header_size)[0]
+        except (OSError, struct.error) as error:
+            raise Qwen38ValidationError("tensor_io", shard, str(error)) from error
         tensors = {name: value for name, value in header.items() if name != "__metadata__"}
         if set(tensors) != set(expected_names):
             raise Qwen38ValidationError("tensor_index_mismatch", shard, "index and safetensors names differ")
@@ -252,10 +323,11 @@ def _inventory(model_dir: Path, index: Mapping[str, Any]) -> tuple[TensorRecord,
 def validate_source(
     model_dir: Path,
     *,
-    upstream_revision: str,
-    derivative_revision: str,
-    upstream_repository: str = "Qwen/Qwen3.8-27B",
-    derivative_repository: str = "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+    upstream_revision: str = PINNED_UPSTREAM_REVISION,
+    derivative_revision: str = PINNED_DERIVATIVE_REVISION,
+    upstream_repository: str = PINNED_UPSTREAM_REPOSITORY,
+    derivative_repository: str = PINNED_DERIVATIVE_REPOSITORY,
+    enforce_pinned: bool = True,
 ) -> Qwen38Inventory:
     """Validate a pinned source directory and return deterministic metadata only."""
 
@@ -267,19 +339,31 @@ def validate_source(
         character in "0123456789abcdef" for character in derivative_revision
     ):
         raise Qwen38ValidationError("invalid_revision", "derivative_revision", "expected a 40-character lowercase SHA")
+    if enforce_pinned and (
+        upstream_repository != PINNED_UPSTREAM_REPOSITORY
+        or upstream_revision != PINNED_UPSTREAM_REVISION
+        or derivative_repository != PINNED_DERIVATIVE_REPOSITORY
+        or derivative_revision != PINNED_DERIVATIVE_REVISION
+    ):
+        raise Qwen38ValidationError("source_identity_mismatch", "source", "repository and revision are immutable")
     config = _validate_config(_required_mapping(_read_json(model_dir / "config.json", "config"), "config"))
     _validate_tokenizer(model_dir)
     index = _required_mapping(_read_json(model_dir / "model.safetensors.index.json", "tensor_index"), "tensor_index")
     tensors = _inventory(model_dir, index)
     file_hashes: dict[str, str] = {}
-    for filename in _REQUIRED_FILES:
+    shard_names = sorted({record.shard for record in tensors})
+    for filename in (*_REQUIRED_FILES, *shard_names):
         path = model_dir / filename
         if not path.is_file():
             raise Qwen38ValidationError("missing_file", filename, "required provenance input is missing")
-        file_hashes[filename] = hashlib.sha256(path.read_bytes()).hexdigest()
-    if not (model_dir / "chat_template.jinja").read_text(encoding="utf-8"):
+        file_hashes[filename] = _file_sha256(path, filename)
+    try:
+        template = (model_dir / "chat_template.jinja").read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise Qwen38ValidationError("invalid_template", "chat_template.jinja", str(error)) from error
+    if not template:
         raise Qwen38ValidationError("invalid_template", "chat_template.jinja", "template is empty")
-    return Qwen38Inventory(
+    inventory = Qwen38Inventory(
         upstream_repository,
         upstream_revision,
         derivative_repository,
@@ -288,3 +372,12 @@ def validate_source(
         tensors,
         file_hashes,
     )
+    if enforce_pinned:
+        if len(inventory.tensors) != PINNED_TENSOR_COUNT:
+            raise Qwen38ValidationError("tensor_schema_mismatch", "tensor_count", f"expected {PINNED_TENSOR_COUNT}")
+        if hashlib.sha256(inventory.canonical_tensor_bytes()).hexdigest() != PINNED_TENSOR_INVENTORY_SHA256:
+            raise Qwen38ValidationError("tensor_schema_mismatch", "tensor_inventory_sha256", "pinned tensor inventory differs")
+        for filename, expected in PINNED_FILE_SHA256.items():
+            if inventory.file_hashes.get(filename) != expected:
+                raise Qwen38ValidationError("source_hash_mismatch", filename, "pinned source hash differs")
+    return inventory

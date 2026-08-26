@@ -10,13 +10,20 @@ namespace {
 superinfer::ir::physical::Plan make_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
-  builder.set_resource_bounds({64, 0, 2});
+  builder.set_resource_bounds({48, 0, 2});
   assert(builder.add_buffer(0, 16, 16).has_value());
+  assert(builder.add_buffer(16, 16, 16).has_value());
+  assert(builder.add_buffer(32, 16, 16).has_value());
   assert(builder
-             .add_command(base::KernelId{2}, {ir::physical::BufferId{0}},
+             .add_command(base::KernelId{4},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}},
                           {ir::physical::CommandId{1}}, 0, 0, 0)
              .has_value());
-  assert(builder.add_command(base::KernelId{6}, {ir::physical::BufferId{0}}, {}, 0, 0, 0)
+  assert(builder
+             .add_command(base::KernelId{4},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}}, {}, 0, 0, 0)
              .has_value());
   const auto plan = std::move(builder).finalize({120, "baseline-v1"});
   assert(plan.has_value());
@@ -57,7 +64,7 @@ int main() {
   const auto plan = make_plan();
   auto session = sm120::cuda_runtime::CudaPlanSession::create(plan, 120, "baseline-v1");
   assert(session.has_value());
-  assert(session.value().device_arena_bytes() == 64);
+  assert(session.value().device_arena_bytes() == 48);
   assert(session.value().execute().ok());
   assert(session.value().execute().ok());
   assert(session.value().execute().ok());
@@ -78,6 +85,16 @@ int main() {
       zero_plan.value(), 120, "baseline-v1");
   assert(!rejected_kernel.has_value());
   assert(rejected_kernel.error().code() == base::StatusCode::failed_precondition);
+
+  ir::physical::PlanBuilder unknown_builder;
+  unknown_builder.set_resource_bounds({0, 0, 1});
+  assert(unknown_builder.add_command(base::KernelId{99}, {}, {}, 0, 0, 0).has_value());
+  const auto unknown_plan = std::move(unknown_builder).finalize({120, "baseline-v1"});
+  assert(unknown_plan.has_value());
+  const auto rejected_unknown = sm120::cuda_runtime::CudaPlanSession::create(
+      unknown_plan.value(), 120, "baseline-v1");
+  assert(!rejected_unknown.has_value());
+  assert(rejected_unknown.error().code() == base::StatusCode::unsupported);
 
   const auto numeric_plan = make_numeric_plan();
   auto numeric = sm120::cuda_runtime::CudaPlanSession::create(numeric_plan, 120, "baseline-v1");

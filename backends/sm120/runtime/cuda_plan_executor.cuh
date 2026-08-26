@@ -20,8 +20,6 @@ struct CudaExecutionTrace final {
 
 namespace detail {
 
-__global__ inline void baseline_command_stub() {}
-
 __global__ inline void residual_f32(const float* left, const float* right, float* output,
                                     std::size_t elements) {
   for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < elements;
@@ -44,12 +42,6 @@ using LaunchFunction = cudaError_t (*)(const ir::physical::CommandDescriptor&,
 inline void* buffer_pointer(const ir::physical::Plan& plan, void* arena,
                             ir::physical::BufferId id) {
   return static_cast<std::byte*>(arena) + static_cast<std::size_t>(plan.buffers()[id.value()].offset);
-}
-
-inline cudaError_t launch_stub(const ir::physical::CommandDescriptor&, const ir::physical::Plan&,
-                               void*, void*, cudaStream_t stream) {
-  baseline_command_stub<<<1, 1, 0, stream>>>();
-  return cudaGetLastError();
 }
 
 inline cudaError_t launch_copy(const ir::physical::CommandDescriptor& command,
@@ -101,16 +93,6 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 1: return &launch_copy;
     case 4: return &launch_residual;
     case 5: return &launch_rms_norm;
-    case 2:
-    case 3:
-    case 6:
-    case 7:
-    case 8:
-    case 9:
-    case 10:
-    case 11:
-    case 12:
-    case 13: return &launch_stub;
     default: return nullptr;
   }
 }
@@ -126,9 +108,8 @@ inline base::Status contextual(const base::Status& source, std::string_view cont
 /**
  * CUDA-backed Physical Plan shell for lifecycle and scheduling qualification.
  *
- * Construction validates and binds every resource. execute() launches only prebound command
- * stubs in Physical Plan dependency order; it performs no allocation or device-wide sync. The
- * stubs deliberately provide scheduling evidence, not numerical model execution.
+ * Construction validates and binds every resource. execute() launches only prebound baseline
+ * functions in Physical Plan dependency order; it performs no allocation or device-wide sync.
  */
 class CudaPlanSession final {
  public:

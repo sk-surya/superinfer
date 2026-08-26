@@ -159,6 +159,12 @@ updated: 2026-08-26
   Generic BF16↔FP32 cast capabilities (kernel IDs 16/17) now provide the explicit conversion
   primitive required at authored-BF16/FP32-baseline boundaries; Qwen graph insertion and full
   projection composition remain open.
+- NVFP4 linear projection now binds the ModelOpt tensor-scale sidecar as an explicit fifth operand
+  rather than hiding it in an immediate command scalar. Lowering synthesizes typed block-scale and
+  tensor-scale views from a quantized weight's logical shape, preserves their artifact names, and
+  emits the generic `nvfp4_linear` capability. Provider validation, CUDA launch, and the RTX 5090
+  fixture now cover the five-buffer contract; this is projection/lowering evidence, not yet a
+  complete artifact-to-layer execution proof.
   NVFP4 packed views retain their explicit packed encoding.
 - Lowered IR now retains 128 state slots with explicit read/write/commit transitions and carries
   semantic decode entry bindings. A state transition therefore survives into the representation
@@ -181,9 +187,9 @@ updated: 2026-08-26
 - Expand Qwen attention nodes into generic projection, q/k normalization, RoPE, cache-append, and
   output-projection commands; the current generic attention and recurrent commands intentionally
   reject the richer 12-operand frontend nodes.
-- Carry the validated NVFP4 sidecar bindings through target lowering into quantized projection
-  commands, including artifact payload-to-buffer materialization and LM/FFN numerical differential
-  fixtures.
+- Carry the validated NVFP4 sidecar bindings through target lowering into every quantized projection
+  command, including artifact payload-to-buffer materialization and LM/FFN numerical differential
+  fixtures. The LM-head lowering contract is now explicit; full graph materialization remains open.
 - Add the Qwen linear-attention convolution/gate projections and recurrent state transitions, then
   compile a non-placeholder full-graph Physical Plan.
 - Complete conversion/runtime staged differential evidence before S03-03 acceptance.

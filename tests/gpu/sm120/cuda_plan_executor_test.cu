@@ -217,21 +217,23 @@ superinfer::ir::physical::Plan make_bf16_rms_norm_plan() {
 superinfer::ir::physical::Plan make_nvfp4_linear_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
-  builder.set_resource_bounds({88, 0, 1});
+  builder.set_resource_bounds({128, 0, 1});
   assert(builder.add_buffer(0, 64, 8, typed_tensor(ir::physical::PhysicalDType::f32, {16})).has_value());
-  assert(builder.add_buffer(64, 8, 8,
+  assert(builder.add_buffer(64, 32, 8,
                             typed_tensor(ir::physical::PhysicalDType::u8, {4, 8},
                                          ir::physical::StorageEncoding::nvfp4_packed))
              .has_value());
-  assert(builder.add_buffer(72, 1, 1,
+  assert(builder.add_buffer(96, 4, 1,
                             typed_tensor(ir::physical::PhysicalDType::u8, {4, 1},
                                          ir::physical::StorageEncoding::fp8_e4m3_group_scale))
              .has_value());
-  assert(builder.add_buffer(80, 4, 4, typed_tensor(ir::physical::PhysicalDType::f32, {4})).has_value());
+  assert(builder.add_buffer(104, 4, 4, typed_tensor(ir::physical::PhysicalDType::f32, {1})).has_value());
+  assert(builder.add_buffer(112, 16, 8, typed_tensor(ir::physical::PhysicalDType::f32, {4})).has_value());
   assert(builder
              .add_command(base::KernelId{13},
                           {ir::physical::BufferId{0}, ir::physical::BufferId{1},
-                           ir::physical::BufferId{2}, ir::physical::BufferId{3}},
+                           ir::physical::BufferId{2}, ir::physical::BufferId{3},
+                           ir::physical::BufferId{4}},
                           {}, 0, 0, 0, 1.0e-5F, 2.0F)
              .has_value());
   const auto plan = std::move(builder).finalize({120, "baseline-v1"});
@@ -667,6 +669,7 @@ int main() {
   std::array<std::uint8_t, 8> nvfp4_linear_packed{};
   nvfp4_linear_packed.fill(0x11);
   const std::uint8_t nvfp4_linear_scale = 0x38;
+  const float nvfp4_linear_tensor_scale = 2.0F;
   std::array<float, 16> ones{};
   ones.fill(1.0F);
   assert(nvfp4_linear.value().copy_to_device(
@@ -680,11 +683,15 @@ int main() {
       ir::physical::BufferId{2},
       base::ConstByteView(reinterpret_cast<const std::byte*>(&nvfp4_linear_scale),
                           sizeof(nvfp4_linear_scale))).ok());
+  assert(nvfp4_linear.value().copy_to_device(
+      ir::physical::BufferId{3},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(&nvfp4_linear_tensor_scale),
+                          sizeof(nvfp4_linear_tensor_scale))).ok());
   assert(nvfp4_linear.value().execute().ok());
   assert(nvfp4_linear.value().synchronize_for_test().ok());
   float nvfp4_linear_output = 0.0F;
   assert(nvfp4_linear.value().copy_from_device(
-      ir::physical::BufferId{3},
+      ir::physical::BufferId{4},
       base::ByteView(reinterpret_cast<std::byte*>(&nvfp4_linear_output),
                      sizeof(nvfp4_linear_output))).ok());
   assert(std::abs(nvfp4_linear_output - 16.0F) < 1.0e-5F);

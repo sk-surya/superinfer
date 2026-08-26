@@ -206,14 +206,20 @@ superinfer::ir::lowered::Module make_nvfp4_linear_fixture(bool valid) {
   const auto scales = builder.add_tensor(
       ir::semantic::TensorId{2}, {2, 1}, ir::lowered::LayoutKind::row_major,
       base::MemorySpace::device, 16, ir::semantic::DType::int8, ir::semantic::DType::f32,
-      ir::semantic::TensorRole::weight);
+      ir::semantic::TensorRole::weight, "layer.weight_scale");
+  const auto tensor_scale = builder.add_tensor(
+      ir::semantic::TensorId{3}, {1}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32,
+      ir::semantic::TensorRole::weight, "layer.weight_scale_2");
   const auto output = builder.add_tensor(
-      ir::semantic::TensorId{3}, {1, 2}, ir::lowered::LayoutKind::row_major,
+      ir::semantic::TensorId{4}, {1, 2}, ir::lowered::LayoutKind::row_major,
       base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
-  assert(input.has_value() && packed.has_value() && scales.has_value() && output.has_value());
+  assert(input.has_value() && packed.has_value() && scales.has_value() &&
+         tensor_scale.has_value() && output.has_value());
   assert(builder.add_kernel_requirement(
                          "nvfp4_linear", 120,
-                         {input.value(), packed.value(), scales.value(), output.value()})
+                         {input.value(), packed.value(), scales.value(), tensor_scale.value(),
+                          output.value()})
              .ok());
   assert(builder.add_entry_point("decode", {input.value()}, {output.value()}).ok());
   const auto module = std::move(builder).build();
@@ -299,6 +305,10 @@ int main() {
          ir::physical::PhysicalDType::u8);
   assert(nvfp4_linear_result.value().plan.buffers()[2].tensor.encoding ==
          ir::physical::StorageEncoding::fp8_e4m3_group_scale);
+  assert(nvfp4_linear_result.value().plan.buffers()[2].tensor.artifact_name ==
+         "layer.weight_scale");
+  assert(nvfp4_linear_result.value().plan.buffers()[3].tensor.artifact_name ==
+         "layer.weight_scale_2");
   const auto invalid_nvfp4_linear = specializer.compile(
       make_nvfp4_linear_fixture(false), {target, 256, 64}, provider);
   assert(!invalid_nvfp4_linear.has_value());

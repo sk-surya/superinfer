@@ -103,15 +103,16 @@ class BaselineProvider final : public kernels::KernelProvider {
       return std::vector<kernels::KernelCandidate>{{base::KernelId{9}, "sm120.baseline", true, 0}};
     }
     if (query.operation == "nvfp4_linear") {
-      if (query.operand_count != 0 && query.operand_count != 4) {
-        return base::Status::unsupported("baseline NVFP4 linear requires four typed operands");
+      if (query.operand_count != 0 && query.operand_count != 5) {
+        return base::Status::unsupported(
+            "baseline NVFP4 linear requires five typed operands");
       }
       if (!query.operand_dtypes.empty() &&
-          (query.operand_dtypes.size() != 4 || query.operand_dtypes[0] != "f32" ||
+          (query.operand_dtypes.size() != 5 || query.operand_dtypes[0] != "f32" ||
            query.operand_dtypes[1] != "int4" || query.operand_dtypes[2] != "int8" ||
-           query.operand_dtypes[3] != "f32")) {
+           query.operand_dtypes[3] != "f32" || query.operand_dtypes[4] != "f32")) {
         return base::Status::unsupported(
-            "baseline NVFP4 linear requires f32, packed int4, int8 scale, and f32 operands");
+            "baseline NVFP4 linear requires f32, packed int4, int8 scale, f32 tensor scale, and f32 output operands");
       }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{13}, "sm120.baseline", true, 0}};
     }

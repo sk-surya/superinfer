@@ -146,10 +146,25 @@ int main() {
   assert(lowered.value().tensors().size() > module.value().tensors().size());
   assert(lowered.value().kernel_requirements().size() > module.value().operations().size());
   std::size_t lowered_casts = 0;
+  std::size_t lowered_nvfp4_projections = 0;
   for (const auto& requirement : lowered.value().kernel_requirements()) {
     lowered_casts += requirement.operation == "cast";
+    if (requirement.operation == "nvfp4_linear") {
+      ++lowered_nvfp4_projections;
+      assert(requirement.operands.size() == 5);
+    }
   }
   assert(lowered_casts > 0);
+  assert(lowered_nvfp4_projections == 1);
+  bool saw_lm_head_block_scale = false;
+  bool saw_lm_head_tensor_scale = false;
+  for (const auto& tensor : lowered.value().tensors()) {
+    saw_lm_head_block_scale = saw_lm_head_block_scale ||
+                              tensor.name == "weight/lm_head.weight_scale";
+    saw_lm_head_tensor_scale = saw_lm_head_tensor_scale ||
+                               tensor.name == "weight/lm_head.weight_scale_2";
+  }
+  assert(saw_lm_head_block_scale && saw_lm_head_tensor_scale);
   assert(lowered.value().state_slots().size() == 128);
   assert(lowered.value().state_transitions().size() == 384);
   assert(lowered.value().entry_points().size() == 1);

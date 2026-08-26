@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 #include <string_view>
 #include <vector>
 
@@ -89,6 +90,35 @@ class SemanticLowering final {
                                             {source, destination});
     };
 
+    const auto add_nvfp4_sidecars = [&](ir::semantic::TensorId weight)
+        -> base::Result<std::pair<ir::lowered::LoweredTensorId,
+                                  ir::lowered::LoweredTensorId>> {
+      const ir::semantic::Tensor& source = semantic.tensors()[weight.value()];
+      if (source.spec.shape.size() != 2 || source.spec.shape[0].is_symbolic ||
+          source.spec.shape[1].is_symbolic || source.spec.shape[0].value == 0 ||
+          source.spec.shape[1].value == 0 || source.spec.shape[1].value % 16U != 0) {
+        return base::Status::invalid_argument(
+            "NVFP4 projection weight requires two static dimensions divisible by group size");
+      }
+      const std::string_view suffix = ".weight";
+      if (!source.name.ends_with(suffix)) {
+        return base::Status::invalid_argument("NVFP4 projection weight name lacks .weight suffix");
+      }
+      const std::string prefix = source.name.substr(0, source.name.size() - suffix.size());
+      const auto block_scale = builder.add_tensor(
+          weight, {source.spec.shape[0].value, source.spec.shape[1].value / 16U},
+          ir::lowered::LayoutKind::row_major, base::MemorySpace::device,
+          options.required_alignment, ir::semantic::DType::int8, ir::semantic::DType::f32,
+          ir::semantic::TensorRole::weight, prefix + ".weight_scale");
+      if (!block_scale.has_value()) return block_scale.error();
+      const auto tensor_scale = builder.add_tensor(
+          weight, {1}, ir::lowered::LayoutKind::row_major, base::MemorySpace::device,
+          options.required_alignment, ir::semantic::DType::f32, ir::semantic::DType::f32,
+          ir::semantic::TensorRole::weight, prefix + ".weight_scale_2");
+      if (!tensor_scale.has_value()) return tensor_scale.error();
+      return std::make_pair(block_scale.value(), tensor_scale.value());
+    };
+
     for (const ir::semantic::Operation& operation : semantic.operations()) {
       const std::string_view capability = capability_name(operation.kind);
       if (capability.empty()) {
@@ -151,12 +181,25 @@ class SemanticLowering final {
         outputs.front() = output_target;
       }
 
+      std::string lowered_operation{capability};
       std::vector<ir::lowered::LoweredTensorId> operands;
-      operands.reserve(inputs.size() + outputs.size());
-      operands.insert(operands.end(), inputs.begin(), inputs.end());
-      operands.insert(operands.end(), outputs.begin(), outputs.end());
+      if (operation.kind == ir::semantic::OperationKind::lm_head && operation.inputs.size() == 2 &&
+          semantic.tensors()[operation.inputs[1].value()].spec.dtype == ir::semantic::DType::int4) {
+        const auto sidecars = add_nvfp4_sidecars(operation.inputs[1]);
+        if (!sidecars.has_value()) {
+          base::Status error = sidecars.error();
+          return error.with_context("NVFP4 projection sidecar lowering");
+        }
+        lowered_operation = "nvfp4_linear";
+        operands = {inputs[0], inputs[1], sidecars.value().first, sidecars.value().second,
+                    outputs.front()};
+      } else {
+        operands.reserve(inputs.size() + outputs.size());
+        operands.insert(operands.end(), inputs.begin(), inputs.end());
+        operands.insert(operands.end(), outputs.begin(), outputs.end());
+      }
       base::Status requirement = builder.add_kernel_requirement(
-          std::string{capability}, options.target_capability, std::move(operands),
+          std::move(lowered_operation), options.target_capability, std::move(operands),
           operation.attributes);
       if (!requirement.ok()) return requirement.with_context("semantic operation lowering");
       if (cast_output) {

@@ -9,6 +9,7 @@
 #include <superinfer/base/checked_math.hpp>
 #include <superinfer/base/result.hpp>
 #include <superinfer/ir/semantic/module.hpp>
+#include <sm120/kernels/baseline/reference_primitives.h>
 
 namespace superinfer::sm120 {
 
@@ -77,7 +78,50 @@ class ReferenceExecutor final {
       const auto shape = expected_shape(module.tensors()[output.value()].spec.shape);
       const auto elements = static_elements(module.tensors()[output.value()].spec.shape);
       if (!elements.has_value()) return elements.error();
-      if (operation.kind == ir::semantic::OperationKind::residual) {
+      if (operation.kind == ir::semantic::OperationKind::embedding) {
+        if (operation.inputs.size() != 2 || result.tensors[operation.inputs[0].value()].values.size() != 1 ||
+            result.tensors[operation.inputs[1].value()].shape.size() != 2 ||
+            shape.size() != 2 || shape[0] != 1 ||
+            result.tensors[operation.inputs[1].value()].shape[1] != shape[1]) {
+          return base::Status::invalid_argument("reference embedding requires token, table, and row output");
+        }
+        const float token_value = result.tensors[operation.inputs[0].value()].values.front();
+        if (!std::isfinite(token_value) || token_value < 0.0F ||
+            token_value != std::floor(token_value) ||
+            token_value >= static_cast<float>(result.tensors[operation.inputs[1].value()].shape[0])) {
+          return base::Status::out_of_range("reference embedding token is invalid");
+        }
+        const auto embedded = reference::ReferencePrimitives::embedding(
+            result.tensors[operation.inputs[1].value()].values,
+            static_cast<std::size_t>(result.tensors[operation.inputs[1].value()].shape[0]),
+            static_cast<std::size_t>(result.tensors[operation.inputs[1].value()].shape[1]),
+            static_cast<std::uint32_t>(token_value));
+        if (!embedded.has_value()) {
+          base::Status error = embedded.error();
+          return error.with_context("reference embedding primitive");
+        }
+        result.tensors[output.value()] = {module.tensors()[output.value()].name, shape,
+                                          embedded.value()};
+      } else if (operation.kind == ir::semantic::OperationKind::lm_head) {
+        if (operation.inputs.size() != 2 || result.tensors[operation.inputs[1].value()].shape.size() != 2 ||
+            shape.size() != 2 || shape[0] != 1 ||
+            result.tensors[operation.inputs[1].value()].shape[1] !=
+                result.tensors[operation.inputs[0].value()].values.size() ||
+            result.tensors[operation.inputs[1].value()].shape[0] != shape[1]) {
+          return base::Status::invalid_argument("reference LM head requires input, weights, and row output");
+        }
+        const auto projected = reference::ReferencePrimitives::linear(
+            result.tensors[operation.inputs[1].value()].values,
+            static_cast<std::size_t>(result.tensors[operation.inputs[1].value()].shape[0]),
+            static_cast<std::size_t>(result.tensors[operation.inputs[1].value()].shape[1]),
+            result.tensors[operation.inputs[0].value()].values);
+        if (!projected.has_value()) {
+          base::Status error = projected.error();
+          return error.with_context("reference LM head primitive");
+        }
+        result.tensors[output.value()] = {module.tensors()[output.value()].name, shape,
+                                          projected.value()};
+      } else if (operation.kind == ir::semantic::OperationKind::residual) {
         if (operation.inputs.size() != 2 || result.tensors[operation.inputs[0].value()].shape !=
                                                 result.tensors[operation.inputs[1].value()].shape) {
           return base::Status::invalid_argument("reference residual requires two equal-shaped inputs");

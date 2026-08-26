@@ -63,6 +63,9 @@ updated: 2026-08-26
 - Independent CPU primitive contracts now cover embedding, linear/LM projection, gated FFN, and
   grouped attention with shape, finite-input, and negative-path tests. Full graph weight binding
   and CUDA-provider differential execution remain open.
+- The CPU reference graph now composes weight-connected embedding and LM-head operations through
+  those independent primitives, with strict integer-token, shape, finite-input, and error-context
+  checks. This remains an oracle only; no provider capability is advertised.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

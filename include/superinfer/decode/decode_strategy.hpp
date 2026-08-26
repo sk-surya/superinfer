@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <type_traits>
 
 #include <superinfer/base/result.hpp>
@@ -26,6 +27,11 @@ class DecodeStrategy {
   virtual ~DecodeStrategy() = default;
   virtual DecodeRequirements requirements() const noexcept = 0;
   virtual base::Status initialize(DecodeStateView) const = 0;
+
+  /** Selects one token from immutable logits; the default keeps non-greedy strategies explicit. */
+  virtual base::Result<std::uint32_t> select_token(std::span<const float>) const {
+    return base::Status::unsupported("decode strategy does not provide token selection");
+  }
 };
 
 template <typename T>

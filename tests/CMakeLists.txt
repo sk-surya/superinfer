@@ -91,6 +91,14 @@ target_include_directories(superinfer_qwen38_frontend PRIVATE
   "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/include")
 add_test(NAME superinfer.qwen38.frontend COMMAND superinfer_qwen38_frontend)
 
+add_executable(superinfer_decode_kv_cache unit/decode/kv_cache_test.cpp)
+target_link_libraries(superinfer_decode_kv_cache PRIVATE superinfer_runtime)
+add_test(NAME superinfer.decode.kv_cache COMMAND superinfer_decode_kv_cache)
+
+add_executable(superinfer_decode_greedy unit/decode/greedy_strategy_test.cpp)
+target_link_libraries(superinfer_decode_greedy PRIVATE superinfer_runtime)
+add_test(NAME superinfer.decode.greedy COMMAND superinfer_decode_greedy)
+
 add_executable(superinfer_artifact_test integration/artifact/artifact_test.cpp)
 target_link_libraries(superinfer_artifact_test PRIVATE superinfer_artifact)
 add_test(NAME superinfer.artifact.binary COMMAND superinfer_artifact_test)

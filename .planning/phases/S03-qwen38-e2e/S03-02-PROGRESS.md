@@ -47,6 +47,8 @@ updated: 2026-08-26
   approximately 18 MiB resident memory. `Specializer` now receives a `KernelProvider`, selects a
   deterministic candidate through that extension surface, and propagates candidate workspace into
   the Physical Plan; it no longer owns a kernel-ID table.
+- The explicit [operation coverage matrix](S03-02-COVERAGE.md) records which baseline commands are
+  executable and which Qwen operations remain reference-only or unavailable.
 
 ## Remaining S03-02 work
 

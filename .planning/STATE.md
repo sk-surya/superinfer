@@ -65,9 +65,9 @@ Execute `.planning/phases/S02-sm120-baseline/S02-02-PLAN.md`; preserve Gate A as
 
 - Implementation requires access to an RTX 5090 for GPU acceptance and benchmark evidence. CPU-only phases can proceed without it.
 - Exact Qwen3.8-27B and Gemma 4 26B-A4B upstream repository IDs/revisions must be pinned during their phases; marketing names in this packet are not a substitute for immutable model identity.
-- Final CUDA/toolchain feature choices must be verified against the installed `sm_120a`-capable toolchain before S02.
-- The host has RTX 5090 hardware but no `nvcc`; GPU execution and sanitizer evidence remain pending
-  until a CUDA toolkit is available.
+- CUDA 13.1 is installed at `/usr/local/cuda-13.1/bin/nvcc` and the explicit `sm_120a` ownership
+  smoke passes on GPU 0. Full Physical Plan kernel execution and compute-sanitizer evidence remain
+  pending because no production CUDA kernels are bound yet.
 
 ## Planning Notes
 

@@ -37,10 +37,10 @@ completed: 2026-08-26
   sanitizer build/CTest, and wheel build.
 - Fresh `/srv` CTest run — 13/13 tests passed, including target profile, memory planner/property/
   golden, and specializer tests.
-- `cmake --preset cuda-sm120a` — configure completed with the explicit warning that `nvcc` is not
-  installed; CUDA targets were disabled. `nvidia-smi` reports two visible RTX 5090 devices with
-  compute capability 12.0 and 32607 MiB each, but no CUDA compilation or GPU acceptance claim is
-  made without a toolkit.
+- The first `cuda-sm120a` configure used a stale cache and did not discover the installed toolkit.
+  An explicit configure with `/usr/local/cuda-13.1/bin/nvcc` enabled CUDA 13.1 and `sm_120a`.
+  The follow-up S02-02 CUDA ownership smoke launches on the RTX 5090 and passes; this is now
+  recorded as GPU evidence rather than a toolchain blocker.
 
 ## Deliberate boundary
 
@@ -52,5 +52,5 @@ information is explicit.
 ## Next plan
 
 S02-02 implements the explicit runtime ownership layer, baseline provider registry, minimal executor,
-and independent CPU/reference executor. GPU execution remains conditional on installing/verifying the
-CUDA toolchain; CPU contracts and differential scaffolding continue autonomously.
+and independent CPU/reference executor. The CUDA ownership boundary is now smoke-qualified; physical
+plan kernel execution and differential GPU graphs remain the next implementation evidence.

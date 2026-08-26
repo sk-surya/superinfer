@@ -14,6 +14,8 @@ int main(int argc, char** argv) {
   using artifact::ArtifactSpec;
   using artifact::ArtifactWriter;
 
+  static_assert(artifact::kMaximumArtifactBytes >= 32ULL * (1ULL << 30U));
+
   if (argc == 2) {
     std::ifstream input(argv[1], std::ios::binary);
     const std::vector<char> raw{std::istreambuf_iterator<char>{input}, {}};

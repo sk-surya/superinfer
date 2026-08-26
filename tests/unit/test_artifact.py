@@ -5,10 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from superinfer.artifact import ArtifactError, inspect_artifact, write_artifact
+from superinfer.artifact import ArtifactError, MAXIMUM_ARTIFACT_BYTES, inspect_artifact, write_artifact
 
 
 class PythonArtifactTests(unittest.TestCase):
+    def test_artifact_limit_covers_pinned_qwen_payload_budget(self) -> None:
+        self.assertGreaterEqual(MAXIMUM_ARTIFACT_BYTES, 32 * (1 << 30))
+
     def test_converter_bytes_and_inspection_are_deterministic(self) -> None:
         source = {
             "manifest": {"revision": "r1", "model": "fixture"},

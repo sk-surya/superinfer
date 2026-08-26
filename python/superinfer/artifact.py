@@ -23,6 +23,7 @@ SECTION_NAMES = {
     4: "payload",
     5: "integrity",
 }
+MAXIMUM_ARTIFACT_BYTES = 1 << 35
 
 
 class ArtifactError(ValueError):
@@ -168,7 +169,7 @@ def _validated_sections(data: bytes) -> dict[int, bytes]:
         or directory_offset != HEADER.size
     ):
         raise ArtifactError("invalid artifact header bounds")
-    if total_size != len(data) or total_size > (1 << 34):
+    if total_size != len(data) or total_size > MAXIMUM_ARTIFACT_BYTES:
         raise ArtifactError("invalid artifact total size")
     directory_end = directory_offset + section_count * DIRECTORY.size
     if directory_end > len(data):

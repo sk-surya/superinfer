@@ -30,6 +30,7 @@ constexpr std::uint16_t kFormatMajor = 1;
 constexpr std::uint16_t kFormatMinor = 0;
 constexpr std::size_t kHeaderBytes = 32;
 constexpr std::size_t kDirectoryEntryBytes = 32;
+constexpr std::uint64_t kMaximumArtifactBytes = 1ULL << 35U;
 
 /** Canonical CPU-side inputs to the deterministic `.sinf` writer. */
 struct ArtifactSpec final {
@@ -224,7 +225,6 @@ class ArtifactReader final {
  public:
   static base::Result<ArtifactView> read(base::ConstByteView bytes) {
     constexpr std::size_t kMaximumSections = 1024;
-    constexpr std::uint64_t kMaximumArtifactBytes = 1ULL << 34U;
     if (bytes.size() < kHeaderBytes || bytes[0] != std::byte{'S'} || bytes[1] != std::byte{'I'} ||
         bytes[2] != std::byte{'N'} || bytes[3] != std::byte{'F'}) {
       return base::Status::data_loss("invalid artifact magic or truncated header");

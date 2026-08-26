@@ -31,6 +31,12 @@ class BaselineProvider final : public kernels::KernelProvider {
       return std::vector<kernels::KernelCandidate>{{base::KernelId{4}, "sm120.baseline", true, 0}};
     }
     if (query.operation == "rms_norm") {
+      if (query.storage_dtype == "bf16") {
+        return std::vector<kernels::KernelCandidate>{{base::KernelId{12}, "sm120.baseline", true, 0}};
+      }
+      if (query.storage_dtype != "f32") {
+        return base::Status::unsupported("baseline RMSNorm does not support the requested scale dtype");
+      }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{5}, "sm120.baseline", true, 0}};
     }
     if (query.operation == "layer_norm") {

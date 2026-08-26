@@ -124,6 +124,21 @@ __global__ inline void rms_norm_f32(const float* input, const float* scale, floa
   }
 }
 
+__device__ inline float bf16_to_float_device(std::uint16_t value) {
+  return __uint_as_float(static_cast<std::uint32_t>(value) << 16U);
+}
+
+__global__ inline void rms_norm_f32_bf16_scale(const float* input, const std::uint16_t* scale,
+                                               float* output, std::size_t elements, float epsilon) {
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  float sum_squares = 0.0F;
+  for (std::size_t index = 0; index < elements; ++index) sum_squares += input[index] * input[index];
+  const float denominator = sqrtf(sum_squares / static_cast<float>(elements) + epsilon);
+  for (std::size_t index = 0; index < elements; ++index) {
+    output[index] = input[index] / denominator * bf16_to_float_device(scale[index]);
+  }
+}
+
 __global__ inline void layer_norm_f32(const float* input, const float* scale, const float* bias,
                                       float* output, std::size_t elements, float epsilon) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
@@ -293,6 +308,25 @@ inline cudaError_t launch_rms_norm(const ir::physical::CommandDescriptor& comman
   return cudaGetLastError();
 }
 
+inline cudaError_t launch_rms_norm_bf16(const ir::physical::CommandDescriptor& command,
+                                        const ir::physical::Plan& plan, void* arena, void*,
+                                        cudaStream_t stream) {
+  if (command.buffers.size() < 3) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& output = plan.buffers()[command.buffers[1].value()];
+  const auto& scale = plan.buffers()[command.buffers[2].value()];
+  if (input.size == 0 || input.size % sizeof(float) != 0 || output.size != input.size ||
+      scale.size != input.size / sizeof(float) * sizeof(std::uint16_t)) {
+    return cudaErrorInvalidValue;
+  }
+  rms_norm_f32_bf16_scale<<<1, 1, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+      static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, scale.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)),
+      static_cast<std::size_t>(input.size / sizeof(float)), command.epsilon);
+  return cudaGetLastError();
+}
+
 inline cudaError_t launch_layer_norm(const ir::physical::CommandDescriptor& command,
                                      const ir::physical::Plan& plan, void* arena, void*,
                                      cudaStream_t stream) {
@@ -417,6 +451,18 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
     case 5:
       if (!same_sizes(3)) return base::Status::invalid_argument("CUDA RMSNorm requires input, output, and scale buffers");
       return {};
+    case 12:
+      if (!exact_buffers(3) || plan.buffers()[command.buffers[0].value()].size == 0 ||
+          plan.buffers()[command.buffers[0].value()].size % sizeof(float) != 0 ||
+          plan.buffers()[command.buffers[1].value()].size !=
+              plan.buffers()[command.buffers[0].value()].size ||
+          plan.buffers()[command.buffers[2].value()].size !=
+              plan.buffers()[command.buffers[0].value()].size / sizeof(float) *
+                  sizeof(std::uint16_t)) {
+        return base::Status::invalid_argument(
+            "CUDA BF16 RMSNorm requires f32 input/output and a BF16 scale buffer");
+      }
+      return {};
     case 6:
       if (!same_sizes(4)) return base::Status::invalid_argument("CUDA LayerNorm requires input, output, scale, and bias buffers");
       return {};
@@ -435,6 +481,7 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 11: return &launch_gated_dense_ffn;
     case 4: return &launch_residual;
     case 5: return &launch_rms_norm;
+    case 12: return &launch_rms_norm_bf16;
     case 6: return &launch_layer_norm;
     default: return nullptr;
   }

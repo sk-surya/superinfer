@@ -111,6 +111,12 @@ class Specializer final {
         }
         operands.push_back(buffer_for_tensor[operand.value()]);
       }
+      if (requirement.operation == "rms_norm" && operands.size() == 3) {
+        std::swap(operands[1], operands[2]);
+      } else if (requirement.operation == "layer_norm" && operands.size() == 4) {
+        std::swap(operands[1], operands[3]);
+        std::swap(operands[2], operands[3]);
+      }
       workspace_bytes = std::max(workspace_bytes, candidate.value().workspace_bytes);
       const auto command = plan_builder.add_command(
           candidate.value().id, std::move(operands), dependencies, 0, 0,
@@ -180,8 +186,9 @@ class Specializer final {
       const kernels::KernelProvider& provider, const ir::lowered::KernelRequirement& requirement,
       const ir::lowered::Module& lowered) {
     std::string_view storage_dtype = "f32";
-    if ((requirement.operation == "embedding" || requirement.operation == "lm_head") &&
-        requirement.operands.size() >= 2) {
+    if ((requirement.operation == "embedding" || requirement.operation == "lm_head" ||
+         requirement.operation == "gated_dense_ffn" || requirement.operation == "rms_norm" ||
+         requirement.operation == "layer_norm") && requirement.operands.size() >= 2) {
       storage_dtype = dtype_name(lowered.tensors()[requirement.operands[1].value()].storage_dtype);
     }
     const auto candidates = provider.enumerate(

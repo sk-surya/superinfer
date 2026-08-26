@@ -43,6 +43,10 @@ int main() {
   const auto unsupported_lm_dtype = provider.enumerate({"lm_head", 120, "int4"});
   assert(!unsupported_lm_dtype.has_value());
   assert(unsupported_lm_dtype.error().code() == superinfer::base::StatusCode::unsupported);
+  const auto bf16_norm = provider.enumerate({"rms_norm", 120, "bf16"});
+  assert(bf16_norm.has_value());
+  assert(bf16_norm.value().size() == 1);
+  assert(bf16_norm.value().front().id.value() == 12);
   for (const std::string_view operation : {"cast", "elementwise", "rope", "matmul", "attention",
                                             "moe_route", "activation", "sampling"}) {
     const auto candidates = provider.enumerate({operation, 120});

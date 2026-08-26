@@ -27,11 +27,11 @@ superinfer::ir::lowered::Module make_fixture() {
       base::MemorySpace::device, 16, ir::semantic::DType::f16, ir::semantic::DType::f32);
   const auto scale = builder.add_tensor(
       ir::semantic::TensorId{2}, {2, 4}, ir::lowered::LayoutKind::row_major,
-      base::MemorySpace::device, 16, ir::semantic::DType::f16, ir::semantic::DType::f32);
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
   assert(hidden.has_value() && output.has_value() && scale.has_value());
   assert(builder
              .add_kernel_requirement("rms_norm", 120,
-                                     {hidden.value(), output.value(), scale.value()})
+                                     {hidden.value(), scale.value(), output.value()})
              .ok());
   const auto module = std::move(builder).build();
   assert(module.has_value());
@@ -115,6 +115,28 @@ superinfer::ir::lowered::Module make_f32_ffn_fixture() {
   return std::move(module).value();
 }
 
+superinfer::ir::lowered::Module make_bf16_rms_norm_fixture() {
+  using namespace superinfer;
+  ir::lowered::ModuleBuilder builder;
+  const auto input = builder.add_tensor(
+      ir::semantic::TensorId{0}, {4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  const auto output = builder.add_tensor(
+      ir::semantic::TensorId{1}, {4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  const auto scale = builder.add_tensor(
+      ir::semantic::TensorId{2}, {4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::bf16, ir::semantic::DType::f32,
+      ir::semantic::TensorRole::weight);
+  assert(input.has_value() && output.has_value() && scale.has_value());
+  assert(builder.add_kernel_requirement(
+                         "rms_norm", 120, {input.value(), scale.value(), output.value()})
+             .ok());
+  const auto module = std::move(builder).build();
+  assert(module.has_value());
+  return std::move(module).value();
+}
+
 }  // namespace
 
 int main() {
@@ -127,7 +149,7 @@ int main() {
   assert(result.value().plan.verify().ok());
   assert(result.value().plan.capability().target_capability == 120);
   assert(result.value().plan.capability().kernel_catalog == "baseline-v1");
-  assert(result.value().memory.device_arena_bytes == 48);
+  assert(result.value().memory.device_arena_bytes == 64);
   assert(result.value().memory.allocations.size() == 3);
   assert(result.value().memory.allocations.front().offset == 0);
   assert(result.value().plan.commands().size() == 1);
@@ -148,6 +170,11 @@ int main() {
       make_f32_ffn_fixture(), {target, 256, 64}, provider);
   assert(ffn_result.has_value());
   assert(ffn_result.value().plan.commands().front().kernel.value() == 11);
+
+  const auto bf16_norm_result = specializer.compile(
+      make_bf16_rms_norm_fixture(), {target, 256, 64}, provider);
+  assert(bf16_norm_result.has_value());
+  assert(bf16_norm_result.value().plan.commands().front().kernel.value() == 12);
 
   const auto second = specializer.compile(make_fixture(), {target, 256, 64}, provider);
   assert(second.has_value());

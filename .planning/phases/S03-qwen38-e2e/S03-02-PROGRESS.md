@@ -106,6 +106,10 @@ updated: 2026-08-26
   shapes and implements the same SiLU-gated contract as the independent CPU oracle; the provider
   and RTX 5090 fixture pass. The Qwen NVFP4 FFN remains unavailable until quantized weights and
   scales are composed into this operation.
+- BF16 RMSNorm scale storage is now selected through provider ID 12, with a mixed BF16-scale /
+  FP32 activation CUDA implementation and RTX 5090 differential fixture. The specializer also
+  normalizes semantic norm operands `[input, scale, output]` into the physical command contract
+  `[input, output, scale]`, fixing the previously untested ordering mismatch.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

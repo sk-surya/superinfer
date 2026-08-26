@@ -153,6 +153,24 @@ superinfer::ir::physical::Plan make_ffn_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_bf16_rms_norm_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({40, 0, 1});
+  assert(builder.add_buffer(0, 16, 8).has_value());
+  assert(builder.add_buffer(16, 16, 8).has_value());
+  assert(builder.add_buffer(32, 8, 8).has_value());
+  assert(builder
+             .add_command(base::KernelId{12},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}},
+                          {}, 0, 0, 0)
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 }  // namespace
 
 int main() {
@@ -399,6 +417,32 @@ int main() {
   assert(std::abs(ffn_output[0] - 2.0F / (1.0F + std::exp(-2.0F)) * 2.0F) < 1.0e-5F);
   assert(std::abs(ffn_output[1] - 3.0F / (1.0F + std::exp(-3.0F)) * 3.0F) < 1.0e-5F);
 
+  const auto bf16_norm_plan = make_bf16_rms_norm_plan();
+  auto bf16_norm = sm120::cuda_runtime::CudaPlanSession::create(
+      bf16_norm_plan, 120, "baseline-v1");
+  assert(bf16_norm.has_value());
+  const std::array<float, 4> norm_input{1.0F, 2.0F, 3.0F, 4.0F};
+  const std::array<std::uint16_t, 4> norm_scale{0x3f80, 0x3fc0, 0x4000, 0x4020};
+  assert(bf16_norm.value().copy_to_device(
+      ir::physical::BufferId{0},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(norm_input.data()),
+                          sizeof(norm_input))).ok());
+  assert(bf16_norm.value().copy_to_device(
+      ir::physical::BufferId{2},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(norm_scale.data()),
+                          sizeof(norm_scale))).ok());
+  assert(bf16_norm.value().execute().ok());
+  assert(bf16_norm.value().synchronize_for_test().ok());
+  std::array<float, 4> norm_output{};
+  assert(bf16_norm.value().copy_from_device(
+      ir::physical::BufferId{1},
+      base::ByteView(reinterpret_cast<std::byte*>(norm_output.data()), sizeof(norm_output))).ok());
+  const float norm_denominator = std::sqrt((1.0F + 4.0F + 9.0F + 16.0F) / 4.0F + 1.0e-5F);
+  for (std::size_t index = 0; index < norm_output.size(); ++index) {
+    const float scale = 1.0F + static_cast<float>(index) * 0.5F;
+    assert(std::abs(norm_output[index] - norm_input[index] / norm_denominator * scale) < 1.0e-5F);
+  }
+
   ir::physical::PlanBuilder norm_builder;
   norm_builder.set_resource_bounds({48, 0, 1});
   assert(norm_builder.add_buffer(0, 16, 16).has_value());
@@ -491,8 +535,8 @@ int main() {
   assert(lowered_input.has_value() && lowered_output.has_value() && lowered_scale.has_value());
   assert(lowered_builder
              .add_kernel_requirement("rms_norm", 120,
-                                     {lowered_input.value(), lowered_output.value(),
-                                      lowered_scale.value()})
+                                     {lowered_input.value(), lowered_scale.value(),
+                                      lowered_output.value()})
              .ok());
   const auto lowered = std::move(lowered_builder).build();
   assert(lowered.has_value());

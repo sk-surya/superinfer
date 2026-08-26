@@ -164,8 +164,9 @@ updated: 2026-08-26
   semantic decode entry bindings. A state transition therefore survives into the representation
   consumed by physical planning instead of being reconstructed from command position.
 - Full-attention semantics explicitly declare Qwen's sigmoid output gate; the frontend never relies
-  on an unusual q-projection shape to infer model meaning. The baseline provider rejects that
-  richer contract until a compatible physical implementation exists.
+  on an unusual q-projection shape to infer model meaning. The frontend now emits a dedicated
+  gated-grouped-attention semantic kind, lowered only to the generic attention capability; the
+  baseline provider rejects that richer contract until a compatible physical implementation exists.
 - `tools/qwen38_layer_differential.py` runs a deterministic checkpoint-backed layer 3 comparison
   against Transformers 5.12.1 using the independent RMSNorm, gated QKV, partial RoPE, GQA,
   sigmoid-gate, output-projection, and MLP equations. The local BF16 checkpoint result is recorded

@@ -177,7 +177,7 @@ class Frontend final : public compiler::ModelFrontend {
         attention_attributes.value_head_count = 48;
       }
       const OperationKind attention_kind = full_attention
-                                               ? OperationKind::grouped_query_attention
+                                               ? OperationKind::gated_grouped_query_attention
                                                : OperationKind::gated_delta_attention;
       std::vector<TensorId> attention_inputs{input_norm.value(), state_a_in.value(), state_b_in.value()};
       const std::string weight_prefix = "model.language_model.layers." + std::to_string(layer) + ".";

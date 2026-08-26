@@ -160,7 +160,8 @@ class ReferenceExecutor final {
         for (std::size_t index = 0; index < left.size(); ++index) {
           result.tensors[output.value()].values[index] = left[index] + right[index];
         }
-      } else if (operation.kind == ir::semantic::OperationKind::grouped_query_attention) {
+      } else if (operation.kind == ir::semantic::OperationKind::grouped_query_attention ||
+                 operation.kind == ir::semantic::OperationKind::gated_grouped_query_attention) {
         if (operation.inputs.size() != 3 || operation.attributes.num_heads == 0 ||
             operation.attributes.num_kv_heads == 0 || operation.attributes.head_dimension == 0 ||
             result.tensors[operation.inputs[0].value()].shape.size() != 2 ||

@@ -130,7 +130,8 @@ int main() {
       OperationKind::embedding, OperationKind::rms_norm, OperationKind::layer_norm,
       OperationKind::rope, OperationKind::qkv_projection, OperationKind::gated_delta_attention,
       OperationKind::multi_head_attention,
-      OperationKind::grouped_query_attention, OperationKind::local_attention, OperationKind::residual,
+      OperationKind::grouped_query_attention, OperationKind::gated_grouped_query_attention,
+      OperationKind::local_attention, OperationKind::residual,
       OperationKind::gated_dense_ffn, OperationKind::moe_route, OperationKind::moe_top_k,
       OperationKind::moe_expert, OperationKind::moe_combine, OperationKind::lm_head,
       OperationKind::decode_logits, OperationKind::sampling_inputs};
@@ -138,6 +139,7 @@ int main() {
     const bool is_gated_delta = kinds[index] == OperationKind::gated_delta_attention;
     const bool is_attention = kinds[index] == OperationKind::multi_head_attention ||
                               kinds[index] == OperationKind::grouped_query_attention ||
+                              kinds[index] == OperationKind::gated_grouped_query_attention ||
                               kinds[index] == OperationKind::local_attention;
     const bool is_moe = kinds[index] == OperationKind::moe_route ||
                         kinds[index] == OperationKind::moe_top_k ||

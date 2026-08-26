@@ -110,6 +110,7 @@ class SemanticLowering final {
       case OperationKind::gated_delta_attention: return "gated_delta_attention";
       case OperationKind::multi_head_attention: return "attention";
       case OperationKind::grouped_query_attention: return "attention";
+      case OperationKind::gated_grouped_query_attention: return "attention";
       case OperationKind::local_attention: return "attention";
       case OperationKind::residual: return "residual";
       case OperationKind::gated_dense_ffn: return "gated_dense_ffn";

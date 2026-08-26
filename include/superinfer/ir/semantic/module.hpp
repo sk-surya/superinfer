@@ -55,6 +55,7 @@ enum class OperationKind {
   gated_delta_attention,
   multi_head_attention,
   grouped_query_attention,
+  gated_grouped_query_attention,
   local_attention,
   residual,
   gated_dense_ffn,
@@ -231,6 +232,7 @@ class Module final {
       const bool attention = operation.kind == OperationKind::gated_delta_attention ||
                              operation.kind == OperationKind::multi_head_attention ||
                              operation.kind == OperationKind::grouped_query_attention ||
+                             operation.kind == OperationKind::gated_grouped_query_attention ||
                              operation.kind == OperationKind::local_attention;
       if (!attention && attributes.attention_output_gate != AttentionOutputGate::none) {
         return base::Status::invalid_argument("attention output gate is only valid for attention");
@@ -400,6 +402,7 @@ class Module final {
       case OperationKind::gated_delta_attention: return "gated_delta_attention";
       case OperationKind::multi_head_attention: return "multi_head_attention";
       case OperationKind::grouped_query_attention: return "grouped_query_attention";
+      case OperationKind::gated_grouped_query_attention: return "gated_grouped_query_attention";
       case OperationKind::local_attention: return "local_attention";
       case OperationKind::residual: return "residual";
       case OperationKind::gated_dense_ffn: return "gated_dense_ffn";

@@ -109,7 +109,7 @@ int main() {
   std::size_t qwen_rms_norms = 0;
   for (const auto& operation : module.value().operations()) {
     gated_delta += operation.kind == ir::semantic::OperationKind::gated_delta_attention;
-    full_attention += operation.kind == ir::semantic::OperationKind::grouped_query_attention;
+    full_attention += operation.kind == ir::semantic::OperationKind::gated_grouped_query_attention;
     if (operation.kind == ir::semantic::OperationKind::rms_norm) {
       ++qwen_rms_norms;
       assert(operation.attributes.epsilon == 1.0e-6F);
@@ -122,7 +122,7 @@ int main() {
   assert(qwen_rms_norms == 128);
   for (const auto& operation : module.value().operations()) {
     if (operation.kind == ir::semantic::OperationKind::gated_delta_attention ||
-        operation.kind == ir::semantic::OperationKind::grouped_query_attention) {
+        operation.kind == ir::semantic::OperationKind::gated_grouped_query_attention) {
       assert(operation.inputs.size() >= 9);
       assert(operation.outputs.size() == 3);
     }
@@ -131,7 +131,7 @@ int main() {
       assert(operation.attributes.num_kv_heads == 16);
       assert(operation.attributes.value_head_count == 48);
     }
-    if (operation.kind == ir::semantic::OperationKind::grouped_query_attention) {
+    if (operation.kind == ir::semantic::OperationKind::gated_grouped_query_attention) {
       assert(operation.attributes.attention_output_gate ==
              ir::semantic::AttentionOutputGate::sigmoid);
     }

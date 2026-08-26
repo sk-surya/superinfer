@@ -70,6 +70,30 @@ class SemanticLowering final {
           operation.attributes);
       if (!requirement.ok()) return requirement.with_context("semantic operation lowering");
     }
+    for (const ir::semantic::StateEdge& edge : semantic.state_edges()) {
+      const auto slot = builder.add_state_slot(
+          edge.name, lowered_tensors[edge.source.value()], lowered_tensors[edge.destination.value()]);
+      if (!slot.has_value()) {
+        base::Status error = slot.error();
+        return error.with_context("semantic state lowering");
+      }
+      for (const ir::lowered::StateAction action : {ir::lowered::StateAction::read,
+                                                     ir::lowered::StateAction::write,
+                                                     ir::lowered::StateAction::commit}) {
+        base::Status transition = builder.add_state_transition(slot.value(), action);
+        if (!transition.ok()) return transition.with_context("semantic state transition lowering");
+      }
+    }
+    for (const ir::semantic::EntryPoint& entry : semantic.entry_points()) {
+      std::vector<ir::lowered::LoweredTensorId> inputs;
+      std::vector<ir::lowered::LoweredTensorId> outputs;
+      inputs.reserve(entry.inputs.size());
+      outputs.reserve(entry.outputs.size());
+      for (const ir::semantic::TensorId id : entry.inputs) inputs.push_back(lowered_tensors[id.value()]);
+      for (const ir::semantic::TensorId id : entry.outputs) outputs.push_back(lowered_tensors[id.value()]);
+      base::Status binding = builder.add_entry_point(entry.name, std::move(inputs), std::move(outputs));
+      if (!binding.ok()) return binding.with_context("semantic entry point lowering");
+    }
     return std::move(builder).build();
   }
 

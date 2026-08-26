@@ -44,6 +44,26 @@ struct KernelRequirement final {
   semantic::OperationAttributes attributes;
 };
 
+enum class StateAction { read, write, commit };
+
+struct StateSlot final {
+  std::uint32_t id;
+  std::string name;
+  LoweredTensorId input;
+  LoweredTensorId output;
+};
+
+struct StateTransition final {
+  std::uint32_t slot;
+  StateAction action;
+};
+
+struct EntryPoint final {
+  std::string name;
+  std::vector<LoweredTensorId> inputs;
+  std::vector<LoweredTensorId> outputs;
+};
+
 /** Immutable target-aware module used as input to physical planning. */
 class Module final {
  public:
@@ -54,6 +74,11 @@ class Module final {
   [[nodiscard]] const std::vector<KernelRequirement>& kernel_requirements() const noexcept {
     return kernel_requirements_;
   }
+  [[nodiscard]] const std::vector<StateSlot>& state_slots() const noexcept { return state_slots_; }
+  [[nodiscard]] const std::vector<StateTransition>& state_transitions() const noexcept {
+    return state_transitions_;
+  }
+  [[nodiscard]] const std::vector<EntryPoint>& entry_points() const noexcept { return entry_points_; }
 
   [[nodiscard]] base::Status verify() const {
     for (std::size_t index = 0; index < tensors_.size(); ++index) {
@@ -86,6 +111,40 @@ class Module final {
         }
       }
     }
+    for (std::size_t index = 0; index < state_slots_.size(); ++index) {
+      const StateSlot& slot = state_slots_[index];
+      if (slot.id != index || slot.name.empty() || slot.input.value() >= tensors_.size() ||
+          slot.output.value() >= tensors_.size() || slot.input == slot.output) {
+        return base::Status::invalid_argument("lowered state slot has invalid identity or tensors");
+      }
+      const auto is_state = [&](LoweredTensorId id) {
+        const semantic::TensorRole role = tensors_[id.value()].role;
+        return role == semantic::TensorRole::kv_cache || role == semantic::TensorRole::decode_state;
+      };
+      if (!is_state(slot.input) || !is_state(slot.output)) {
+        return base::Status::invalid_argument("lowered state slot endpoints must be state tensors");
+      }
+    }
+    for (const StateTransition& transition : state_transitions_) {
+      if (transition.slot >= state_slots_.size()) {
+        return base::Status::out_of_range("lowered state transition references undefined slot");
+      }
+    }
+    for (const EntryPoint& entry : entry_points_) {
+      if (entry.name.empty() || entry.inputs.empty() || entry.outputs.empty()) {
+        return base::Status::invalid_argument("lowered entry point requires name, inputs, and outputs");
+      }
+      for (const LoweredTensorId id : entry.inputs) {
+        if (id.value() >= tensors_.size()) {
+          return base::Status::out_of_range("lowered entry input is undefined");
+        }
+      }
+      for (const LoweredTensorId id : entry.outputs) {
+        if (id.value() >= tensors_.size()) {
+          return base::Status::out_of_range("lowered entry output is undefined");
+        }
+      }
+    }
     return {};
   }
 
@@ -114,10 +173,14 @@ class Module final {
  private:
   friend class ModuleBuilder;
   Module(std::vector<Tensor> tensors, std::vector<FusedRegion> fused_regions,
-         std::vector<KernelRequirement> requirements)
+         std::vector<KernelRequirement> requirements, std::vector<StateSlot> state_slots,
+         std::vector<StateTransition> state_transitions, std::vector<EntryPoint> entry_points)
       : tensors_(std::move(tensors)),
         fused_regions_(std::move(fused_regions)),
-        kernel_requirements_(std::move(requirements)) {}
+        kernel_requirements_(std::move(requirements)),
+        state_slots_(std::move(state_slots)),
+        state_transitions_(std::move(state_transitions)),
+        entry_points_(std::move(entry_points)) {}
   Module() = default;
 
   static std::string_view layout_name(LayoutKind layout) {
@@ -129,9 +192,21 @@ class Module final {
     return "unknown";
   }
 
+  static std::string_view state_action_name(StateAction action) {
+    switch (action) {
+      case StateAction::read: return "read";
+      case StateAction::write: return "write";
+      case StateAction::commit: return "commit";
+    }
+    return "unknown";
+  }
+
   std::vector<Tensor> tensors_;
   std::vector<FusedRegion> fused_regions_;
   std::vector<KernelRequirement> kernel_requirements_;
+  std::vector<StateSlot> state_slots_;
+  std::vector<StateTransition> state_transitions_;
+  std::vector<EntryPoint> entry_points_;
 };
 
 /** Checked builder for target/layout/fusion descriptors. */
@@ -164,8 +239,27 @@ class ModuleBuilder final {
     return {};
   }
 
+  base::Result<std::uint32_t> add_state_slot(std::string name, LoweredTensorId input,
+                                             LoweredTensorId output) {
+    state_slots_.push_back({static_cast<std::uint32_t>(state_slots_.size()), std::move(name), input,
+                            output});
+    return state_slots_.back().id;
+  }
+
+  base::Status add_state_transition(std::uint32_t slot, StateAction action) {
+    state_transitions_.push_back({slot, action});
+    return {};
+  }
+
+  base::Status add_entry_point(std::string name, std::vector<LoweredTensorId> inputs,
+                               std::vector<LoweredTensorId> outputs) {
+    entry_points_.push_back({std::move(name), std::move(inputs), std::move(outputs)});
+    return {};
+  }
+
   [[nodiscard]] base::Result<Module> build() && {
-    Module module{std::move(tensors_), std::move(fused_regions_), std::move(kernel_requirements_)};
+    Module module{std::move(tensors_), std::move(fused_regions_), std::move(kernel_requirements_),
+                  std::move(state_slots_), std::move(state_transitions_), std::move(entry_points_)};
     base::Status status = module.verify();
     if (!status.ok()) return status.with_context("lowered-ir builder");
     return base::Result<Module>(std::move(module));
@@ -175,6 +269,9 @@ class ModuleBuilder final {
   std::vector<Tensor> tensors_;
   std::vector<FusedRegion> fused_regions_;
   std::vector<KernelRequirement> kernel_requirements_;
+  std::vector<StateSlot> state_slots_;
+  std::vector<StateTransition> state_transitions_;
+  std::vector<EntryPoint> entry_points_;
 };
 
 }  // namespace superinfer::ir::lowered

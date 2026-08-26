@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <cstdint>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include <superinfer/base/checked_math.hpp>
@@ -17,6 +19,7 @@ struct ReferenceInput final {
 };
 
 struct ReferenceTensor final {
+  std::string name;
   std::vector<std::uint64_t> shape;
   std::vector<float> values;
 };
@@ -24,6 +27,13 @@ struct ReferenceTensor final {
 /** Independent CPU result table used as a differential oracle for device providers. */
 struct ReferenceResult final {
   std::vector<ReferenceTensor> tensors;
+
+  [[nodiscard]] const ReferenceTensor* find(std::string_view name) const noexcept {
+    for (const ReferenceTensor& tensor : tensors) {
+      if (tensor.name == name) return &tensor;
+    }
+    return nullptr;
+  }
 };
 
 /**
@@ -51,7 +61,8 @@ class ReferenceExecutor final {
           input.values.size() != expected.value()) {
         return base::Status::invalid_argument("reference input shape or value count mismatches semantic tensor");
       }
-      result.tensors[input.id.value()] = {input.shape, input.values};
+      result.tensors[input.id.value()] = {module.tensors()[input.id.value()].name, input.shape,
+                                          input.values};
       initialized[input.id.value()] = true;
     }
 
@@ -73,7 +84,8 @@ class ReferenceExecutor final {
         }
         const auto& left = result.tensors[operation.inputs[0].value()].values;
         const auto& right = result.tensors[operation.inputs[1].value()].values;
-        result.tensors[output.value()] = {shape, std::vector<float>(elements.value())};
+        result.tensors[output.value()] = {module.tensors()[output.value()].name, shape,
+                                          std::vector<float>(elements.value())};
         for (std::size_t index = 0; index < left.size(); ++index) {
           result.tensors[output.value()].values[index] = left[index] + right[index];
         }
@@ -92,7 +104,8 @@ class ReferenceExecutor final {
         }
         variance /= static_cast<float>(input.size());
         const float denominator = std::sqrt(variance + 1.0e-5F);
-        result.tensors[output.value()] = {shape, std::vector<float>(elements.value())};
+        result.tensors[output.value()] = {module.tensors()[output.value()].name, shape,
+                                          std::vector<float>(elements.value())};
         for (std::size_t index = 0; index < input.size(); ++index) {
           const float centered = operation.kind == ir::semantic::OperationKind::layer_norm ? input[index] - mean : input[index];
           result.tensors[output.value()].values[index] = centered / denominator;

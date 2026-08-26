@@ -47,6 +47,8 @@ int main() {
       module, {{ir::semantic::TensorId{0}, {2}, {1.0F, 2.0F}},
                {ir::semantic::TensorId{1}, {2}, {3.0F, 4.0F}}});
   assert(result.has_value());
+  assert(result.value().tensors.at(2).name == "sum");
+  assert(result.value().find("norm") != nullptr);
   assert(result.value().tensors.at(2).values.at(0) == 4.0F);
   assert(result.value().tensors.at(2).values.at(1) == 6.0F);
   const float scale = std::sqrt((16.0F + 36.0F) / 2.0F + 1.0e-5F);

@@ -54,6 +54,32 @@ __global__ inline void embedding_bf16(const std::uint32_t* token, const std::uin
   }
 }
 
+__device__ inline float decode_e2m1_device(std::uint8_t code) {
+  constexpr float magnitudes[8] = {0.0F, 0.5F, 1.0F, 1.5F, 2.0F, 3.0F, 4.0F, 6.0F};
+  const float magnitude = magnitudes[code & 0x07U];
+  return (code & 0x08U) == 0 ? magnitude : -magnitude;
+}
+
+__device__ inline float decode_e4m3fn_device(std::uint8_t code) {
+  const bool negative = (code & 0x80U) != 0;
+  const std::uint8_t exponent = (code >> 3U) & 0x0FU;
+  const std::uint8_t mantissa = code & 0x07U;
+  if (negative || (exponent == 0x0FU && mantissa == 0x07U)) return __int_as_float(0x7FC00000U);
+  if (exponent == 0) return ldexpf(static_cast<float>(mantissa) / 8.0F, -6);
+  return ldexpf(1.0F + static_cast<float>(mantissa) / 8.0F,
+                static_cast<int>(exponent) - 7);
+}
+
+__global__ inline void nvfp4_dequantize(const std::uint8_t* packed, const std::uint8_t* scales,
+                                        float* output, std::size_t elements, float scalar) {
+  for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < elements;
+       index += blockDim.x * gridDim.x) {
+    const std::uint8_t packed_value = packed[index / 2U];
+    const std::uint8_t code = (index % 2U == 0) ? (packed_value & 0x0FU) : (packed_value >> 4U);
+    output[index] = decode_e2m1_device(code) * decode_e4m3fn_device(scales[index / 16U]) * scalar;
+  }
+}
+
 __global__ inline void rms_norm_f32(const float* input, const float* scale, float* output,
                                     std::size_t elements, float epsilon) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
@@ -140,6 +166,26 @@ inline cudaError_t launch_embedding_bf16(const ir::physical::CommandDescriptor& 
       static_cast<const std::uint32_t*>(buffer_pointer(plan, arena, token.id)),
       static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, table.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)), vocabulary, hidden);
+  return cudaGetLastError();
+}
+
+inline cudaError_t launch_nvfp4_dequantize(const ir::physical::CommandDescriptor& command,
+                                           const ir::physical::Plan& plan, void* arena, void*,
+                                           cudaStream_t stream) {
+  if (command.buffers.size() != 3) return cudaErrorInvalidValue;
+  const auto& packed = plan.buffers()[command.buffers[0].value()];
+  const auto& scales = plan.buffers()[command.buffers[1].value()];
+  const auto& output = plan.buffers()[command.buffers[2].value()];
+  if (output.size == 0 || output.size % sizeof(float) != 0 || output.size / sizeof(float) % 16 != 0 ||
+      packed.size != output.size / sizeof(float) / 2U ||
+      scales.size != output.size / sizeof(float) / 16U) {
+    return cudaErrorInvalidValue;
+  }
+  nvfp4_dequantize<<<1, 256, 0, stream>>>(
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id)),
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)),
+      static_cast<std::size_t>(output.size / sizeof(float)), command.scalar);
   return cudaGetLastError();
 }
 
@@ -239,6 +285,18 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
             "CUDA BF16 embedding requires token, BF16 table, and f32 output buffers");
       }
       return {};
+    case 9:
+      if (!exact_buffers(3) || plan.buffers()[command.buffers[2].value()].size == 0 ||
+          plan.buffers()[command.buffers[2].value()].size % sizeof(float) != 0 ||
+          plan.buffers()[command.buffers[2].value()].size / sizeof(float) % 16 != 0 ||
+          plan.buffers()[command.buffers[0].value()].size !=
+              plan.buffers()[command.buffers[2].value()].size / sizeof(float) / 2U ||
+          plan.buffers()[command.buffers[1].value()].size !=
+              plan.buffers()[command.buffers[2].value()].size / sizeof(float) / 16U) {
+        return base::Status::invalid_argument(
+            "CUDA NVFP4 dequantization requires packed, scale, and aligned f32 buffers");
+      }
+      return {};
     case 4:
       if (!same_sizes(3)) return base::Status::invalid_argument("CUDA residual requires three equal-sized f32 buffers");
       return {};
@@ -258,6 +316,7 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 1: return &launch_copy;
     case 7: return &launch_embedding;
     case 8: return &launch_embedding_bf16;
+    case 9: return &launch_nvfp4_dequantize;
     case 4: return &launch_residual;
     case 5: return &launch_rms_norm;
     case 6: return &launch_layer_norm;

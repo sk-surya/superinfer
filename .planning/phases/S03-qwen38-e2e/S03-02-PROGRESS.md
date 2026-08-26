@@ -93,6 +93,11 @@ updated: 2026-08-26
   tensor-table offsets without materializing the full artifact payload. It rejects metadata-only
   artifacts, missing names, malformed ranges, and truncation, and is covered by deterministic
   payload-artifact tests.
+- A generic `nvfp4_dequantize` baseline command is now provider ID 9. It uses an explicit physical
+  command scalar for `weight_scale_2`, decodes packed E2M1 plus FP8 E4M3 block scales into FP32,
+  and passes an RTX 5090 differential fixture against the CPU oracle's known vector. It remains a
+  materialization primitive, not yet a Qwen linear/FFN provider; source-scale validation and
+  artifact binding still precede promotion.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

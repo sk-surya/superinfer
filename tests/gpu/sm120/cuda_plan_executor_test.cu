@@ -96,6 +96,24 @@ superinfer::ir::physical::Plan make_bf16_embedding_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_nvfp4_dequantize_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({80, 0, 1});
+  assert(builder.add_buffer(0, 8, 8).has_value());
+  assert(builder.add_buffer(8, 1, 1).has_value());
+  assert(builder.add_buffer(16, 64, 8).has_value());
+  assert(builder
+             .add_command(base::KernelId{9},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}},
+                          {}, 0, 0, 0, 1.0e-5F, 2.0F)
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 }  // namespace
 
 int main() {
@@ -268,6 +286,34 @@ int main() {
       base::ByteView(reinterpret_cast<std::byte*>(bf16_embedded.data()),
                      sizeof(bf16_embedded))).ok());
   assert((bf16_embedded == std::array<float, 2>{5.0F, 6.0F}));
+
+  const auto nvfp4_plan = make_nvfp4_dequantize_plan();
+  auto nvfp4 = sm120::cuda_runtime::CudaPlanSession::create(nvfp4_plan, 120, "baseline-v1");
+  assert(nvfp4.has_value());
+  const std::array<std::uint8_t, 8> packed_nvfp4{
+      0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe};
+  const std::uint8_t scale_nvfp4 = 0x38;  // E4M3 1.0.
+  assert(nvfp4.value().copy_to_device(
+      ir::physical::BufferId{0},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(packed_nvfp4.data()),
+                          sizeof(packed_nvfp4))).ok());
+  assert(nvfp4.value().copy_to_device(
+      ir::physical::BufferId{1},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(&scale_nvfp4),
+                          sizeof(scale_nvfp4))).ok());
+  assert(nvfp4.value().execute().ok());
+  assert(nvfp4.value().synchronize_for_test().ok());
+  std::array<float, 16> dequantized_nvfp4{};
+  assert(nvfp4.value().copy_from_device(
+      ir::physical::BufferId{2},
+      base::ByteView(reinterpret_cast<std::byte*>(dequantized_nvfp4.data()),
+                     sizeof(dequantized_nvfp4))).ok());
+  const std::array<float, 16> expected_nvfp4{
+      0.0F, 1.0F, 2.0F, 3.0F, 4.0F, 6.0F, 8.0F, 12.0F,
+      -0.0F, -1.0F, -2.0F, -3.0F, -4.0F, -6.0F, -8.0F, -12.0F};
+  for (std::size_t index = 0; index < expected_nvfp4.size(); ++index) {
+    assert(std::abs(dequantized_nvfp4[index] - expected_nvfp4[index]) < 1.0e-5F);
+  }
 
   ir::physical::PlanBuilder norm_builder;
   norm_builder.set_resource_bounds({48, 0, 1});

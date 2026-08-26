@@ -20,8 +20,9 @@ int main() {
   assert(!unsupported_operation.has_value());
   assert(unsupported_operation.error().code() == superinfer::base::StatusCode::unsupported);
 
-  constexpr std::array<std::pair<std::string_view, std::uint64_t>, 5> operations{{
-      {"copy", 1}, {"residual", 4}, {"rms_norm", 5}, {"layer_norm", 6}, {"embedding", 7}}};
+  constexpr std::array<std::pair<std::string_view, std::uint64_t>, 6> operations{{
+      {"copy", 1}, {"residual", 4}, {"rms_norm", 5}, {"layer_norm", 6}, {"embedding", 7},
+      {"nvfp4_dequantize", 9}}};
   for (const auto& operation : operations) {
     const auto candidates = provider.enumerate({operation.first, 120});
     assert(candidates.has_value());

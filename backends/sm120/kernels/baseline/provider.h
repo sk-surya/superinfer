@@ -45,6 +45,9 @@ class BaselineProvider final : public kernels::KernelProvider {
       }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{7}, "sm120.baseline", true, 0}};
     }
+    if (query.operation == "nvfp4_dequantize") {
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{9}, "sm120.baseline", true, 0}};
+    }
     return base::Status::unsupported("no executable baseline candidate for operation");
   }
 };

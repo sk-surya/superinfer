@@ -65,6 +65,20 @@ class ArtifactView final {
     return base::Status::out_of_range("requested artifact section is absent");
   }
 
+  /** Returns a borrowed, bounds-checked view into the payload section; the artifact owns the bytes. */
+  [[nodiscard]] base::Result<base::ConstByteView> payload_range(
+      std::uint64_t offset, std::uint64_t size) const {
+    const auto payload = section(SectionKind::payload);
+    if (!payload.has_value()) return payload.error();
+    if (offset > payload.value().size() || size > payload.value().size() - offset ||
+        offset > std::numeric_limits<std::size_t>::max() ||
+        size > std::numeric_limits<std::size_t>::max()) {
+      return base::Status::out_of_range("artifact payload range is outside the payload section");
+    }
+    return base::ConstByteView{payload.value().data() + static_cast<std::size_t>(offset),
+                               static_cast<std::size_t>(size)};
+  }
+
   /** Rechecks section checksums and the integrity table after structural validation. */
   [[nodiscard]] base::Status validate_integrity() const;
 

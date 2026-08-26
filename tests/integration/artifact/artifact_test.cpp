@@ -39,6 +39,11 @@ int main(int argc, char** argv) {
   assert(parsed.has_value());
   assert(parsed.value().section(artifact::SectionKind::manifest).has_value());
   assert(parsed.value().section(artifact::SectionKind::payload).value().size() == 4);
+  const auto payload_slice = parsed.value().payload_range(1, 2);
+  assert(payload_slice.has_value());
+  assert(std::to_integer<unsigned char>(payload_slice.value()[0]) == 0x02);
+  assert(std::to_integer<unsigned char>(payload_slice.value()[1]) == 0x03);
+  assert(!parsed.value().payload_range(3, 2).has_value());
   assert(parsed.value().validate_integrity().ok());
   artifact::HostStoragePolicy storage;
   assert(storage.plan(4).has_value());

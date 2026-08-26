@@ -6,7 +6,7 @@ ID. The payload artifact records the same status in its manifest.
 
 | Semantic operation | Lowered capability | Baseline status | Evidence / remaining boundary |
 | --- | --- | --- | --- |
-| embedding | `embedding` | staged baseline | Generic FP32 CUDA provider ID 7 and BF16 provider ID 8 pass CPU/CUDA tests; pinned artifact-to-token binding remains open |
+| embedding | `embedding` | unavailable | Generic FP32 CUDA provider ID 7 and BF16 provider ID 8 pass CPU/CUDA tests; pinned artifact-to-token binding remains open |
 | RMSNorm | `rms_norm` | executable baseline | Kernel ID 5; differential/reference fixture exists |
 | Gated Delta attention | `gated_delta_attention` | reference-only | Independent recurrent CPU oracle exists; CUDA provider/state binding absent |
 | grouped full attention | `attention` | unavailable | Pinned q/k/v/o and q/k norm weights now bind in Semantic IR; KV/RoPE provider path absent |

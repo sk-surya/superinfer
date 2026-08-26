@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <array>
+#include <cmath>
 #include <cstddef>
 
 namespace {
@@ -108,5 +109,35 @@ int main() {
              .ok());
   assert((sum == std::array<float, 4>{6.0F, 8.0F, 10.0F, 12.0F}));
   assert(copied == sum);
+
+  ir::physical::PlanBuilder norm_builder;
+  norm_builder.set_resource_bounds({32, 0, 1});
+  assert(norm_builder.add_buffer(0, 16, 16).has_value());
+  assert(norm_builder.add_buffer(16, 16, 16).has_value());
+  assert(norm_builder
+             .add_command(base::KernelId{5}, {ir::physical::BufferId{0}, ir::physical::BufferId{1}},
+                          {}, 0, 0, 0)
+             .has_value());
+  const auto norm_plan = std::move(norm_builder).finalize({120, "baseline-v1"});
+  assert(norm_plan.has_value());
+  auto norm = sm120::cuda_runtime::CudaPlanSession::create(norm_plan.value(), 120, "baseline-v1");
+  assert(norm.has_value());
+  assert(norm.value()
+             .copy_to_device(ir::physical::BufferId{0},
+                              base::ConstByteView(reinterpret_cast<const std::byte*>(left.data()),
+                                                  sizeof(left)))
+             .ok());
+  assert(norm.value().execute().ok());
+  assert(norm.value().synchronize_for_test().ok());
+  std::array<float, 4> normalized{};
+  assert(norm.value()
+             .copy_from_device(ir::physical::BufferId{1},
+                               base::ByteView(reinterpret_cast<std::byte*>(normalized.data()),
+                                              sizeof(normalized)))
+             .ok());
+  const float denominator = std::sqrt((1.0F + 4.0F + 9.0F + 16.0F) / 4.0F + 1.0e-5F);
+  for (std::size_t index = 0; index < normalized.size(); ++index) {
+    assert(std::abs(normalized[index] - left[index] / denominator) < 1.0e-5F);
+  }
   return 0;
 }

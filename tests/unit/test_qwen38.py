@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from superinfer.artifact import ArtifactError, inspect_artifact, read_tensor_payload
+from superinfer.artifact import ArtifactError, inspect_artifact, read_tensor_payload, read_typed_tensor
 from superinfer.convert.qwen38 import (
     Qwen38ValidationError,
     validate_source,
@@ -269,6 +269,10 @@ class Qwen38SourceTests(unittest.TestCase):
             conversion = summary["manifest"]["conversion"]
             self.assertTrue(conversion["payload_included"])
             self.assertEqual(read_tensor_payload(first_path, "weight"), b"\0\0\0\0")
+            typed = read_typed_tensor(first_path, "weight")
+            self.assertEqual(typed.descriptor.dtype, "f32")
+            self.assertEqual(typed.descriptor.shape, (1,))
+            self.assertEqual(typed.descriptor.storage_bytes, 4)
             with self.assertRaisesRegex(ArtifactError, "tensor is not present"):
                 read_tensor_payload(first_path, "missing")
             self.assertEqual(

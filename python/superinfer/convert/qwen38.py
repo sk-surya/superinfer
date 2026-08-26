@@ -686,6 +686,7 @@ def write_qwen38_payload_artifact(
         shard_base = next(item["payload_offset"] for item in shard_table if item["name"] == tensor.shard)
         tensor_table.append({
             **asdict(tensor),
+            **_physical_tensor_mapping(tensor),
             "artifact_payload_offset": shard_base + 8 + header_sizes[tensor.shard] + tensor.data_start,
             "artifact_payload_end": shard_base + 8 + header_sizes[tensor.shard] + tensor.data_end,
         })

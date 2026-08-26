@@ -160,6 +160,39 @@ class ReferenceExecutor final {
         for (std::size_t index = 0; index < left.size(); ++index) {
           result.tensors[output.value()].values[index] = left[index] + right[index];
         }
+      } else if (operation.kind == ir::semantic::OperationKind::grouped_query_attention) {
+        if (operation.inputs.size() != 3 || operation.attributes.num_heads == 0 ||
+            operation.attributes.num_kv_heads == 0 || operation.attributes.head_dimension == 0 ||
+            result.tensors[operation.inputs[0].value()].shape.size() != 2 ||
+            result.tensors[operation.inputs[1].value()].shape.size() != 3 ||
+            result.tensors[operation.inputs[2].value()].shape.size() != 3 || shape.size() != 2 ||
+            shape[0] != operation.attributes.num_heads ||
+            shape[1] != operation.attributes.head_dimension) {
+          return base::Status::invalid_argument(
+              "reference grouped attention requires query, cache, and row output shapes");
+        }
+        const auto& query = result.tensors[operation.inputs[0].value()];
+        const auto& keys = result.tensors[operation.inputs[1].value()];
+        const auto& values = result.tensors[operation.inputs[2].value()];
+        if (query.shape != std::vector<std::uint64_t>{operation.attributes.num_heads,
+                                                       operation.attributes.head_dimension} ||
+            keys.shape != std::vector<std::uint64_t>{keys.shape[0],
+                                                     operation.attributes.num_kv_heads,
+                                                     operation.attributes.head_dimension} ||
+            values.shape != keys.shape) {
+          return base::Status::invalid_argument(
+              "reference grouped attention cache shapes do not match attributes");
+        }
+        const auto attended = reference::ReferencePrimitives::grouped_attention(
+            query.values, keys.values, values.values, operation.attributes.num_heads,
+            operation.attributes.num_kv_heads, operation.attributes.head_dimension,
+            static_cast<std::size_t>(keys.shape[0]));
+        if (!attended.has_value()) {
+          base::Status error = attended.error();
+          return error.with_context("reference grouped attention primitive");
+        }
+        result.tensors[output.value()] = {module.tensors()[output.value()].name, shape,
+                                          attended.value()};
       } else if (operation.kind == ir::semantic::OperationKind::rms_norm ||
                  operation.kind == ir::semantic::OperationKind::layer_norm) {
         const bool layer_norm = operation.kind == ir::semantic::OperationKind::layer_norm;

@@ -126,6 +126,10 @@ updated: 2026-08-26
   `weight_scale_2` records, including ModelOpt dtype/shape contracts, and records deterministic
   sidecar bindings in the manifest. The pinned payload inventory contains 401 valid pairs; missing
   or mismatched sidecars fail before artifact emission.
+- The CPU `ReferenceExecutor` now executes the generic grouped-query attention contract through
+  the independent softmax oracle, checking authored head attributes and contiguous cache shapes;
+  the same fixture is used to validate the CUDA provider. Qwen's projection/RoPE/state lowering is
+  still intentionally separate from this primitive contract.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

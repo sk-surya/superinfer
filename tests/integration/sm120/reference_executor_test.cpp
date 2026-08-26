@@ -38,6 +38,44 @@ superinfer::ir::semantic::Module make_fixture() {
   return std::move(module).value();
 }
 
+struct AttentionFixture final {
+  superinfer::ir::semantic::Module module;
+  superinfer::ir::semantic::TensorId query;
+  superinfer::ir::semantic::TensorId keys;
+  superinfer::ir::semantic::TensorId values;
+  superinfer::ir::semantic::TensorId output;
+};
+
+AttentionFixture make_attention_fixture() {
+  using namespace superinfer;
+  using namespace ir::semantic;
+  Builder builder;
+  const auto query = builder.add_tensor(
+      "query", {{Dimension::static_value(2), Dimension::static_value(2)}, DType::f32,
+                 QuantizationIntent::none, TensorRole::activation});
+  const auto keys = builder.add_tensor(
+      "keys", {{Dimension::static_value(2), Dimension::static_value(1), Dimension::static_value(2)},
+                DType::f32, QuantizationIntent::none, TensorRole::kv_cache});
+  const auto values = builder.add_tensor(
+      "values", {{Dimension::static_value(2), Dimension::static_value(1), Dimension::static_value(2)},
+                  DType::f32, QuantizationIntent::none, TensorRole::kv_cache});
+  const auto output = builder.add_tensor(
+      "attention", {{Dimension::static_value(2), Dimension::static_value(2)}, DType::f32,
+                     QuantizationIntent::none, TensorRole::activation});
+  assert(query.has_value() && keys.has_value() && values.has_value() && output.has_value());
+  OperationAttributes attributes;
+  attributes.num_heads = 2;
+  attributes.num_kv_heads = 1;
+  attributes.head_dimension = 2;
+  assert(builder.add_operation("attention", OperationKind::grouped_query_attention,
+                               {query.value(), keys.value(), values.value()}, {output.value()},
+                               attributes)
+             .has_value());
+  const auto module = std::move(builder).build();
+  assert(module.has_value());
+  return {std::move(module).value(), query.value(), keys.value(), values.value(), output.value()};
+}
+
 struct WeightedFixture final {
   superinfer::ir::semantic::Module module;
   superinfer::ir::semantic::TensorId token;
@@ -138,5 +176,19 @@ int main() {
   const float expected_second = 6.0F / (1.0F + std::exp(-6.0F)) * 6.0F;
   assert(std::abs(weighted_result.value().find("logits")->values[0] - expected_first) < 1.0e-5F);
   assert(std::abs(weighted_result.value().find("logits")->values[1] - expected_second) < 1.0e-5F);
+
+  const AttentionFixture attention = make_attention_fixture();
+  const auto attention_result = sm120::ReferenceExecutor::run(
+      attention.module,
+      {{attention.query, {2, 2}, {1.0F, 0.0F, 0.0F, 1.0F}},
+       {attention.keys, {2, 1, 2}, {1.0F, 0.0F, 0.0F, 1.0F}},
+       {attention.values, {2, 1, 2}, {2.0F, 0.0F, 0.0F, 4.0F}}});
+  assert(attention_result.has_value());
+  const auto* attended = attention_result.value().find("attention");
+  assert(attended != nullptr && attended->values.size() == 4);
+  const float first_probability = std::exp(1.0F / std::sqrt(2.0F)) /
+                                  (std::exp(1.0F / std::sqrt(2.0F)) + 1.0F);
+  assert(std::abs(attended->values[0] - 2.0F * first_probability) < 1.0e-5F);
+  assert(std::abs(attended->values[1] - 4.0F * (1.0F - first_probability)) < 1.0e-5F);
   return 0;
 }

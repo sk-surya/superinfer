@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -300,6 +301,15 @@ class Frontend final : public compiler::ModelFrontend {
     } else {
       return base::Status::unsupported("source tensor dtype is not supported by semantic IR: " +
                                       record.dtype);
+    }
+    if (record.dtype == "U8") {
+      // ModelOpt records the packed byte matrix as [out, in / 2]. Semantic IR describes the
+      // logical FP4 matrix, so expand the input dimension before any shape-sensitive lowering.
+      if (shape.size() != 2 || shape[1].is_symbolic ||
+          shape[1].value > std::numeric_limits<std::uint64_t>::max() / 2U) {
+        return base::Status::invalid_argument("packed NVFP4 source weight shape is invalid");
+      }
+      shape[1].value *= 2U;
     }
     return ir::semantic::TensorSpec{std::move(shape), dtype, quantization,
                                     ir::semantic::TensorRole::weight};

@@ -12,33 +12,34 @@ namespace {
 std::vector<superinfer::compiler::SourceTensorRecord> source_tensors() {
   using superinfer::compiler::SourceTensorRecord;
   std::vector<SourceTensorRecord> tensors;
-  const auto add = [&tensors](std::string name, std::string role, std::string dtype = "BF16") {
+  const auto add = [&tensors](std::string name, std::string role, std::string dtype = "BF16",
+                              std::vector<std::uint64_t> shape = {1}) {
     const std::uint64_t offset = tensors.size() * 2;
-    tensors.push_back({std::move(name), std::move(role), std::move(dtype), {1}, offset, 2});
+    tensors.push_back({std::move(name), std::move(role), std::move(dtype), std::move(shape), offset, 2});
   };
   add("model.language_model.embed_tokens.weight", "embedding");
-  add("lm_head.weight", "lm_head", "U8");
+  add("lm_head.weight", "lm_head", "U8", {8, 8});
   add("lm_head.weight_scale", "scale", "F8_E4M3");
   for (std::uint32_t layer = 0; layer < 64; ++layer) {
     const std::string prefix = "model.language_model.layers." + std::to_string(layer) + ".";
     add(prefix + "input_layernorm.weight", "normalization");
     add(prefix + "post_attention_layernorm.weight", "normalization");
-    add(prefix + "mlp.gate_proj.weight", "feed_forward", "U8");
-    add(prefix + "mlp.up_proj.weight", "feed_forward", "U8");
-    add(prefix + "mlp.down_proj.weight", "feed_forward", "U8");
+    add(prefix + "mlp.gate_proj.weight", "feed_forward", "U8", {8, 8});
+    add(prefix + "mlp.up_proj.weight", "feed_forward", "U8", {8, 8});
+    add(prefix + "mlp.down_proj.weight", "feed_forward", "U8", {8, 8});
     if (layer % 4U == 3U) {
-      add(prefix + "self_attn.q_proj.weight", "attention", "U8");
-      add(prefix + "self_attn.k_proj.weight", "attention", "U8");
-      add(prefix + "self_attn.v_proj.weight", "attention", "U8");
-      add(prefix + "self_attn.o_proj.weight", "attention", "U8");
+      add(prefix + "self_attn.q_proj.weight", "attention", "U8", {8, 8});
+      add(prefix + "self_attn.k_proj.weight", "attention", "U8", {8, 8});
+      add(prefix + "self_attn.v_proj.weight", "attention", "U8", {8, 8});
+      add(prefix + "self_attn.o_proj.weight", "attention", "U8", {8, 8});
       add(prefix + "self_attn.q_norm.weight", "attention");
       add(prefix + "self_attn.k_norm.weight", "attention");
     } else {
-      add(prefix + "linear_attn.in_proj_qkv.weight", "attention", "U8");
-      add(prefix + "linear_attn.in_proj_z.weight", "attention", "U8");
+      add(prefix + "linear_attn.in_proj_qkv.weight", "attention", "U8", {8, 8});
+      add(prefix + "linear_attn.in_proj_z.weight", "attention", "U8", {8, 8});
       add(prefix + "linear_attn.in_proj_a.weight", "attention", "BF16");
       add(prefix + "linear_attn.in_proj_b.weight", "attention", "BF16");
-      add(prefix + "linear_attn.out_proj.weight", "attention", "U8");
+      add(prefix + "linear_attn.out_proj.weight", "attention", "U8", {8, 8});
       add(prefix + "linear_attn.A_log", "attention", "F32");
       add(prefix + "linear_attn.dt_bias", "bias", "F32");
       add(prefix + "linear_attn.norm.weight", "attention");
@@ -87,6 +88,21 @@ int main() {
       assert(module.value().tensors()[operation.inputs[1].value()].name == "weight/lm_head.weight");
     }
   }
+  for (const auto& tensor : module.value().tensors()) {
+    if (tensor.name == "weight/lm_head.weight") {
+      assert(tensor.spec.shape.size() == 2);
+      assert(!tensor.spec.shape[1].is_symbolic && tensor.spec.shape[1].value == 16);
+    }
+  }
+  auto malformed_source = source_tensors();
+  for (auto& tensor : malformed_source) {
+    if (tensor.name == "lm_head.weight") tensor.shape = {8};
+  }
+  const auto malformed = frontend.emit(
+      {std::string{frontends::qwen38::kSourceIdentity}, frontends::qwen38::kTensorCount,
+       std::string{frontends::qwen38::kTensorInventorySha256}, std::move(malformed_source)});
+  assert(!malformed.has_value());
+  assert(malformed.error().message().find("packed NVFP4") != std::string::npos);
 
   std::size_t gated_delta = 0;
   std::size_t full_attention = 0;

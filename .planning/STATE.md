@@ -9,7 +9,7 @@ progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 25
-  completed_plans: 6
+completed_plans: 7
 current_phase_name: sm120-baseline
 ---
 
@@ -27,7 +27,7 @@ current_phase_name: sm120-baseline
 |---|---|---:|---|
 | S00 | Complete | 2 | [S00-01](phases/S00-foundation/S00-01-SUMMARY.md), [S00-02](phases/S00-foundation/S00-02-SUMMARY.md) |
 | S01 | Complete — Gate A reached | 3 | [S01-01](phases/S01-artifact-ir/S01-01-SUMMARY.md), [S01-02](phases/S01-artifact-ir/S01-02-SUMMARY.md), [S01-03](phases/S01-artifact-ir/S01-03-SUMMARY.md) |
-| S02 | In progress — S02-02 next | 3 | S02-01 complete; executor/provider implementation |
+| S02 | In progress — S02-03 next | 3 | S02-01 and S02-02 complete; safety qualification |
 | S03 | Planned | 3 | Pending |
 | S04 | Planned | 3 | Pending |
 | S05 | Planned | 3 | Pending |
@@ -37,7 +37,7 @@ current_phase_name: sm120-baseline
 
 ## Current Focus
 
-S01 is complete and S02-01 is complete. Gate A is reached and its packet/artifacts are retained for
+S01 is complete and S02-01/S02-02 are complete. Gate A is reached and its packet/artifacts are retained for
 later study. Per D-014, implementation proceeds autonomously through the approved phases while each
 gate remains an explicit checkpoint and is never marked passed on the user's behalf. Protect the
 S00–S06 critical path: correct Qwen3.8 from `.sinf` and the first reproducible RTX 5090 graph.
@@ -48,7 +48,7 @@ S00–S06 critical path: correct Qwen3.8 from `.sinf` and the first reproducible
 |---|---|
 | Current gate | Gate A — semantic IR/compiler boundaries — L2, reached; packet presented |
 | User status | Packet presented |
-| Implementation phase | S02 — `sm120` Correctness Backend; S02-01 complete |
+| Implementation phase | S02 — `sm120` Correctness Backend; S02-02 complete |
 | Highest passed L2 gate | None |
 | Debt distance | 1 |
 | Allowed next autonomous work | All approved S02–S08 plans, with gate packets/checkpoints retained |
@@ -59,15 +59,15 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
 
 ## Next Command
 
-Execute `.planning/phases/S02-sm120-baseline/S02-02-PLAN.md`; preserve Gate A as an unpassed study checkpoint.
+Execute `.planning/phases/S02-sm120-baseline/S02-03-PLAN.md`; preserve Gate A as an unpassed study checkpoint.
 
 ## Known Blockers
 
 - Implementation requires access to an RTX 5090 for GPU acceptance and benchmark evidence. CPU-only phases can proceed without it.
 - Exact Qwen3.8-27B and Gemma 4 26B-A4B upstream repository IDs/revisions must be pinned during their phases; marketing names in this packet are not a substitute for immutable model identity.
-- CUDA 13.1 is installed at `/usr/local/cuda-13.1/bin/nvcc` and the explicit `sm_120a` ownership
-  smoke passes on GPU 0. Full Physical Plan kernel execution and compute-sanitizer evidence remain
-  pending because no production CUDA kernels are bound yet.
+- CUDA 13.1 is installed at `/usr/local/cuda-13.1/bin/nvcc`; the explicit `sm_120a` ownership and
+  four-operation Physical Plan smoke pass on GPU 0. The broader Qwen operation matrix, hot-path
+  trace, and compute-sanitizer evidence remain S02-03/S03 work.
 
 ## Planning Notes
 

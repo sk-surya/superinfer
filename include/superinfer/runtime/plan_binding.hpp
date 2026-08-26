@@ -14,6 +14,7 @@ namespace superinfer::runtime {
 struct ExecutionTrace final {
   std::uint64_t commands_executed{0};
   std::uint64_t entries_executed{0};
+  std::uint64_t last_kernel_value{0};
 };
 
 /**
@@ -37,7 +38,32 @@ class PlanBinding final {
     PlanBinding binding{plan};
     binding.resolved_kernels_.reserve(plan.commands().size());
     for (const ir::physical::CommandDescriptor& command : plan.commands()) {
+      if (command.kernel.value() == 0) {
+        return base::Status::failed_precondition("physical command has no resolved kernel");
+      }
       binding.resolved_kernels_.push_back(command.kernel);
+    }
+    std::vector<bool> emitted(plan.commands().size(), false);
+    binding.command_order_.reserve(plan.commands().size());
+    for (std::size_t rank = 0; rank < plan.commands().size(); ++rank) {
+      bool found = false;
+      for (std::size_t index = 0; index < plan.commands().size(); ++index) {
+        if (emitted[index]) continue;
+        bool dependencies_emitted = true;
+        for (const base::StrongId<ir::physical::CommandIdTag>& dependency :
+             plan.commands()[index].dependencies) {
+          if (!emitted[dependency.value()]) {
+            dependencies_emitted = false;
+            break;
+          }
+        }
+        if (!dependencies_emitted) continue;
+        emitted[index] = true;
+        binding.command_order_.push_back(index);
+        found = true;
+        break;
+      }
+      if (!found) return base::Status::failed_precondition("physical command schedule is not executable");
     }
     return binding;
   }
@@ -50,11 +76,13 @@ class PlanBinding final {
   /** Executes the prebound command sequence; no graph/config/provider inspection occurs here. */
   base::Status execute() noexcept {
     if (poisoned_) return base::Status::failed_precondition("runtime session is poisoned");
-    for (const base::KernelId kernel : resolved_kernels_) {
+    for (const std::size_t command_index : command_order_) {
+      const base::KernelId kernel = resolved_kernels_[command_index];
       if (kernel.value() == 0) {
         poisoned_ = true;
         return base::Status::failed_precondition("runtime command has no resolved kernel");
       }
+      trace_.last_kernel_value = kernel.value();
       ++trace_.commands_executed;
     }
     ++trace_.entries_executed;
@@ -70,6 +98,7 @@ class PlanBinding final {
 
   ir::physical::Plan plan_;
   std::vector<base::KernelId> resolved_kernels_;
+  std::vector<std::size_t> command_order_;
   ExecutionTrace trace_{};
   bool poisoned_{false};
 };

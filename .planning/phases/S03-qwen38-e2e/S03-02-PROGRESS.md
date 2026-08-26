@@ -126,6 +126,10 @@ updated: 2026-08-26
   `weight_scale_2` records, including ModelOpt dtype/shape contracts, and records deterministic
   sidecar bindings in the manifest. The pinned payload inventory contains 401 valid pairs; missing
   or mismatched sidecars fail before artifact emission.
+- A fresh pinned payload regeneration with the sidecar manifest completed atomically at
+  18,766,778,520 bytes, SHA-256
+  `a8d4b2b398cc3458349cd6daee09a6f8e3776bc729b893291d30f28f1fba1573`; direct section inspection
+  confirms 2,402 tensors and 401 quantization bindings while physical execution remains pending.
 - The CPU `ReferenceExecutor` now executes the generic grouped-query attention contract through
   the independent softmax oracle, checking authored head attributes and contiguous cache shapes;
   the same fixture is used to validate the CUDA provider. Qwen's projection/RoPE/state lowering is

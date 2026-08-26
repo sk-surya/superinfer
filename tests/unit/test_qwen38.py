@@ -218,6 +218,25 @@ class Qwen38SourceTests(unittest.TestCase):
             self.assertEqual(mapping["storage_encoding"], "nvfp4_packed")
             self.assertEqual(mapping["storage_bytes"], 8)
 
+    def test_payload_manifest_binds_nvfp4_sidecars_to_artifact_ranges(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_quantized_source(root)
+            path = root / "payload.sinf"
+            write_qwen38_payload_artifact(root, path, max_context=64, enforce_pinned=False)
+            summary = inspect_artifact(path)
+            bindings = summary["manifest"]["quantization"]["bindings"]
+            self.assertEqual(len(bindings), 1)
+            binding = bindings[0]
+            self.assertEqual(binding["weight"], "layer.weight")
+            self.assertEqual(binding["block_scale"], "layer.weight_scale")
+            self.assertEqual(binding["tensor_scale"], "layer.weight_scale_2")
+            self.assertEqual(binding["ranges"], {
+                "weight": [224, 232],
+                "block_scale": [232, 234],
+                "tensor_scale": [234, 238],
+            })
+
     def test_quantized_weight_without_tensor_scale_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

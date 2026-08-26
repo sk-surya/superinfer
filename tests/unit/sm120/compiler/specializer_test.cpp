@@ -192,6 +192,35 @@ superinfer::ir::lowered::Module make_attention_fixture() {
   return std::move(module).value();
 }
 
+superinfer::ir::lowered::Module make_nvfp4_linear_fixture(bool valid) {
+  using namespace superinfer;
+  ir::lowered::ModuleBuilder builder;
+  const auto input = builder.add_tensor(
+      ir::semantic::TensorId{0}, {1, 16}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  const auto packed = builder.add_tensor(
+      ir::semantic::TensorId{1}, {2, 16}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16,
+      valid ? ir::semantic::DType::int4 : ir::semantic::DType::f32,
+      ir::semantic::DType::f32, ir::semantic::TensorRole::weight);
+  const auto scales = builder.add_tensor(
+      ir::semantic::TensorId{2}, {2, 1}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::int8, ir::semantic::DType::f32,
+      ir::semantic::TensorRole::weight);
+  const auto output = builder.add_tensor(
+      ir::semantic::TensorId{3}, {1, 2}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  assert(input.has_value() && packed.has_value() && scales.has_value() && output.has_value());
+  assert(builder.add_kernel_requirement(
+                         "nvfp4_linear", 120,
+                         {input.value(), packed.value(), scales.value(), output.value()})
+             .ok());
+  assert(builder.add_entry_point("decode", {input.value()}, {output.value()}).ok());
+  const auto module = std::move(builder).build();
+  assert(module.has_value());
+  return std::move(module).value();
+}
+
 }  // namespace
 
 int main() {
@@ -256,6 +285,19 @@ int main() {
   assert(attention_dimensions.head_dimension == 2);
   assert(attention_dimensions.positions == 2);
   assert(attention_result.value().plan.dump().find("attention=2x1x2@2") != std::string::npos);
+
+  const auto nvfp4_linear_result = specializer.compile(
+      make_nvfp4_linear_fixture(true), {target, 256, 64}, provider);
+  assert(nvfp4_linear_result.has_value());
+  assert(nvfp4_linear_result.value().plan.commands().front().kernel.value() == 13);
+  assert(nvfp4_linear_result.value().plan.buffers()[1].tensor.dtype ==
+         ir::physical::PhysicalDType::u8);
+  assert(nvfp4_linear_result.value().plan.buffers()[1].tensor.encoding ==
+         ir::physical::StorageEncoding::nvfp4_packed);
+  const auto invalid_nvfp4_linear = specializer.compile(
+      make_nvfp4_linear_fixture(false), {target, 256, 64}, provider);
+  assert(!invalid_nvfp4_linear.has_value());
+  assert(invalid_nvfp4_linear.error().code() == base::StatusCode::unsupported);
 
   const auto second = specializer.compile(make_fixture(), {target, 256, 64}, provider);
   assert(second.has_value());

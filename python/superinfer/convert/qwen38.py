@@ -468,6 +468,33 @@ def _physical_tensor_mapping(tensor: TensorRecord) -> dict[str, Any]:
     }
 
 
+def _artifact_quantization_bindings(
+    bindings: list[dict[str, Any]], tensor_table: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Attach absolute payload-section ranges to validated NVFP4 sidecar bindings."""
+
+    by_name = {str(record["name"]): record for record in tensor_table}
+    result: list[dict[str, Any]] = []
+    for binding in bindings:
+        ranges: dict[str, list[int]] = {}
+        for role in ("weight", "block_scale", "tensor_scale"):
+            name = binding.get(role)
+            record = by_name.get(str(name))
+            if record is None:
+                raise Qwen38ValidationError(
+                    "missing_tensor_mapping", str(name), "quantization binding is absent from artifact table"
+                )
+            start = record.get("artifact_payload_offset")
+            end = record.get("artifact_payload_end")
+            if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end <= start:
+                raise Qwen38ValidationError(
+                    "invalid_tensor_mapping", str(name), "artifact payload range is invalid"
+                )
+            ranges[role] = [start, end]
+        result.append({**binding, "ranges": ranges})
+    return result
+
+
 def validate_source(
     model_dir: Path,
     *,
@@ -692,6 +719,9 @@ def write_qwen38_payload_artifact(
         })
 
     manifest = inventory.manifest()
+    manifest["quantization"]["bindings"] = _artifact_quantization_bindings(
+        list(manifest["quantization"]["bindings"]), tensor_table
+    )
     manifest["conversion"] = {
         "recipe": "qwen38-payload-v1",
         "max_context": context,

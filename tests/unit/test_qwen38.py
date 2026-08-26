@@ -113,6 +113,14 @@ class Qwen38SourceTests(unittest.TestCase):
             with self.assertRaisesRegex(Qwen38ValidationError, "source_identity_mismatch"):
                 validate_source(root, upstream_revision="1" * 40, derivative_revision="2" * 40)
 
+    def test_invalid_metadata_encoding_has_stable_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_source(root)
+            (root / "config.json").write_bytes(b"{\xff")
+            with self.assertRaisesRegex(Qwen38ValidationError, r"invalid_encoding \[config\]"):
+                validate_source(root, enforce_pinned=False)
+
     def test_shard_path_escape_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -125,6 +125,8 @@ def _read_json(path: Path, field: str) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise Qwen38ValidationError("missing_file", field, str(path.name)) from error
+    except OSError as error:
+        raise Qwen38ValidationError("metadata_io", field, str(error)) from error
     except json.JSONDecodeError as error:
         raise Qwen38ValidationError("invalid_json", field, str(error)) from error
     except UnicodeError as error:

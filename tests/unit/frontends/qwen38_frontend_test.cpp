@@ -12,14 +12,39 @@ namespace {
 std::vector<superinfer::compiler::SourceTensorRecord> source_tensors() {
   using superinfer::compiler::SourceTensorRecord;
   std::vector<SourceTensorRecord> tensors;
-  tensors.push_back({"model.language_model.embed_tokens.weight", "embedding", "BF16",
-                     {248320, 5120}, 0, 2});
-  tensors.push_back({"lm_head.weight", "lm_head", "U8", {248320, 2560}, 2, 2});
-  tensors.push_back({"model.language_model.layers.0.input_layernorm.weight", "normalization", "BF16",
-                     {5120}, 4, 2});
-  tensors.push_back({"model.language_model.layers.0.post_attention_layernorm.weight", "normalization", "BF16",
-                     {5120}, 6, 2});
-  tensors.push_back({"lm_head.weight_scale", "scale", "F8_E4M3", {248320, 320}, 8, 2});
+  const auto add = [&tensors](std::string name, std::string role, std::string dtype = "BF16") {
+    const std::uint64_t offset = tensors.size() * 2;
+    tensors.push_back({std::move(name), std::move(role), std::move(dtype), {1}, offset, 2});
+  };
+  add("model.language_model.embed_tokens.weight", "embedding");
+  add("lm_head.weight", "lm_head", "U8");
+  add("lm_head.weight_scale", "scale", "F8_E4M3");
+  for (std::uint32_t layer = 0; layer < 64; ++layer) {
+    const std::string prefix = "model.language_model.layers." + std::to_string(layer) + ".";
+    add(prefix + "input_layernorm.weight", "normalization");
+    add(prefix + "post_attention_layernorm.weight", "normalization");
+    add(prefix + "mlp.gate_proj.weight", "feed_forward", "U8");
+    add(prefix + "mlp.up_proj.weight", "feed_forward", "U8");
+    add(prefix + "mlp.down_proj.weight", "feed_forward", "U8");
+    if (layer % 4U == 3U) {
+      add(prefix + "self_attn.q_proj.weight", "attention", "U8");
+      add(prefix + "self_attn.k_proj.weight", "attention", "U8");
+      add(prefix + "self_attn.v_proj.weight", "attention", "U8");
+      add(prefix + "self_attn.o_proj.weight", "attention", "U8");
+      add(prefix + "self_attn.q_norm.weight", "attention");
+      add(prefix + "self_attn.k_norm.weight", "attention");
+    } else {
+      add(prefix + "linear_attn.in_proj_qkv.weight", "attention", "U8");
+      add(prefix + "linear_attn.in_proj_z.weight", "attention", "U8");
+      add(prefix + "linear_attn.in_proj_a.weight", "attention", "BF16");
+      add(prefix + "linear_attn.in_proj_b.weight", "attention", "BF16");
+      add(prefix + "linear_attn.out_proj.weight", "attention", "U8");
+      add(prefix + "linear_attn.A_log", "attention", "F32");
+      add(prefix + "linear_attn.dt_bias", "bias", "F32");
+      add(prefix + "linear_attn.norm.weight", "attention");
+      add(prefix + "linear_attn.conv1d.weight", "attention");
+    }
+  }
   while (tensors.size() < superinfer::frontends::qwen38::kTensorCount) {
     const std::uint64_t offset = tensors.size() * 2;
     tensors.push_back({"filler_" + std::to_string(tensors.size()), "metadata", "BF16", {1}, offset, 2});
@@ -74,13 +99,16 @@ int main() {
   for (const auto& operation : module.value().operations()) {
     if (operation.kind == ir::semantic::OperationKind::gated_delta_attention ||
         operation.kind == ir::semantic::OperationKind::grouped_query_attention) {
-      assert(operation.inputs.size() == 3);
+      assert(operation.inputs.size() >= 9);
       assert(operation.outputs.size() == 3);
     }
     if (operation.kind == ir::semantic::OperationKind::gated_delta_attention) {
       assert(operation.attributes.num_heads == 16);
       assert(operation.attributes.num_kv_heads == 16);
       assert(operation.attributes.value_head_count == 48);
+    }
+    if (operation.kind == ir::semantic::OperationKind::gated_dense_ffn) {
+      assert(operation.inputs.size() == 4);
     }
   }
 

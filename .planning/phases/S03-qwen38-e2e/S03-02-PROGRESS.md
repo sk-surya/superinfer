@@ -33,6 +33,9 @@ updated: 2026-08-26
   dtype/shape, and artifact-payload ranges. Qwen frontend emission consumes those records to create
   deterministic semantic weight tensors and binds the embedding, LM head, and available layer-norm
   weights without selecting layouts, CUDA kernels, or physical allocations.
+- Qwen layer operations now require and bind the pinned gated-FFN gate/up/down records plus the
+  linear-attention or grouped full-attention projection/normalization parameter records. Missing
+  names fail at frontend emission with operation-specific context.
 - ModelOpt scale/input-scale records are classified as storage metadata and are excluded from
   semantic weight creation; the inventory pin was updated to the resulting canonical digest.
 

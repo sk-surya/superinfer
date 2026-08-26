@@ -96,6 +96,13 @@ class Frontend final : public compiler::ModelFrontend {
       base::Status error = embedding_weight.error();
       return error.with_context("Qwen3.8 embedding weight binding");
     }
+    const auto append_required_weight = [&](std::vector<TensorId>& operands,
+                                            std::string name) -> base::Status {
+      const auto weight = find_source_weight(source_weights, name);
+      if (!weight.has_value()) return weight.error();
+      operands.push_back(weight.value());
+      return {};
+    };
     if (!builder.add_operation("embedding", OperationKind::embedding,
                                {token_ids.value(), embedding_weight.value()},
                                {embedding.value()})
@@ -165,8 +172,30 @@ class Frontend final : public compiler::ModelFrontend {
       const OperationKind attention_kind = full_attention
                                                ? OperationKind::grouped_query_attention
                                                : OperationKind::gated_delta_attention;
+      std::vector<TensorId> attention_inputs{input_norm.value(), state_a_in.value(), state_b_in.value()};
+      const std::string weight_prefix = "model.language_model.layers." + std::to_string(layer) + ".";
+      const std::vector<std::string> attention_weight_names = full_attention
+          ? std::vector<std::string>{weight_prefix + "self_attn.q_proj.weight",
+                                     weight_prefix + "self_attn.k_proj.weight",
+                                     weight_prefix + "self_attn.v_proj.weight",
+                                     weight_prefix + "self_attn.o_proj.weight",
+                                     weight_prefix + "self_attn.q_norm.weight",
+                                     weight_prefix + "self_attn.k_norm.weight"}
+          : std::vector<std::string>{weight_prefix + "linear_attn.in_proj_qkv.weight",
+                                     weight_prefix + "linear_attn.in_proj_z.weight",
+                                     weight_prefix + "linear_attn.in_proj_a.weight",
+                                     weight_prefix + "linear_attn.in_proj_b.weight",
+                                     weight_prefix + "linear_attn.out_proj.weight",
+                                     weight_prefix + "linear_attn.A_log",
+                                     weight_prefix + "linear_attn.dt_bias",
+                                     weight_prefix + "linear_attn.norm.weight",
+                                     weight_prefix + "linear_attn.conv1d.weight"};
+      for (const std::string& weight_name : attention_weight_names) {
+        base::Status binding = append_required_weight(attention_inputs, weight_name);
+        if (!binding.ok()) return binding.with_context("Qwen3.8 attention weight binding");
+      }
       if (!builder.add_operation("layer_" + index(layer) + "_attention", attention_kind,
-                                 {input_norm.value(), state_a_in.value(), state_b_in.value()},
+                                 std::move(attention_inputs),
                                  {attention.value(), state_a_out.value(), state_b_out.value()},
                                  attention_attributes)
                    .has_value()) {
@@ -190,6 +219,13 @@ class Frontend final : public compiler::ModelFrontend {
           source_weights,
           "model.language_model.layers." + std::to_string(layer) + ".post_attention_layernorm.weight");
       if (post_norm_weight.has_value()) post_norm_inputs.push_back(post_norm_weight.value());
+      std::vector<TensorId> ffn_inputs{post_norm.value()};
+      for (const std::string& suffix : {std::string{"mlp.gate_proj.weight"},
+                                        std::string{"mlp.up_proj.weight"},
+                                        std::string{"mlp.down_proj.weight"}}) {
+        base::Status binding = append_required_weight(ffn_inputs, weight_prefix + suffix);
+        if (!binding.ok()) return binding.with_context("Qwen3.8 FFN weight binding");
+      }
       if (!builder.add_operation("layer_" + index(layer) + "_attention_residual",
                                  OperationKind::residual,
                                  {current, attention.value()}, {attention_residual.value()})
@@ -198,7 +234,7 @@ class Frontend final : public compiler::ModelFrontend {
                                  std::move(post_norm_inputs), {post_norm.value()})
                    .has_value() ||
           !builder.add_operation("layer_" + index(layer) + "_ffn", OperationKind::gated_dense_ffn,
-                                 {post_norm.value()}, {ffn.value()})
+                                 std::move(ffn_inputs), {ffn.value()})
                    .has_value() ||
           !builder.add_operation("layer_" + index(layer) + "_output", OperationKind::residual,
                                  {attention_residual.value(), ffn.value()}, {output.value()})

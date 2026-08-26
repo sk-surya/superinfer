@@ -9,6 +9,7 @@ from unittest.mock import patch
 from superinfer.artifact import (
     ArtifactError,
     MAXIMUM_ARTIFACT_BYTES,
+    ValidatedArtifact,
     inspect_artifact,
     read_typed_tensor,
     write_artifact,
@@ -118,6 +119,27 @@ class PythonArtifactTests(unittest.TestCase):
             write_artifact(source, path)
             with self.assertRaisesRegex(ArtifactError, "payload bytes do not match"):
                 read_typed_tensor(path, "bad")
+
+    def test_validated_artifact_reuses_one_integrity_pass_for_multiple_reads(self) -> None:
+        source = {
+            "manifest": {},
+            "tensors": [
+                {"name": "a", "dtype": "U8", "shape": [8],
+                 "artifact_payload_offset": 0, "artifact_payload_end": 8},
+                {"name": "b", "dtype": "U8", "shape": [8],
+                 "artifact_payload_offset": 8, "artifact_payload_end": 16},
+            ],
+            "physical_plan": "plan",
+            "payload_hex": "0001020304050607" "08090a0b0c0d0e0f",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reused.sinf"
+            write_artifact(source, path)
+            with patch("superinfer.artifact.inspect_artifact", wraps=inspect_artifact) as validate:
+                artifact = ValidatedArtifact(path)
+                self.assertEqual(artifact.read_tensor_payload("a"), bytes(range(8)))
+                self.assertEqual(artifact.read_tensor_payload("b"), bytes(range(8, 16)))
+                self.assertEqual(validate.call_count, 1)
 
     def test_corruption_fails_before_inspection(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

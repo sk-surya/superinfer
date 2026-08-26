@@ -265,10 +265,7 @@ def inspect_artifact(path: Path) -> dict[str, Any]:
     }
 
 
-def _locate_tensor(path: Path, tensor_name: str) -> tuple[Mapping[str, Any], tuple[int, int, int, int, int]]:
-    if not tensor_name:
-        raise ArtifactError("tensor name is empty")
-    inspect_artifact(path)
+def _read_tensor_table(path: Path) -> tuple[dict[str, Mapping[str, Any]], tuple[int, int, int, int, int]]:
     with path.open("rb") as stream:
         header = stream.read(HEADER.size)
         if len(header) != HEADER.size:
@@ -290,21 +287,36 @@ def _locate_tensor(path: Path, tensor_name: str) -> tuple[Mapping[str, Any], tup
         stream.seek(tensor_record[2])
         tensor_table_bytes = stream.read(tensor_record[3])
         tensors = json.loads(tensor_table_bytes)
-        tensor = next((item for item in tensors if item.get("name") == tensor_name), None)
-        if tensor is None:
-            raise ArtifactError(f"tensor is not present: {tensor_name}")
-        if "artifact_payload_offset" not in tensor or "artifact_payload_end" not in tensor:
-            raise ArtifactError("tensor payload offsets are absent")
-        try:
-            start = int(tensor["artifact_payload_offset"])
-            end = int(tensor["artifact_payload_end"])
-        except (TypeError, ValueError) as error:
-            raise ArtifactError("tensor payload offsets are invalid") from error
-        payload_record = records[4]
-        payload_size = payload_record[3]
-        if start < 0 or end < start or end > payload_size:
-            raise ArtifactError("tensor payload offsets are outside payload")
-        return tensor, payload_record
+        if not isinstance(tensors, list):
+            raise ArtifactError("artifact tensor table is not a list")
+        named = {}
+        for tensor in tensors:
+            if not isinstance(tensor, dict) or not isinstance(tensor.get("name"), str):
+                raise ArtifactError("artifact tensor table record is invalid")
+            if tensor["name"] in named:
+                raise ArtifactError(f"duplicate artifact tensor: {tensor['name']}")
+            named[tensor["name"]] = tensor
+        return named, records[4]
+
+
+def _locate_tensor(path: Path, tensor_name: str) -> tuple[Mapping[str, Any], tuple[int, int, int, int, int]]:
+    if not tensor_name:
+        raise ArtifactError("tensor name is empty")
+    inspect_artifact(path)
+    tensors, payload_record = _read_tensor_table(path)
+    tensor = tensors.get(tensor_name)
+    if tensor is None:
+        raise ArtifactError(f"tensor is not present: {tensor_name}")
+    if "artifact_payload_offset" not in tensor or "artifact_payload_end" not in tensor:
+        raise ArtifactError("tensor payload offsets are absent")
+    try:
+        start = int(tensor["artifact_payload_offset"])
+        end = int(tensor["artifact_payload_end"])
+    except (TypeError, ValueError) as error:
+        raise ArtifactError("tensor payload offsets are invalid") from error
+    if start < 0 or end < start or end > payload_record[3]:
+        raise ArtifactError("tensor payload offsets are outside payload")
+    return tensor, payload_record
 
 
 def _read_located_tensor(path: Path, tensor: Mapping[str, Any],
@@ -319,6 +331,40 @@ def _read_located_tensor(path: Path, tensor: Mapping[str, Any],
     return payload
 
 
+class ValidatedArtifact:
+    """Reusable validated view that checks an artifact once and reads bounded tensor ranges."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        inspect_artifact(path)
+        self._tensors, self._payload_record = _read_tensor_table(path)
+
+    def _locate(self, tensor_name: str) -> Mapping[str, Any]:
+        if not tensor_name:
+            raise ArtifactError("tensor name is empty")
+        tensor = self._tensors.get(tensor_name)
+        if tensor is None:
+            raise ArtifactError(f"tensor is not present: {tensor_name}")
+        if "artifact_payload_offset" not in tensor or "artifact_payload_end" not in tensor:
+            raise ArtifactError("tensor payload offsets are absent")
+        try:
+            start = int(tensor["artifact_payload_offset"])
+            end = int(tensor["artifact_payload_end"])
+        except (TypeError, ValueError) as error:
+            raise ArtifactError("tensor payload offsets are invalid") from error
+        if start < 0 or end < start or end > self._payload_record[3]:
+            raise ArtifactError("tensor payload offsets are outside payload")
+        return tensor
+
+    def read_tensor_payload(self, tensor_name: str) -> bytes:
+        tensor = self._locate(tensor_name)
+        return _read_located_tensor(self.path, tensor, self._payload_record)
+
+    def read_typed_tensor(self, tensor_name: str) -> TypedTensor:
+        tensor = self._locate(tensor_name)
+        return _typed_tensor_from_record(self.path, tensor_name, tensor, self._payload_record)
+
+
 def read_tensor_payload(path: Path, tensor_name: str) -> bytes:
     """Read one tensor from a validated payload artifact using its relative tensor-table range.
 
@@ -330,15 +376,10 @@ def read_tensor_payload(path: Path, tensor_name: str) -> bytes:
     return _read_located_tensor(path, tensor, payload_record)
 
 
-def read_typed_tensor(path: Path, tensor_name: str) -> TypedTensor:
-    """Materialize one tensor after validating its physical dtype, shape, and encoding.
+def _typed_tensor_from_record(path: Path, tensor_name: str, tensor: Mapping[str, Any],
+                              payload_record: tuple[int, int, int, int, int]) -> TypedTensor:
+    """Materialize one located tensor after validating its physical contract."""
 
-    The returned bytes are bounded to one tensor. Packed NVFP4 weights retain their logical
-    element shape while exposing ``u8`` storage and an explicit packed encoding; callers must
-    not reinterpret the bytes as a dense floating-point matrix.
-    """
-
-    tensor, payload_record = _locate_tensor(path, tensor_name)
     try:
         source_dtype = str(tensor["dtype"])
         shape_value = tensor["shape"]
@@ -396,6 +437,18 @@ def read_typed_tensor(path: Path, tensor_name: str) -> TypedTensor:
         storage_bytes=len(payload),
     )
     return TypedTensor(descriptor, payload)
+
+
+def read_typed_tensor(path: Path, tensor_name: str) -> TypedTensor:
+    """Materialize one tensor after validating its physical dtype, shape, and encoding.
+
+    The returned bytes are bounded to one tensor. Packed NVFP4 weights retain their logical
+    element shape while exposing ``u8`` storage and an explicit packed encoding; callers must
+    not reinterpret the bytes as a dense floating-point matrix.
+    """
+
+    tensor, payload_record = _locate_tensor(path, tensor_name)
+    return _typed_tensor_from_record(path, tensor_name, tensor, payload_record)
 
 
 def _inspect_streaming_artifact(path: Path) -> dict[str, Any]:

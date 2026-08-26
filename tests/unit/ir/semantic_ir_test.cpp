@@ -54,6 +54,34 @@ Module make_fixture(bool reverse_tensor_order) {
 int main() {
   using namespace superinfer::ir::semantic;
 
+  {
+    Builder forward_reference_builder;
+    const auto input = forward_reference_builder.add_tensor(
+        "input", TensorSpec{{Dimension::static_value(1)}, DType::f32,
+                             QuantizationIntent::none, TensorRole::activation});
+    const auto future = forward_reference_builder.add_tensor(
+        "future", TensorSpec{{Dimension::static_value(1)}, DType::f32,
+                              QuantizationIntent::none, TensorRole::activation});
+    const auto first_output = forward_reference_builder.add_tensor(
+        "first_output", TensorSpec{{Dimension::static_value(1)}, DType::f32,
+                                    QuantizationIntent::none, TensorRole::activation});
+    assert(input.has_value() && future.has_value() && first_output.has_value());
+    assert(forward_reference_builder
+               .add_operation("consumer", OperationKind::residual,
+                              {input.value(), future.value()}, {first_output.value()})
+               .has_value());
+    assert(forward_reference_builder
+               .add_operation("producer", OperationKind::residual,
+                              {input.value(), input.value()}, {future.value()})
+               .has_value());
+    assert(forward_reference_builder.add_entry_point("decode", {input.value()},
+                                                     {first_output.value()})
+               .ok());
+    const auto forward_reference = std::move(forward_reference_builder).build();
+    assert(!forward_reference.has_value());
+    assert(forward_reference.error().message().find("later-produced") != std::string::npos);
+  }
+
   const auto first = make_fixture(false);
   const auto second = make_fixture(true);
   assert(first.dump() == second.dump());

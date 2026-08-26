@@ -145,6 +145,34 @@ class Module final {
       }
     }
 
+    // Entry inputs and explicit storage/state tensors are the only legal
+    // producerless values.  Establishing this set before walking operations
+    // keeps source legality independent from operation insertion order.
+    std::vector<bool> legal_sources(tensors_.size(), false);
+    for (const EntryPoint& entry : entry_points_) {
+      if (entry.name.empty() || entry.inputs.empty() || entry.outputs.empty()) {
+        return base::Status::invalid_argument("entry point requires name, inputs, and outputs");
+      }
+      for (TensorId id : entry.inputs) {
+        if (id.value() >= tensors_.size()) {
+          return base::Status::out_of_range("entry point input tensor is undefined");
+        }
+        legal_sources[id.value()] = true;
+      }
+      for (TensorId id : entry.outputs) {
+        if (id.value() >= tensors_.size()) {
+          return base::Status::out_of_range("entry point output tensor is undefined");
+        }
+      }
+    }
+    for (std::size_t index = 0; index < tensors_.size(); ++index) {
+      legal_sources[index] = legal_sources[index] || tensors_[index].spec.role == TensorRole::weight ||
+                             tensors_[index].spec.role == TensorRole::kv_cache ||
+                             tensors_[index].spec.role == TensorRole::decode_state;
+    }
+
+    // Pass one establishes all producers before any use is checked.  A
+    // single insertion-order walk cannot detect a consumer of a later value.
     std::vector<std::int64_t> producers(tensors_.size(), -1);
     for (std::size_t index = 0; index < operations_.size(); ++index) {
       const Operation& operation = operations_[index];
@@ -156,14 +184,6 @@ class Module final {
           return base::Status::invalid_argument("duplicate semantic operation name: " + operation.name);
         }
       }
-      for (TensorId input : operation.inputs) {
-        if (input.value() >= tensors_.size()) {
-          return base::Status::out_of_range("semantic operation input tensor is undefined");
-        }
-        if (producers[input.value()] >= 0 && producers[input.value()] >= static_cast<std::int64_t>(index)) {
-          return base::Status::failed_precondition("semantic operation uses a later-produced tensor");
-        }
-      }
       for (TensorId output : operation.outputs) {
         if (output.value() >= tensors_.size()) {
           return base::Status::out_of_range("semantic operation output tensor is undefined");
@@ -172,6 +192,25 @@ class Module final {
           return base::Status::failed_precondition("semantic tensor has multiple producers");
         }
         producers[output.value()] = static_cast<std::int64_t>(index);
+      }
+    }
+
+    // Pass two validates use order and source ownership against the complete
+    // producer table built above.
+    for (std::size_t index = 0; index < operations_.size(); ++index) {
+      const Operation& operation = operations_[index];
+      for (TensorId input : operation.inputs) {
+        if (input.value() >= tensors_.size()) {
+          return base::Status::out_of_range("semantic operation input tensor is undefined");
+        }
+        const std::int64_t producer = producers[input.value()];
+        if (producer >= static_cast<std::int64_t>(index)) {
+          return base::Status::failed_precondition("semantic operation uses a later-produced tensor");
+        }
+        if (producer < 0 && !legal_sources[input.value()]) {
+          return base::Status::failed_precondition(
+              "semantic operation consumes a tensor without an entry, weight, constant, or state source");
+        }
       }
       const OperationAttributes& attributes = operation.attributes;
       const bool attention = operation.kind == OperationKind::gated_delta_attention ||
@@ -204,21 +243,6 @@ class Module final {
       if (moe && (attributes.expert_count == 0 || attributes.top_k == 0 ||
                   attributes.top_k > attributes.expert_count)) {
         return base::Status::invalid_argument("MoE top-k must be within positive expert count");
-      }
-    }
-    for (const EntryPoint& entry : entry_points_) {
-      if (entry.name.empty() || entry.inputs.empty() || entry.outputs.empty()) {
-        return base::Status::invalid_argument("entry point requires name, inputs, and outputs");
-      }
-      for (TensorId id : entry.inputs) {
-        if (id.value() >= tensors_.size()) {
-          return base::Status::out_of_range("entry point input tensor is undefined");
-        }
-      }
-      for (TensorId id : entry.outputs) {
-        if (id.value() >= tensors_.size()) {
-          return base::Status::out_of_range("entry point output tensor is undefined");
-        }
       }
     }
     for (const StateEdge& edge : state_edges_) {

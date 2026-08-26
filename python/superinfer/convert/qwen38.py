@@ -422,6 +422,54 @@ _QWEN38_OPERATION_CAPABILITIES = (
 _SM120_EXECUTABLE_BASELINE = frozenset({"rms_norm", "residual"})
 
 
+def _operation_capabilities() -> list[dict[str, str]]:
+    return [
+        {
+            "semantic_operation": operation,
+            "target_capability": operation,
+            "baseline_status": "executable" if operation in _SM120_EXECUTABLE_BASELINE else "unavailable",
+        }
+        for operation in _QWEN38_OPERATION_CAPABILITIES
+    ]
+
+
+def _memory_ledger_for_directory(
+    model_dir: Path, inventory: Qwen38Inventory, context: int
+) -> dict[str, int]:
+    shard_bytes = sum(
+        (model_dir / name).stat().st_size
+        for name in inventory.file_hashes
+        if name.endswith(".safetensors")
+    )
+    full_attention_layers = 16
+    linear_attention_layers = 48
+    kv_bytes = full_attention_layers * context * 4 * 256 * 2
+    delta_state_bytes = linear_attention_layers * 48 * 128 * 128 * 4
+    convolution_state_bytes = linear_attention_layers * 4 * 10240 * 2
+    activation_bytes = 8 * 5120 * 2
+    workspace_bytes = 256 * 1024 * 1024
+    device_budget_bytes = 32 * 1024**3
+    required_bytes = (
+        shard_bytes
+        + kv_bytes
+        + delta_state_bytes
+        + convolution_state_bytes
+        + activation_bytes
+        + workspace_bytes
+    )
+    return {
+        "weights": shard_bytes,
+        "full_attention_kv": kv_bytes,
+        "gated_delta_state": delta_state_bytes,
+        "convolution_state": convolution_state_bytes,
+        "activation_safety": activation_bytes,
+        "workspace": workspace_bytes,
+        "device_budget": device_budget_bytes,
+        "required": required_bytes,
+        "margin": device_budget_bytes - required_bytes,
+    }
+
+
 def write_qwen38_metadata_artifact(
     model_dir: Path,
     output: Path,
@@ -442,46 +490,14 @@ def write_qwen38_metadata_artifact(
     if context <= 0 or context > int(text_config["max_position_embeddings"]):
         raise Qwen38ValidationError("invalid_value", "max_context", "context exceeds pinned model capacity")
 
-    shard_bytes = sum(
-        (model_dir / name).stat().st_size
-        for name in inventory.file_hashes
-        if name.endswith(".safetensors")
-    )
-    full_attention_layers = 16
-    linear_attention_layers = 48
-    kv_bytes = full_attention_layers * context * 4 * 256 * 2
-    delta_state_bytes = linear_attention_layers * 48 * 128 * 128 * 4
-    convolution_state_bytes = linear_attention_layers * 4 * 10240 * 2
-    activation_bytes = 8 * 5120 * 2
-    workspace_bytes = 256 * 1024 * 1024
-    device_budget_bytes = 32 * 1024**3
-    required_bytes = shard_bytes + kv_bytes + delta_state_bytes + convolution_state_bytes + activation_bytes + workspace_bytes
-
     manifest = inventory.manifest()
     manifest["conversion"] = {
         "recipe": "qwen38-metadata-v1",
         "max_context": context,
         "payload_included": False,
         "physical_execution_status": "pending-baseline-provider-coverage",
-        "operation_capabilities": [
-            {
-                "semantic_operation": operation,
-                "target_capability": operation,
-                "baseline_status": "executable" if operation in _SM120_EXECUTABLE_BASELINE else "unavailable",
-            }
-            for operation in _QWEN38_OPERATION_CAPABILITIES
-        ],
-        "memory_ledger_bytes": {
-            "weights": shard_bytes,
-            "full_attention_kv": kv_bytes,
-            "gated_delta_state": delta_state_bytes,
-            "convolution_state": convolution_state_bytes,
-            "activation_safety": activation_bytes,
-            "workspace": workspace_bytes,
-            "device_budget": device_budget_bytes,
-            "required": required_bytes,
-            "margin": device_budget_bytes - required_bytes,
-        },
+        "operation_capabilities": _operation_capabilities(),
+        "memory_ledger_bytes": _memory_ledger_for_directory(model_dir, inventory, context),
     }
     tensor_table = list(inventory.normalized_tensor_mapping())
     physical_plan = json.dumps(
@@ -559,6 +575,8 @@ def write_qwen38_payload_artifact(
         "max_context": context,
         "payload_included": True,
         "physical_execution_status": "pending-baseline-provider-coverage",
+        "operation_capabilities": _operation_capabilities(),
+        "memory_ledger_bytes": _memory_ledger_for_directory(model_dir, inventory, context),
         "payload_shards": shard_table,
     }
     physical_plan = json.dumps(

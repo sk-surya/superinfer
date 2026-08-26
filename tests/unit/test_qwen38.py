@@ -163,7 +163,13 @@ class Qwen38SourceTests(unittest.TestCase):
             self.assertEqual(first_path.read_bytes(), second_path.read_bytes())
             summary = inspect_artifact(first_path)
             self.assertEqual(summary["payload_bytes"], (root / "model-00001-of-00001.safetensors").stat().st_size)
-            self.assertTrue(summary["manifest"]["conversion"]["payload_included"])
+            conversion = summary["manifest"]["conversion"]
+            self.assertTrue(conversion["payload_included"])
+            self.assertEqual(
+                {entry["baseline_status"] for entry in conversion["operation_capabilities"]},
+                {"executable", "unavailable"},
+            )
+            self.assertGreater(conversion["memory_ledger_bytes"]["margin"], 0)
 
 
 if __name__ == "__main__":

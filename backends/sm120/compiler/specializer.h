@@ -141,6 +141,8 @@ class Specializer final {
         return base::checked_mul(elements, 2);
       case ir::semantic::DType::int8:
         return elements;
+      case ir::semantic::DType::int32:
+        return base::checked_mul(elements, 4);
       case ir::semantic::DType::int4:
         {
           const auto rounded = base::checked_add(elements, 1);

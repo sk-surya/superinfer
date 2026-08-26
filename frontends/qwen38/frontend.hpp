@@ -41,7 +41,7 @@ class Frontend final : public compiler::ModelFrontend {
 
     using namespace ir::semantic;
     Builder builder;
-    const TensorSpec token_spec{{Dimension::static_value(1)}, DType::int8,
+    const TensorSpec token_spec{{Dimension::static_value(1)}, DType::int32,
                                 QuantizationIntent::none, TensorRole::activation};
     const TensorSpec hidden_spec{{Dimension::static_value(1), Dimension::static_value(5120)},
                                  DType::bf16, QuantizationIntent::none, TensorRole::activation};

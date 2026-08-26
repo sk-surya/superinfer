@@ -30,7 +30,7 @@ struct Dimension final {
 
 using Shape = std::vector<Dimension>;
 
-enum class DType { f32, f16, bf16, int8, int4 };
+enum class DType { f32, f16, bf16, int8, int32, int4 };
 enum class QuantizationIntent { none, symmetric, asymmetric };
 enum class TensorRole { activation, weight, kv_cache, decode_state, logits };
 
@@ -306,6 +306,7 @@ class Module final {
       case DType::f16: return "f16";
       case DType::bf16: return "bf16";
       case DType::int8: return "int8";
+      case DType::int32: return "int32";
       case DType::int4: return "int4";
     }
     return "unknown";

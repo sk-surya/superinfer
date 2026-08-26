@@ -6,15 +6,15 @@ This is the durable record of what the user understands, what evidence supports 
 
 | Field | Value |
 |---|---|
-| Implementation phase | S01 — Artifact and IR |
+| Implementation phase | S02 — `sm120` Correctness Backend |
 | Current user gate | Gate A — semantic IR/compiler boundaries — L2 |
 | User status | Packet presented |
 | Highest passed L2 gate | None |
 | Outstanding L2 gates | Gate A — semantic IR/compiler boundaries |
 | Debt distance | 1 |
-| Allowed autonomous work | Mechanical S01 closeout and reversible S02 preparation only. |
-| Next user action | Read the three packet files, perform the Gate A experiment, and answer its five questions. |
-| Last updated | Gate A reached on 2026-08-15 |
+| Allowed autonomous work | All approved roadmap plans; preserve packets and branch checkpoints for later study. |
+| Next user action | Optional: study Gate A or a later packet and answer its exercise when convenient. |
+| Last updated | Autonomous execution enabled by explicit user directive on 2026-08-26 |
 
 ## Status Vocabulary
 
@@ -117,9 +117,16 @@ Copy this section for each reached L2 gate. Keep the packet itself in `.planning
 
 **Five answers:** Not yet provided.
 
-**Remaining unknowns:** Whether the user can distinguish semantic meaning, target lowering, and physical execution boundaries; this is the only blocker to S02 implementation.
+**Remaining unknowns:** Whether the user can distinguish semantic meaning, target lowering, and physical execution boundaries. This remains a study checkpoint, not an implementation blocker under D-014.
 
-**Agent assessment:** `in progress`, packet presented 2026-08-15.
+**Agent assessment:** `in progress`, packet presented 2026-08-15; retained as a study checkpoint under D-014.
+
+## Autonomous execution override
+
+On 2026-08-26 the user explicitly directed implementation to continue without waiting for
+understanding-gate passage. Gate packets, exercises, ledger records, and phase/gate commits remain
+mandatory evidence and are not to be marked passed by the agent. This override permits later gates to
+be reached while earlier gates remain unpassed; the resulting debt is visible and intentional.
 
 ## Update Discipline
 

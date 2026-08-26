@@ -95,3 +95,15 @@ before any storage/device materialization. A small explicit encoding keeps those
 while the semantic and physical schemas are still evolving.
 **Consequence:** Major/minor compatibility rules and bounds are part of the checked-in format
 document; FNV-1a is integrity protection, not a cryptographic authenticity claim.
+
+## D-014 — User-directed autonomous understanding-gate execution
+
+**Status:** Accepted
+**Decision:** Retain every understanding gate, packet, exercise, and branch checkpoint as durable
+study evidence, but do not pause implementation for user passage of an L2 gate. Continue through the
+approved roadmap autonomously and present each gate for later study.
+**Why:** The user explicitly requested implementation velocity while preserving the gates as an
+independent learning trail and checkpoint history.
+**Consequence:** Phase and gate state records may show reached-but-unpassed gates beyond the original
+one-gate debt window. This is an explicit workflow override, not evidence that the user has passed a
+gate; no gate is marked passed without the user's own answers and experiment evidence.

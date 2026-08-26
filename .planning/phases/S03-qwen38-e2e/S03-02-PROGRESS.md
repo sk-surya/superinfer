@@ -43,6 +43,10 @@ updated: 2026-08-26
   `2cddcc2195c36cebd062ea340cc33c9aaf03d1e6627ce2b9301fe13231f5ebf6`. Header inspection confirms
   five aligned sections, a 18,765,513,016-byte payload section, 2,402 tensor records, and the
   pinned derivative revision. This is a payload/provenance artifact, not yet an executable plan.
+- Independent streaming inspection validates the full payload checksum and integrity table with
+  approximately 18 MiB resident memory. `Specializer` now receives a `KernelProvider`, selects a
+  deterministic candidate through that extension surface, and propagates candidate workspace into
+  the Physical Plan; it no longer owns a kernel-ID table.
 
 ## Remaining S03-02 work
 

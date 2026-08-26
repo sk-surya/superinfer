@@ -118,3 +118,16 @@ dimension as semantic attributes. It is not a CUDA kernel or provider selection.
 multi-head attention would erase state-transition and projection semantics before lowering.
 **Consequence:** Lowering and baseline execution must add an independent reference contract before
 this operation can be selected for a physical plan. The executor remains unchanged.
+
+## D-016 — V0 `.sinf` artifact bound covers the pinned Qwen payload
+
+**Status:** Accepted
+**Decision:** Set the defensive V0 artifact-size limit to 32 GiB in both Python and C++ readers.
+Large artifacts must be inspected section-by-section without materializing the payload in host
+memory.
+**Why:** The authenticated pinned Qwen3.8 payload artifact is 18,766,681,312 bytes and cannot be
+represented by the previous 16-GiB reader bound. The larger bound remains below unbounded-input
+territory while fitting the declared single-GPU V0 envelope.
+**Consequence:** The `.sinf` parser retains explicit size and offset checks, and large-artifact
+validation uses bounded streaming reads; this does not change the format major/minor or checksum
+algorithm.

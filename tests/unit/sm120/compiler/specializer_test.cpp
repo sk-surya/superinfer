@@ -8,6 +8,14 @@
 
 namespace {
 
+class RejectingProvider final : public superinfer::kernels::KernelProvider {
+ public:
+  superinfer::base::Result<std::vector<superinfer::kernels::KernelCandidate>> enumerate(
+      const superinfer::kernels::KernelQuery&) const override {
+    return superinfer::base::Status::unsupported("provider fixture rejection");
+  }
+};
+
 superinfer::ir::lowered::Module make_fixture() {
   using namespace superinfer;
   ir::lowered::ModuleBuilder builder;
@@ -78,5 +86,11 @@ int main() {
   assert(role_result.has_value());
   assert(role_result.value().memory.allocations.front().allocation_class ==
          compiler::AllocationClass::kv_state);
+
+  RejectingProvider rejecting_provider;
+  const auto provider_rejection = specializer.compile(make_fixture(), {target, 256, 64}, rejecting_provider);
+  assert(!provider_rejection.has_value());
+  assert(provider_rejection.error().context().back() == "rms_norm");
+  assert(provider_rejection.error().message().find("provider fixture rejection") != std::string::npos);
   return 0;
 }

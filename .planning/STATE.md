@@ -40,8 +40,9 @@ current_phase_name: qwen38-e2e
 S01 and S02 are complete. Gate A and Gate B are reached and their packet/artifacts are retained for
 later study. Per D-014, implementation proceeds autonomously through the approved phases while each
 gate remains an explicit checkpoint and is never marked passed on the user's behalf. S03-02 now has
-validated generic embedding, BF16 RMSNorm, FP32 LM-head, FP32 gated-FFN, and NVFP4 materialization
-baselines; Qwen quantized projection and attention/state composition remain open. Protect the
+validated generic embedding, BF16 RMSNorm, FP32 LM-head, FP32 gated-FFN, NVFP4 materialization,
+grouped-attention, and recurrent Gated DeltaNet baselines; Qwen quantized projection, projection
+fusion, RoPE, and attention/state composition remain open. Protect the
 S00–S06 critical path: correct Qwen3.8 from `.sinf` and the first reproducible RTX 5090 graph.
 
 ## Understanding Gate State

@@ -69,6 +69,12 @@ add_executable(superinfer_sm120_plan_binding unit/sm120/runtime/plan_binding_tes
 target_link_libraries(superinfer_sm120_plan_binding PRIVATE superinfer_runtime)
 add_test(NAME superinfer.sm120.plan_binding COMMAND superinfer_sm120_plan_binding)
 
+add_executable(superinfer_sm120_reference_executor integration/sm120/reference_executor_test.cpp)
+target_link_libraries(superinfer_sm120_reference_executor PRIVATE superinfer_ir)
+target_include_directories(superinfer_sm120_reference_executor PRIVATE
+  "${CMAKE_SOURCE_DIR}/backends")
+add_test(NAME superinfer.sm120.reference_executor COMMAND superinfer_sm120_reference_executor)
+
 add_executable(superinfer_artifact_test integration/artifact/artifact_test.cpp)
 target_link_libraries(superinfer_artifact_test PRIVATE superinfer_artifact)
 add_test(NAME superinfer.artifact.binary COMMAND superinfer_artifact_test)
@@ -80,6 +86,7 @@ if(SUPERINFER_ENABLE_SANITIZERS)
     superinfer.compiler.pass_manager superinfer.sm120.target_profile
     superinfer.sm120.memory_planner superinfer.sm120.memory_property
     superinfer.sm120.memory_golden superinfer.sm120.specializer
-    superinfer.sm120.baseline_provider superinfer.sm120.plan_binding superinfer.artifact.binary
+    superinfer.sm120.baseline_provider superinfer.sm120.plan_binding
+    superinfer.sm120.reference_executor superinfer.artifact.binary
     PROPERTIES ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
 endif()

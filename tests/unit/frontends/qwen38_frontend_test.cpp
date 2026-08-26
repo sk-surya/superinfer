@@ -90,12 +90,20 @@ int main() {
 
   std::size_t gated_delta = 0;
   std::size_t full_attention = 0;
+  std::size_t qwen_rms_norms = 0;
   for (const auto& operation : module.value().operations()) {
     gated_delta += operation.kind == ir::semantic::OperationKind::gated_delta_attention;
     full_attention += operation.kind == ir::semantic::OperationKind::grouped_query_attention;
+    if (operation.kind == ir::semantic::OperationKind::rms_norm) {
+      ++qwen_rms_norms;
+      assert(operation.attributes.epsilon == 1.0e-6F);
+      assert(operation.attributes.norm_scale_convention ==
+             ir::semantic::NormScaleConvention::one_plus_weight);
+    }
   }
   assert(gated_delta == 48);
   assert(full_attention == 16);
+  assert(qwen_rms_norms == 128);
   for (const auto& operation : module.value().operations()) {
     if (operation.kind == ir::semantic::OperationKind::gated_delta_attention ||
         operation.kind == ir::semantic::OperationKind::grouped_query_attention) {

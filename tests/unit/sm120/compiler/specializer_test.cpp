@@ -29,9 +29,12 @@ superinfer::ir::lowered::Module make_fixture() {
       ir::semantic::TensorId{2}, {2, 4}, ir::lowered::LayoutKind::row_major,
       base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
   assert(hidden.has_value() && output.has_value() && scale.has_value());
+  ir::semantic::OperationAttributes norm_attributes;
+  norm_attributes.epsilon = 1.0e-6F;
+  norm_attributes.norm_scale_convention = ir::semantic::NormScaleConvention::one_plus_weight;
   assert(builder
              .add_kernel_requirement("rms_norm", 120,
-                                     {hidden.value(), scale.value(), output.value()})
+                                     {hidden.value(), scale.value(), output.value()}, norm_attributes)
              .ok());
   const auto module = std::move(builder).build();
   assert(module.has_value());
@@ -176,6 +179,8 @@ int main() {
   sm120::BaselineProvider provider;
   const auto result = specializer.compile(make_fixture(), {target, 256, 64}, provider);
   assert(result.has_value());
+  assert(result.value().plan.commands().front().epsilon == 1.0e-6F);
+  assert(result.value().plan.commands().front().add_one_to_scale);
   assert(result.value().plan.verify().ok());
   assert(result.value().plan.capability().target_capability == 120);
   assert(result.value().plan.capability().kernel_catalog == "baseline-v1");

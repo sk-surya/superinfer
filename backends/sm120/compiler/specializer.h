@@ -133,9 +133,17 @@ class Specializer final {
                      static_cast<std::uint32_t>(key_tensor.physical_shape[0])};
       }
       workspace_bytes = std::max(workspace_bytes, candidate.value().workspace_bytes);
+      const float epsilon = (requirement.operation == "rms_norm" ||
+                             requirement.operation == "layer_norm")
+                                ? requirement.attributes.epsilon
+                                : 1.0e-5F;
+      const bool add_one_to_scale =
+          requirement.operation == "rms_norm" &&
+          requirement.attributes.norm_scale_convention ==
+              ir::semantic::NormScaleConvention::one_plus_weight;
       const auto command = plan_builder.add_command(
           candidate.value().id, std::move(operands), dependencies, 0, 0,
-          candidate.value().workspace_bytes, 1.0e-5F, 1.0F, attention);
+          candidate.value().workspace_bytes, epsilon, 1.0F, attention, add_one_to_scale);
       if (!command.has_value()) {
         base::Status error = command.error();
         return error.with_context("physical command");

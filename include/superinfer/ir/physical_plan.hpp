@@ -58,6 +58,7 @@ struct CommandDescriptor final {
   float epsilon{1.0e-5F};
   float scalar{1.0F};
   AttentionDimensions attention{};
+  bool add_one_to_scale{false};
 };
 
 class PlanBuilder;
@@ -199,10 +200,11 @@ class PlanBuilder final {
                                       std::uint32_t stream, std::uint64_t workspace_offset,
                                       std::uint64_t workspace_size, float epsilon = 1.0e-5F,
                                       float scalar = 1.0F,
-                                      AttentionDimensions attention = {}) {
+                                      AttentionDimensions attention = {},
+                                      bool add_one_to_scale = false) {
     commands_.push_back({CommandId{commands_.size()}, kernel, std::move(buffers),
                          std::move(dependencies), stream, workspace_offset, workspace_size,
-                         epsilon, scalar, attention});
+                         epsilon, scalar, attention, add_one_to_scale});
     return commands_.back().id;
   }
 

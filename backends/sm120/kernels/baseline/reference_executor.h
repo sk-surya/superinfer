@@ -221,12 +221,19 @@ class ReferenceExecutor final {
           variance += centered * centered;
         }
         variance /= static_cast<float>(input.size());
-        const float denominator = std::sqrt(variance + 1.0e-5F);
+        const float denominator = std::sqrt(variance + operation.attributes.epsilon);
         result.tensors[output.value()] = {module.tensors()[output.value()].name, shape,
                                           std::vector<float>(elements.value())};
         for (std::size_t index = 0; index < input.size(); ++index) {
           const float centered = layer_norm ? input[index] - mean : input[index];
-          const float affine_scale = scale == nullptr ? 1.0F : (*scale)[index];
+          const float affine_scale = scale == nullptr
+                                         ? 1.0F
+                                         : (*scale)[index] +
+                                               (operation.kind == ir::semantic::OperationKind::rms_norm &&
+                                                        operation.attributes.norm_scale_convention ==
+                                                            ir::semantic::NormScaleConvention::one_plus_weight
+                                                    ? 1.0F
+                                                    : 0.0F);
           const float affine_bias = bias == nullptr ? 0.0F : (*bias)[index];
           result.tensors[output.value()].values[index] = centered / denominator * affine_scale + affine_bias;
         }

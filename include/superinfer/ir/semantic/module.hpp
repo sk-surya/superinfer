@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <sstream>
 #include <string>
@@ -33,6 +34,7 @@ using Shape = std::vector<Dimension>;
 enum class DType { f32, f16, bf16, int8, int32, int4 };
 enum class QuantizationIntent { none, symmetric, asymmetric };
 enum class TensorRole { activation, weight, kv_cache, decode_state, logits };
+enum class NormScaleConvention { direct_weight, one_plus_weight };
 
 /** Meaning-level tensor type; storage encoding is deliberately absent. */
 struct TensorSpec final {
@@ -76,6 +78,8 @@ struct OperationAttributes final {
   std::uint32_t value_head_dimension{0};
   std::uint32_t convolution_kernel_dimension{0};
   std::uint32_t value_head_count{0};
+  float epsilon{1.0e-5F};
+  NormScaleConvention norm_scale_convention{NormScaleConvention::direct_weight};
 };
 
 struct Tensor final {
@@ -213,6 +217,10 @@ class Module final {
         }
       }
       const OperationAttributes& attributes = operation.attributes;
+      if ((operation.kind == OperationKind::rms_norm || operation.kind == OperationKind::layer_norm) &&
+          (!std::isfinite(attributes.epsilon) || attributes.epsilon <= 0.0F)) {
+        return base::Status::invalid_argument("normalization epsilon must be finite and positive");
+      }
       const bool attention = operation.kind == OperationKind::gated_delta_attention ||
                              operation.kind == OperationKind::multi_head_attention ||
                              operation.kind == OperationKind::grouped_query_attention ||
@@ -283,7 +291,14 @@ class Module final {
     for (const Operation* operation : operations) {
       output << "operation name=" << operation->name << " kind=" << operation_kind_name(operation->kind)
              << " inputs=" << tensor_names(operation->inputs) << " outputs="
-             << tensor_names(operation->outputs) << "\n";
+             << tensor_names(operation->outputs);
+      if ((operation->kind == OperationKind::rms_norm || operation->kind == OperationKind::layer_norm) &&
+          (operation->attributes.epsilon != 1.0e-5F ||
+           operation->attributes.norm_scale_convention != NormScaleConvention::direct_weight)) {
+        output << " epsilon=" << operation->attributes.epsilon
+               << " scale=" << norm_scale_convention_name(operation->attributes.norm_scale_convention);
+      }
+      output << "\n";
     }
     std::vector<const EntryPoint*> entries;
     for (const EntryPoint& entry : entry_points_) entries.push_back(&entry);
@@ -380,6 +395,13 @@ class Module final {
       case OperationKind::lm_head: return "lm_head";
       case OperationKind::decode_logits: return "decode_logits";
       case OperationKind::sampling_inputs: return "sampling_inputs";
+    }
+    return "unknown";
+  }
+  static std::string_view norm_scale_convention_name(NormScaleConvention convention) {
+    switch (convention) {
+      case NormScaleConvention::direct_weight: return "direct_weight";
+      case NormScaleConvention::one_plus_weight: return "one_plus_weight";
     }
     return "unknown";
   }

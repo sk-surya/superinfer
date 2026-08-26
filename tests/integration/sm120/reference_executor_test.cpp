@@ -33,6 +33,7 @@ superinfer::ir::semantic::Module make_fixture() {
   assert(builder.add_operation("norm", ir::semantic::OperationKind::rms_norm,
                                {sum.value()}, {norm.value()})
              .has_value());
+  assert(builder.add_entry_point("decode", {x.value(), y.value()}, {norm.value()}).ok());
   const auto module = std::move(builder).build();
   assert(module.has_value());
   return std::move(module).value();
@@ -71,6 +72,7 @@ AttentionFixture make_attention_fixture() {
                                {query.value(), keys.value(), values.value()}, {output.value()},
                                attributes)
              .has_value());
+  assert(builder.add_entry_point("decode", {query.value()}, {output.value()}).ok());
   const auto module = std::move(builder).build();
   assert(module.has_value());
   return {std::move(module).value(), query.value(), keys.value(), values.value(), output.value()};
@@ -131,6 +133,7 @@ WeightedFixture make_weighted_fixture() {
   assert(builder.add_operation("lm_head", OperationKind::lm_head,
                                {ffn.value(), projection_weight.value()}, {logits.value()})
              .has_value());
+  assert(builder.add_entry_point("decode", {token.value()}, {logits.value()}).ok());
   const auto module = std::move(builder).build();
   assert(module.has_value());
   return {std::move(module).value(), token.value(), table.value(), embedding.value(), gate_weight.value(),
@@ -153,6 +156,39 @@ int main() {
   const float scale = std::sqrt((16.0F + 36.0F) / 2.0F + 1.0e-5F);
   assert(std::abs(result.value().tensors.at(3).values.at(0) - 4.0F / scale) < 1.0e-5F);
   assert(std::abs(result.value().tensors.at(3).values.at(1) - 6.0F / scale) < 1.0e-5F);
+
+  {
+    ir::semantic::Builder qwen_norm_builder;
+    const auto input = qwen_norm_builder.add_tensor(
+        "qwen_input", {{ir::semantic::Dimension::static_value(2)}, ir::semantic::DType::f32,
+                        ir::semantic::QuantizationIntent::none, ir::semantic::TensorRole::activation});
+    const auto weight = qwen_norm_builder.add_tensor(
+        "qwen_weight", {{ir::semantic::Dimension::static_value(2)}, ir::semantic::DType::f32,
+                         ir::semantic::QuantizationIntent::none, ir::semantic::TensorRole::weight});
+    const auto output = qwen_norm_builder.add_tensor(
+        "qwen_output", {{ir::semantic::Dimension::static_value(2)}, ir::semantic::DType::f32,
+                         ir::semantic::QuantizationIntent::none, ir::semantic::TensorRole::activation});
+    assert(input.has_value() && weight.has_value() && output.has_value());
+    ir::semantic::OperationAttributes attributes;
+    attributes.epsilon = 1.0e-6F;
+    attributes.norm_scale_convention = ir::semantic::NormScaleConvention::one_plus_weight;
+    assert(qwen_norm_builder
+               .add_operation("qwen_norm", ir::semantic::OperationKind::rms_norm,
+                              {input.value(), weight.value()}, {output.value()}, attributes)
+               .has_value());
+    assert(qwen_norm_builder.add_entry_point("decode", {input.value()}, {output.value()}).ok());
+    const auto qwen_norm_module = std::move(qwen_norm_builder).build();
+    assert(qwen_norm_module.has_value());
+    const auto qwen_norm_result = sm120::ReferenceExecutor::run(
+        qwen_norm_module.value(), {{input.value(), {2}, {3.0F, 4.0F}},
+                                   {weight.value(), {2}, {0.5F, 1.0F}}});
+    assert(qwen_norm_result.has_value());
+    const float qwen_denominator = std::sqrt((9.0F + 16.0F) / 2.0F + 1.0e-6F);
+    assert(std::abs(qwen_norm_result.value().find("qwen_output")->values[0] -
+                    3.0F / qwen_denominator * 1.5F) < 1.0e-5F);
+    assert(std::abs(qwen_norm_result.value().find("qwen_output")->values[1] -
+                    4.0F / qwen_denominator * 2.0F) < 1.0e-5F);
+  }
 
   const auto replay = sm120::ReferenceExecutor::run(
       module, {{ir::semantic::TensorId{0}, {2}, {1.0F, 2.0F}},

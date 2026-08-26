@@ -614,7 +614,7 @@ int main() {
   assert(norm_builder
              .add_command(base::KernelId{5}, {ir::physical::BufferId{0}, ir::physical::BufferId{1},
                                                ir::physical::BufferId{2}},
-                          {}, 0, 0, 0)
+                          {}, 0, 0, 0, 1.0e-6F, 1.0F, {}, true)
              .has_value());
   const auto norm_plan = std::move(norm_builder).finalize({120, "baseline-v1"});
   assert(norm_plan.has_value());
@@ -641,7 +641,8 @@ int main() {
              .ok());
   const float denominator = std::sqrt((1.0F + 4.0F + 9.0F + 16.0F) / 4.0F + 1.0e-5F);
   for (std::size_t index = 0; index < normalized.size(); ++index) {
-    assert(std::abs(normalized[index] - left[index] / denominator * scale[index]) < 1.0e-5F);
+    assert(std::abs(normalized[index] - left[index] / denominator * (scale[index] + 1.0F)) <
+           1.0e-5F);
   }
 
   ir::physical::PlanBuilder layer_builder;

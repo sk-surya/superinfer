@@ -233,13 +233,13 @@ __global__ inline void gated_delta_attention_f32(
 }
 
 __global__ inline void rms_norm_f32(const float* input, const float* scale, float* output,
-                                    std::size_t elements, float epsilon) {
+                                    std::size_t elements, float epsilon, bool add_one_to_scale) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
   float sum_squares = 0.0F;
   for (std::size_t index = 0; index < elements; ++index) sum_squares += input[index] * input[index];
   const float denominator = sqrtf(sum_squares / static_cast<float>(elements) + epsilon);
   for (std::size_t index = 0; index < elements; ++index) {
-    output[index] = input[index] / denominator * scale[index];
+    output[index] = input[index] / denominator * (scale[index] + (add_one_to_scale ? 1.0F : 0.0F));
   }
 }
 
@@ -248,13 +248,15 @@ __device__ inline float bf16_to_float_device(std::uint16_t value) {
 }
 
 __global__ inline void rms_norm_f32_bf16_scale(const float* input, const std::uint16_t* scale,
-                                               float* output, std::size_t elements, float epsilon) {
+                                               float* output, std::size_t elements, float epsilon,
+                                               bool add_one_to_scale) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
   float sum_squares = 0.0F;
   for (std::size_t index = 0; index < elements; ++index) sum_squares += input[index] * input[index];
   const float denominator = sqrtf(sum_squares / static_cast<float>(elements) + epsilon);
   for (std::size_t index = 0; index < elements; ++index) {
-    output[index] = input[index] / denominator * bf16_to_float_device(scale[index]);
+    output[index] = input[index] / denominator *
+                    (bf16_to_float_device(scale[index]) + (add_one_to_scale ? 1.0F : 0.0F));
   }
 }
 
@@ -478,7 +480,7 @@ inline cudaError_t launch_rms_norm(const ir::physical::CommandDescriptor& comman
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, scale.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)),
-      static_cast<std::size_t>(bytes / sizeof(float)), command.epsilon);
+      static_cast<std::size_t>(bytes / sizeof(float)), command.epsilon, command.add_one_to_scale);
   return cudaGetLastError();
 }
 
@@ -497,7 +499,8 @@ inline cudaError_t launch_rms_norm_bf16(const ir::physical::CommandDescriptor& c
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, scale.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)),
-      static_cast<std::size_t>(input.size / sizeof(float)), command.epsilon);
+      static_cast<std::size_t>(input.size / sizeof(float)), command.epsilon,
+      command.add_one_to_scale);
   return cudaGetLastError();
 }
 

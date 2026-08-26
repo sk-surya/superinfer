@@ -153,8 +153,11 @@ class Frontend final : public compiler::ModelFrontend {
           source_weights,
           "model.language_model.layers." + std::to_string(layer) + ".input_layernorm.weight");
       if (input_norm_weight.has_value()) input_norm_inputs.push_back(input_norm_weight.value());
+      OperationAttributes norm_attributes;
+      norm_attributes.epsilon = 1.0e-6F;
+      norm_attributes.norm_scale_convention = NormScaleConvention::one_plus_weight;
       if (!builder.add_operation("layer_" + index(layer) + "_input_norm", OperationKind::rms_norm,
-                                 std::move(input_norm_inputs), {input_norm.value()})
+                                 std::move(input_norm_inputs), {input_norm.value()}, norm_attributes)
                    .has_value()) {
         return base::Status::invalid_argument("Qwen3.8 input norm operation could not be emitted");
       }
@@ -231,7 +234,7 @@ class Frontend final : public compiler::ModelFrontend {
                                  {current, attention.value()}, {attention_residual.value()})
                    .has_value() ||
           !builder.add_operation("layer_" + index(layer) + "_post_norm", OperationKind::rms_norm,
-                                 std::move(post_norm_inputs), {post_norm.value()})
+                                 std::move(post_norm_inputs), {post_norm.value()}, norm_attributes)
                    .has_value() ||
           !builder.add_operation("layer_" + index(layer) + "_ffn", OperationKind::gated_dense_ffn,
                                  std::move(ffn_inputs), {ffn.value()})

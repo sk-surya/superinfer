@@ -113,6 +113,25 @@ __global__ inline void gated_dense_ffn_f32(const float* input, const float* gate
   }
 }
 
+__global__ inline void nvfp4_linear_f32(const float* input, const std::uint8_t* packed,
+                                        const std::uint8_t* scales, float* output,
+                                        std::size_t input_elements, std::size_t output_elements,
+                                        float scalar) {
+  for (std::size_t row = blockIdx.x * blockDim.x + threadIdx.x; row < output_elements;
+       row += blockDim.x * gridDim.x) {
+    float sum = 0.0F;
+    for (std::size_t column = 0; column < input_elements; ++column) {
+      const std::uint8_t packed_value = packed[(row * input_elements + column) / 2U];
+      const std::uint8_t code = (column % 2U == 0) ? (packed_value & 0x0FU) : (packed_value >> 4U);
+      const float weight = decode_e2m1_device(code) *
+                           decode_e4m3fn_device(scales[(row * input_elements + column) / 16U]) *
+                           scalar;
+      sum += weight * input[column];
+    }
+    output[row] = sum;
+  }
+}
+
 __global__ inline void rms_norm_f32(const float* input, const float* scale, float* output,
                                     std::size_t elements, float epsilon) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
@@ -271,6 +290,25 @@ inline cudaError_t launch_gated_dense_ffn(const ir::physical::CommandDescriptor&
       static_cast<const float*>(buffer_pointer(plan, arena, up.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, down.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)), hidden, intermediate);
+  return cudaGetLastError();
+}
+
+inline cudaError_t launch_nvfp4_linear(const ir::physical::CommandDescriptor& command,
+                                       const ir::physical::Plan& plan, void* arena, void*,
+                                       cudaStream_t stream) {
+  if (command.buffers.size() != 4) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& packed = plan.buffers()[command.buffers[1].value()];
+  const auto& scales = plan.buffers()[command.buffers[2].value()];
+  const auto& output = plan.buffers()[command.buffers[3].value()];
+  const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
+  const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
+  nvfp4_linear_f32<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id)),
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,
+      output_elements, command.scalar);
   return cudaGetLastError();
 }
 
@@ -445,6 +483,32 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       }
       return {};
     }
+    case 13: {
+      if (!exact_buffers(4)) {
+        return base::Status::invalid_argument(
+            "CUDA NVFP4 linear requires f32 input, packed weights, scales, and output buffers");
+      }
+      const auto& input = plan.buffers()[command.buffers[0].value()];
+      const auto& packed = plan.buffers()[command.buffers[1].value()];
+      const auto& scales = plan.buffers()[command.buffers[2].value()];
+      const auto& output = plan.buffers()[command.buffers[3].value()];
+      if (input.size == 0 || output.size == 0 || input.size % sizeof(float) != 0 ||
+          output.size % sizeof(float) != 0 || input.size / sizeof(float) % 16 != 0) {
+        return base::Status::invalid_argument(
+            "CUDA NVFP4 linear requires non-empty aligned f32 input/output buffers");
+      }
+      const std::uint64_t input_elements = input.size / sizeof(float);
+      const std::uint64_t output_elements = output.size / sizeof(float);
+      const std::uint64_t packed_row_bytes = input_elements / 2U;
+      const std::uint64_t scale_row_bytes = input_elements / 16U;
+      if (packed_row_bytes == 0 || scale_row_bytes == 0 ||
+          packed.size % packed_row_bytes != 0 || packed.size / packed_row_bytes != output_elements ||
+          scales.size % scale_row_bytes != 0 || scales.size / scale_row_bytes != output_elements) {
+        return base::Status::invalid_argument(
+            "CUDA NVFP4 linear packed weights or scales have an invalid shape");
+      }
+      return {};
+    }
     case 4:
       if (!same_sizes(3)) return base::Status::invalid_argument("CUDA residual requires three equal-sized f32 buffers");
       return {};
@@ -482,6 +546,7 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 4: return &launch_residual;
     case 5: return &launch_rms_norm;
     case 12: return &launch_rms_norm_bf16;
+    case 13: return &launch_nvfp4_linear;
     case 6: return &launch_layer_norm;
     default: return nullptr;
   }

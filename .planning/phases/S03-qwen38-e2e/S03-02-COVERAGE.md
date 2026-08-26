@@ -11,8 +11,8 @@ ID. The payload artifact records the same status in its manifest.
 | Gated Delta attention | `gated_delta_attention` | reference-only | Independent recurrent CPU oracle exists; CUDA provider/state binding absent |
 | grouped full attention | `attention` | unavailable | Pinned q/k/v/o and q/k norm weights now bind in Semantic IR; KV/RoPE provider path absent |
 | residual | `residual` | executable baseline | Kernel ID 4; CUDA and CPU fixture coverage exists |
-| gated dense FFN | `gated_dense_ffn` | unavailable | Pinned gate/up/down weights now bind; generic FP32 provider ID 11 and NVFP4 materialization ID 9 pass, but quantized composition/artifact binding is absent |
-| LM head | `lm_head` | unavailable | Weight-connected CPU oracle and generic FP32 projection ID 10 pass; generic NVFP4 materialization exists, but no quantized linear/artifact binding path |
+| gated dense FFN | `gated_dense_ffn` | unavailable | Pinned gate/up/down weights now bind; generic FP32 provider ID 11, NVFP4 materialization ID 9, and generic NVFP4 linear ID 13 pass, but quantized composition/artifact binding is absent |
+| LM head | `lm_head` | unavailable | Weight-connected CPU oracle and generic FP32 projection ID 10 pass; NVFP4 materialization/linear IDs 9/13 exist, but no quantized `lm_head` composition/artifact binding path |
 
 The current `Physical Plan` status is `pending-baseline-provider-coverage`. `Specializer` queries
 the injected `KernelProvider` for every lowered requirement and fails closed at the first missing

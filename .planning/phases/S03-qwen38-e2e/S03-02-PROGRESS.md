@@ -114,6 +114,10 @@ updated: 2026-08-26
   projection, including tensor-shape and input-cardinality failure checks. This provides the
   trusted quantized LM/FFN comparison contract while the target-side quantized matmul remains
   intentionally unadvertised.
+- A generic NVFP4 matrix-vector projection is now provider ID 13. It consumes FP32 activations,
+  packed E2M1 weights, FP8 group scales, and `weight_scale_2`; its shape checks and RTX 5090
+  result match the CPU NVFP4 linear oracle. Qwen graph promotion still requires sidecar scale
+  binding and a complete artifact-to-command composition.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

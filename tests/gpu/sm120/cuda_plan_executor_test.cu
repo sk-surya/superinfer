@@ -171,6 +171,25 @@ superinfer::ir::physical::Plan make_bf16_rms_norm_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_nvfp4_linear_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({88, 0, 1});
+  assert(builder.add_buffer(0, 64, 8).has_value());
+  assert(builder.add_buffer(64, 8, 8).has_value());
+  assert(builder.add_buffer(72, 1, 1).has_value());
+  assert(builder.add_buffer(80, 4, 4).has_value());
+  assert(builder
+             .add_command(base::KernelId{13},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}, ir::physical::BufferId{3}},
+                          {}, 0, 0, 0, 1.0e-5F, 2.0F)
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 }  // namespace
 
 int main() {
@@ -442,6 +461,35 @@ int main() {
     const float scale = 1.0F + static_cast<float>(index) * 0.5F;
     assert(std::abs(norm_output[index] - norm_input[index] / norm_denominator * scale) < 1.0e-5F);
   }
+
+  const auto nvfp4_linear_plan = make_nvfp4_linear_plan();
+  auto nvfp4_linear = sm120::cuda_runtime::CudaPlanSession::create(
+      nvfp4_linear_plan, 120, "baseline-v1");
+  assert(nvfp4_linear.has_value());
+  std::array<std::uint8_t, 8> nvfp4_linear_packed{};
+  nvfp4_linear_packed.fill(0x11);
+  const std::uint8_t nvfp4_linear_scale = 0x38;
+  std::array<float, 16> ones{};
+  ones.fill(1.0F);
+  assert(nvfp4_linear.value().copy_to_device(
+      ir::physical::BufferId{0},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(ones.data()), sizeof(ones))).ok());
+  assert(nvfp4_linear.value().copy_to_device(
+      ir::physical::BufferId{1},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(nvfp4_linear_packed.data()),
+                          sizeof(nvfp4_linear_packed))).ok());
+  assert(nvfp4_linear.value().copy_to_device(
+      ir::physical::BufferId{2},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(&nvfp4_linear_scale),
+                          sizeof(nvfp4_linear_scale))).ok());
+  assert(nvfp4_linear.value().execute().ok());
+  assert(nvfp4_linear.value().synchronize_for_test().ok());
+  float nvfp4_linear_output = 0.0F;
+  assert(nvfp4_linear.value().copy_from_device(
+      ir::physical::BufferId{3},
+      base::ByteView(reinterpret_cast<std::byte*>(&nvfp4_linear_output),
+                     sizeof(nvfp4_linear_output))).ok());
+  assert(std::abs(nvfp4_linear_output - 16.0F) < 1.0e-5F);
 
   ir::physical::PlanBuilder norm_builder;
   norm_builder.set_resource_bounds({48, 0, 1});

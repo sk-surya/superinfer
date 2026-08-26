@@ -9,7 +9,7 @@ progress:
   total_phases: 9
   completed_phases: 1
   total_plans: 25
-completed_plans: 8
+completed_plans: 9
 current_phase_name: qwen38-e2e
 ---
 
@@ -28,7 +28,7 @@ current_phase_name: qwen38-e2e
 | S00 | Complete | 2 | [S00-01](phases/S00-foundation/S00-01-SUMMARY.md), [S00-02](phases/S00-foundation/S00-02-SUMMARY.md) |
 | S01 | Complete — Gate A reached | 3 | [S01-01](phases/S01-artifact-ir/S01-01-SUMMARY.md), [S01-02](phases/S01-artifact-ir/S01-02-SUMMARY.md), [S01-03](phases/S01-artifact-ir/S01-03-SUMMARY.md) |
 | S02 | Complete — Gate B reached | 3 | [S02-03](phases/S02-sm120-baseline/S02-03-SUMMARY.md) |
-| S03 | In progress | 3 | S03-01 model identity/configuration pinning |
+| S03 | In progress | 3 | [S03-01](phases/S03-qwen38-e2e/S03-01-SUMMARY.md); S03-02 lowering/conversion next |
 | S04 | Planned | 3 | Pending |
 | S05 | Planned | 3 | Pending |
 | S06 | Planned | 2 | Pending |
@@ -59,7 +59,7 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
 
 ## Next Command
 
-Execute `.planning/phases/S03-qwen38-e2e/S03-01-PLAN.md`; preserve Gates A and B as unpassed study checkpoints.
+Execute `.planning/phases/S03-qwen38-e2e/S03-02-PLAN.md`; preserve Gates A and B as unpassed study checkpoints.
 
 ## Known Blockers
 

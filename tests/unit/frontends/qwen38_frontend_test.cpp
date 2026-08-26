@@ -13,6 +13,7 @@ int main() {
   assert(module.value().verify().ok());
   assert(module.value().entry_points().size() == 1);
   assert(module.value().dump().find("cuda") == std::string::npos);
+  assert(module.value().dump().find("Qwen") == std::string::npos);
   assert(module.value().dump().find("gated_delta_attention") != std::string::npos);
 
   std::size_t gated_delta = 0;

@@ -85,6 +85,12 @@ target_include_directories(superinfer_sm120_reference_executor PRIVATE
   "${CMAKE_SOURCE_DIR}/backends")
 add_test(NAME superinfer.sm120.reference_executor COMMAND superinfer_sm120_reference_executor)
 
+add_executable(superinfer_sm120_gated_delta_reference integration/sm120/gated_delta_reference_test.cpp)
+target_link_libraries(superinfer_sm120_gated_delta_reference PRIVATE superinfer_ir)
+target_include_directories(superinfer_sm120_gated_delta_reference PRIVATE
+  "${CMAKE_SOURCE_DIR}/backends")
+add_test(NAME superinfer.sm120.gated_delta_reference COMMAND superinfer_sm120_gated_delta_reference)
+
 add_executable(superinfer_qwen38_frontend unit/frontends/qwen38_frontend_test.cpp)
 target_link_libraries(superinfer_qwen38_frontend PRIVATE superinfer_ir superinfer_compiler)
 target_include_directories(superinfer_qwen38_frontend PRIVATE

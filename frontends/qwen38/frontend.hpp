@@ -83,7 +83,7 @@ class Frontend final : public compiler::ModelFrontend {
       const bool full_attention = (layer % 4U) == 3U;
       const TensorSpec linear_state_spec{{Dimension::static_value(48), Dimension::static_value(128),
                                           Dimension::static_value(128)},
-                                         DType::bf16, QuantizationIntent::none,
+                                         DType::f32, QuantizationIntent::none,
                                          TensorRole::kv_cache};
       const TensorSpec convolution_state_spec{{Dimension::static_value(4), Dimension::static_value(10240)},
                                               DType::bf16, QuantizationIntent::none,

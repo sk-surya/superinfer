@@ -427,7 +427,7 @@ def write_qwen38_metadata_artifact(
     full_attention_layers = 16
     linear_attention_layers = 48
     kv_bytes = full_attention_layers * context * 4 * 256 * 2
-    delta_state_bytes = linear_attention_layers * 48 * 128 * 128 * 2
+    delta_state_bytes = linear_attention_layers * 48 * 128 * 128 * 4
     convolution_state_bytes = linear_attention_layers * 4 * 10240 * 2
     activation_bytes = 8 * 5120 * 2
     workspace_bytes = 256 * 1024 * 1024

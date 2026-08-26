@@ -59,6 +59,13 @@ int main() {
   }
   assert(lowered_kv == 160);
   assert(lowered_decode_state == 96);
+  bool saw_f32_delta_state = false;
+  for (const auto& tensor : module.value().tensors()) {
+    if (tensor.name == "layer_00_delta_state_in") {
+      saw_f32_delta_state = tensor.spec.dtype == ir::semantic::DType::f32;
+    }
+  }
+  assert(saw_f32_delta_state);
   const auto physical = sm120::Specializer{}.compile(
       lowered.value(),
       {compiler::TargetProfile::offline_sm120a(32ULL << 30U, "baseline-v1"), 0, 512});

@@ -68,6 +68,7 @@ class Qwen38Inventory:
                 "source_shard": tensor.shard,
                 "data_start": tensor.data_start,
                 "data_end": tensor.data_end,
+                **_physical_tensor_mapping(tensor),
             }
             for tensor in self.tensors
         )
@@ -426,6 +427,38 @@ def _quantization_bindings(tensors: tuple[TensorRecord, ...]) -> list[dict[str, 
             }
         )
     return bindings
+
+
+def _physical_tensor_mapping(tensor: TensorRecord) -> dict[str, Any]:
+    """Describe the physical storage contract recorded beside a source tensor."""
+
+    dtype_map = {
+        "F32": "f32",
+        "F16": "f16",
+        "BF16": "bf16",
+        "I8": "int8",
+        "I32": "int32",
+        "U8": "u8",
+        "F8_E4M3": "u8",
+    }
+    try:
+        physical_dtype = dtype_map[tensor.dtype]
+    except KeyError as error:
+        raise Qwen38ValidationError(
+            "unsupported_tensor_dtype", tensor.name, tensor.dtype
+        ) from error
+    encoding = "none"
+    if tensor.dtype == "U8" and tensor.name.endswith(".weight"):
+        encoding = "nvfp4_packed"
+    elif tensor.dtype == "F8_E4M3":
+        encoding = "fp8_e4m3_group_scale"
+    return {
+        "physical_dtype": physical_dtype,
+        "layout": "row_major",
+        "alignment": 256,
+        "storage_encoding": encoding,
+        "storage_bytes": tensor.data_end - tensor.data_start,
+    }
 
 
 def validate_source(

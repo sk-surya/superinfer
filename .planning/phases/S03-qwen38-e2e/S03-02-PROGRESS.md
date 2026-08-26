@@ -114,6 +114,11 @@ updated: 2026-08-26
   projection, including tensor-shape and input-cardinality failure checks. This provides the
   trusted quantized LM/FFN comparison contract while the target-side quantized matmul remains
   intentionally unadvertised.
+- Python artifact loading now exposes a bounded typed-tensor materialization contract. BF16/F16/
+  FP32 and packed NVFP4/FP8 group-scale records derive explicit physical dtype, row-major layout,
+  256-byte target alignment, storage encoding, logical shape, and payload byte count; malformed
+  or mismatched descriptors fail before bytes are handed to a consumer. Qwen payload tensor-table
+  records now carry the same physical metadata deterministically.
 - A generic NVFP4 matrix-vector projection is now provider ID 13. It consumes FP32 activations,
   packed E2M1 weights, FP8 group scales, and `weight_scale_2`; its shape checks and RTX 5090
   result match the CPU NVFP4 linear oracle. Qwen graph promotion still requires sidecar scale

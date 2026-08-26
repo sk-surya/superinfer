@@ -10,6 +10,7 @@ from superinfer.artifact import (
     ArtifactError,
     MAXIMUM_ARTIFACT_BYTES,
     inspect_artifact,
+    read_typed_tensor,
     write_artifact,
 )
 
@@ -50,6 +51,73 @@ class PythonArtifactTests(unittest.TestCase):
                 summary["sections"],
                 ["manifest", "tensor_table", "physical_plan", "payload", "integrity"],
             )
+
+    def test_typed_tensor_materialization_preserves_physical_contract(self) -> None:
+        source = {
+            "manifest": {"revision": "r1"},
+            "tensors": [
+                {
+                    "name": "hidden",
+                    "dtype": "BF16",
+                    "shape": [2, 2],
+                    "artifact_payload_offset": 0,
+                    "artifact_payload_end": 8,
+                },
+                {
+                    "name": "layer.weight",
+                    "dtype": "U8",
+                    "shape": [2, 8],
+                    "artifact_payload_offset": 8,
+                    "artifact_payload_end": 16,
+                },
+                {
+                    "name": "layer.weight_scale",
+                    "dtype": "F8_E4M3",
+                    "shape": [2, 1],
+                    "artifact_payload_offset": 16,
+                    "artifact_payload_end": 18,
+                },
+            ],
+            "physical_plan": "plan",
+            "payload_hex": "0001020304050607" "1011121314151617" "1819",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "typed.sinf"
+            write_artifact(source, path)
+            hidden = read_typed_tensor(path, "hidden")
+            self.assertEqual(hidden.descriptor.dtype, "bf16")
+            self.assertEqual(hidden.descriptor.shape, (2, 2))
+            self.assertEqual(hidden.descriptor.layout, "row_major")
+            self.assertEqual(hidden.descriptor.encoding, "none")
+            self.assertEqual(hidden.data, bytes.fromhex("0001020304050607"))
+
+            weight = read_typed_tensor(path, "layer.weight")
+            self.assertEqual(weight.descriptor.dtype, "u8")
+            self.assertEqual(weight.descriptor.encoding, "nvfp4_packed")
+            self.assertEqual(weight.descriptor.storage_bytes, 8)
+
+            scale = read_typed_tensor(path, "layer.weight_scale")
+            self.assertEqual(scale.descriptor.dtype, "u8")
+            self.assertEqual(scale.descriptor.encoding, "fp8_e4m3_group_scale")
+
+    def test_typed_tensor_materialization_rejects_shape_byte_mismatch(self) -> None:
+        source = {
+            "manifest": {},
+            "tensors": [{
+                "name": "bad",
+                "dtype": "BF16",
+                "shape": [2, 2],
+                "artifact_payload_offset": 0,
+                "artifact_payload_end": 2,
+            }],
+            "physical_plan": "plan",
+            "payload_hex": "0001",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bad-typed.sinf"
+            write_artifact(source, path)
+            with self.assertRaisesRegex(ArtifactError, "payload bytes do not match"):
+                read_typed_tensor(path, "bad")
 
     def test_corruption_fails_before_inspection(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

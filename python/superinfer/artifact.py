@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import struct
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -25,6 +26,28 @@ SECTION_NAMES = {
 }
 MAXIMUM_ARTIFACT_BYTES = 1 << 35
 STREAMING_INSPECTION_THRESHOLD_BYTES = 1 << 30
+
+
+@dataclass(frozen=True)
+class PhysicalTensorDescriptor:
+    """Validated physical view metadata for one artifact tensor."""
+
+    name: str
+    dtype: str
+    shape: tuple[int, ...]
+    layout: str
+    alignment: int
+    encoding: str
+    payload_offset: int
+    storage_bytes: int
+
+
+@dataclass(frozen=True)
+class TypedTensor:
+    """One bounded tensor materialization and the contract used to consume it."""
+
+    descriptor: PhysicalTensorDescriptor
+    data: bytes
 
 
 class ArtifactError(ValueError):
@@ -242,13 +265,7 @@ def inspect_artifact(path: Path) -> dict[str, Any]:
     }
 
 
-def read_tensor_payload(path: Path, tensor_name: str) -> bytes:
-    """Read one tensor from a validated payload artifact using its relative tensor-table range.
-
-    Validation is performed before the seek, so callers do not consume bytes from a corrupted
-    section. Only the requested tensor bytes are materialized; the full payload is never loaded.
-    """
-
+def _locate_tensor(path: Path, tensor_name: str) -> tuple[Mapping[str, Any], tuple[int, int, int, int, int]]:
     if not tensor_name:
         raise ArtifactError("tensor name is empty")
     inspect_artifact(path)
@@ -283,14 +300,102 @@ def read_tensor_payload(path: Path, tensor_name: str) -> bytes:
             end = int(tensor["artifact_payload_end"])
         except (TypeError, ValueError) as error:
             raise ArtifactError("tensor payload offsets are invalid") from error
-        payload_size = records[4][3]
+        payload_record = records[4]
+        payload_size = payload_record[3]
         if start < 0 or end < start or end > payload_size:
             raise ArtifactError("tensor payload offsets are outside payload")
-        stream.seek(records[4][2] + start)
+        return tensor, payload_record
+
+
+def _read_located_tensor(path: Path, tensor: Mapping[str, Any],
+                         payload_record: tuple[int, int, int, int, int]) -> bytes:
+    start = int(tensor["artifact_payload_offset"])
+    end = int(tensor["artifact_payload_end"])
+    with path.open("rb") as stream:
+        stream.seek(payload_record[2] + start)
         payload = stream.read(end - start)
-        if len(payload) != end - start:
-            raise ArtifactError("truncated tensor payload")
-        return payload
+    if len(payload) != end - start:
+        raise ArtifactError("truncated tensor payload")
+    return payload
+
+
+def read_tensor_payload(path: Path, tensor_name: str) -> bytes:
+    """Read one tensor from a validated payload artifact using its relative tensor-table range.
+
+    Validation is performed before the seek, so callers do not consume bytes from a corrupted
+    section. Only the requested tensor bytes are materialized; the full payload is never loaded.
+    """
+
+    tensor, payload_record = _locate_tensor(path, tensor_name)
+    return _read_located_tensor(path, tensor, payload_record)
+
+
+def read_typed_tensor(path: Path, tensor_name: str) -> TypedTensor:
+    """Materialize one tensor after validating its physical dtype, shape, and encoding.
+
+    The returned bytes are bounded to one tensor. Packed NVFP4 weights retain their logical
+    element shape while exposing ``u8`` storage and an explicit packed encoding; callers must
+    not reinterpret the bytes as a dense floating-point matrix.
+    """
+
+    tensor, payload_record = _locate_tensor(path, tensor_name)
+    try:
+        source_dtype = str(tensor["dtype"])
+        shape_value = tensor["shape"]
+        logical_shape = tuple(int(dimension) for dimension in shape_value)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ArtifactError("tensor physical descriptor is incomplete") from error
+    if not isinstance(shape_value, list) or any(dimension <= 0 for dimension in logical_shape):
+        raise ArtifactError("tensor physical shape is invalid")
+    shape = logical_shape if logical_shape else (1,)
+    dtype_map = {
+        "F32": ("f32", 4),
+        "F16": ("f16", 2),
+        "BF16": ("bf16", 2),
+        "I8": ("int8", 1),
+        "I32": ("int32", 4),
+        "U8": ("u8", 1),
+        "F8_E4M3": ("u8", 1),
+    }
+    if source_dtype not in dtype_map:
+        raise ArtifactError(f"unsupported tensor dtype: {source_dtype}")
+    dtype, bytes_per_element = dtype_map[source_dtype]
+    elements = 1
+    for dimension in logical_shape:
+        elements *= dimension
+    encoding = "none"
+    expected_bytes = elements * bytes_per_element
+    if source_dtype == "U8" and tensor_name.endswith(".weight"):
+        if len(shape) != 2 or shape[1] == 0 or shape[1] % 8 != 0:
+            raise ArtifactError("packed NVFP4 weight shape is invalid")
+        encoding = "nvfp4_packed"
+        expected_bytes = elements // 2
+    elif source_dtype == "F8_E4M3":
+        encoding = "fp8_e4m3_group_scale"
+    payload = _read_located_tensor(path, tensor, payload_record)
+    if len(payload) != expected_bytes:
+        raise ArtifactError("tensor payload bytes do not match physical descriptor")
+    declared_contract = {
+        "physical_dtype": dtype,
+        "layout": "row_major",
+        "alignment": 256,
+        "storage_encoding": encoding,
+        "storage_bytes": len(payload),
+    }
+    for field, expected in declared_contract.items():
+        if field in tensor and tensor[field] != expected:
+            raise ArtifactError(f"tensor {field} disagrees with its source dtype or payload")
+    descriptor = PhysicalTensorDescriptor(
+        name=tensor_name,
+        dtype=dtype,
+        shape=shape,
+        layout="row_major",
+        alignment=256,
+        encoding=encoding,
+        payload_offset=int(tensor["artifact_payload_offset"]),
+        storage_bytes=len(payload),
+    )
+    return TypedTensor(descriptor, payload)
 
 
 def _inspect_streaming_artifact(path: Path) -> dict[str, Any]:

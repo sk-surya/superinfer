@@ -38,11 +38,15 @@ int main() {
       "input", TensorSpec{{Dimension::static_value(8)}, DType::f16,
                            QuantizationIntent::none, TensorRole::activation});
   assert(rope_input.has_value());
+  const auto rope_output = odd_rope.add_tensor(
+      "output", TensorSpec{{Dimension::static_value(8)}, DType::f16,
+                            QuantizationIntent::none, TensorRole::activation});
+  assert(rope_output.has_value());
   OperationAttributes attributes{4, 2, 8, 3, 0, 0, 0};
   assert(odd_rope.add_operation("attention", OperationKind::grouped_query_attention,
-                                {rope_input.value()}, {rope_input.value()}, attributes)
+                                {rope_input.value()}, {rope_output.value()}, attributes)
              .has_value());
-  assert(odd_rope.add_entry_point("decode", {rope_input.value()}, {rope_input.value()}).ok());
+  assert(odd_rope.add_entry_point("decode", {rope_input.value()}, {rope_output.value()}).ok());
   const auto bad_rope = std::move(odd_rope).build();
   assert(!bad_rope.has_value());
   assert(bad_rope.error().message().find("even") != std::string::npos);

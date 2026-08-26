@@ -90,6 +90,29 @@ class Specializer final {
       buffer_for_tensor[allocation.id] = buffer.value();
     }
 
+    for (const ir::lowered::EntryPoint& entry : lowered.entry_points()) {
+      std::vector<ir::physical::BufferId> inputs;
+      std::vector<ir::physical::BufferId> outputs;
+      inputs.reserve(entry.inputs.size());
+      outputs.reserve(entry.outputs.size());
+      for (const ir::lowered::LoweredTensorId id : entry.inputs) {
+        if (id.value() >= buffer_for_tensor.size() ||
+            buffer_for_tensor[id.value()].value() == std::numeric_limits<std::uint64_t>::max()) {
+          return base::Status::failed_precondition("entry input has no physical allocation");
+        }
+        inputs.push_back(buffer_for_tensor[id.value()]);
+      }
+      for (const ir::lowered::LoweredTensorId id : entry.outputs) {
+        if (id.value() >= buffer_for_tensor.size() ||
+            buffer_for_tensor[id.value()].value() == std::numeric_limits<std::uint64_t>::max()) {
+          return base::Status::failed_precondition("entry output has no physical allocation");
+        }
+        outputs.push_back(buffer_for_tensor[id.value()]);
+      }
+      base::Status binding = plan_builder.add_entry_point(entry.name, std::move(inputs), std::move(outputs));
+      if (!binding.ok()) return binding.with_context("physical entry point");
+    }
+
     std::vector<ir::physical::CommandId> dependencies;
     std::uint64_t workspace_bytes = 0;
     for (const ir::lowered::KernelRequirement& requirement : lowered.kernel_requirements()) {

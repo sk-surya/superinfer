@@ -36,6 +36,7 @@ superinfer::ir::lowered::Module make_fixture() {
              .add_kernel_requirement("rms_norm", 120,
                                      {hidden.value(), scale.value(), output.value()}, norm_attributes)
              .ok());
+  assert(builder.add_entry_point("decode", {hidden.value()}, {output.value()}).ok());
   const auto module = std::move(builder).build();
   assert(module.has_value());
   return std::move(module).value();
@@ -202,6 +203,7 @@ int main() {
   assert(result.has_value());
   assert(result.value().plan.commands().front().epsilon == 1.0e-6F);
   assert(result.value().plan.commands().front().add_one_to_scale);
+  assert(result.value().plan.entry_points().size() == 1);
   assert(result.value().plan.verify().ok());
   assert(result.value().plan.capability().target_capability == 120);
   assert(result.value().plan.capability().kernel_catalog == "baseline-v1");

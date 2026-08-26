@@ -42,6 +42,13 @@ struct PhysicalOperandDescriptor final {
   StorageEncoding encoding{StorageEncoding::none};
 };
 
+/** Named invocation bindings carried into runtime construction. */
+struct EntryPointDescriptor final {
+  std::string name;
+  std::vector<BufferId> inputs;
+  std::vector<BufferId> outputs;
+};
+
 struct ResourceBounds final {
   std::uint64_t arena_bytes;
   std::uint64_t workspace_bytes;
@@ -100,6 +107,9 @@ class Plan final {
   [[nodiscard]] const ResourceBounds& resources() const noexcept { return resources_; }
   [[nodiscard]] const std::vector<BufferDescriptor>& buffers() const noexcept { return buffers_; }
   [[nodiscard]] const std::vector<CommandDescriptor>& commands() const noexcept { return commands_; }
+  [[nodiscard]] const std::vector<EntryPointDescriptor>& entry_points() const noexcept {
+    return entry_points_;
+  }
 
   /** Rechecks all references and resource bounds without allocating or touching a device. */
   [[nodiscard]] base::Status verify() const {
@@ -154,6 +164,9 @@ class Plan final {
       }
       for (std::size_t operand_index = 0; operand_index < command.operands.size(); ++operand_index) {
         const PhysicalOperandDescriptor& operand = command.operands[operand_index];
+        if (operand.buffer.value() >= buffers_.size()) {
+          return base::Status::out_of_range("physical operand references undefined buffer");
+        }
         const BufferDescriptor& buffer = buffers_[operand.buffer.value()];
         if (operand.buffer != command.buffers[operand_index] || operand.dtype == PhysicalDType::unknown ||
             operand.shape.empty() || operand.alignment == 0 || operand.alignment != buffer.alignment ||
@@ -166,6 +179,17 @@ class Plan final {
         if (dependency.value() >= commands_.size() || dependency.value() == command.id.value()) {
           return base::Status::failed_precondition("physical command dependency is invalid");
         }
+      }
+    }
+    for (const EntryPointDescriptor& entry : entry_points_) {
+      if (entry.name.empty() || entry.inputs.empty() || entry.outputs.empty()) {
+        return base::Status::invalid_argument("physical entry point requires name, inputs, and outputs");
+      }
+      for (const BufferId id : entry.inputs) {
+        if (id.value() >= buffers_.size()) return base::Status::out_of_range("physical entry input is undefined");
+      }
+      for (const BufferId id : entry.outputs) {
+        if (id.value() >= buffers_.size()) return base::Status::out_of_range("physical entry output is undefined");
       }
     }
     std::vector<std::uint8_t> marks(commands_.size(), 0);
@@ -207,23 +231,30 @@ class Plan final {
       }
       output << "\n";
     }
+    for (const EntryPointDescriptor& entry : entry_points_) {
+      output << "entry name=" << entry.name << " inputs=" << entry.inputs.size()
+             << " outputs=" << entry.outputs.size() << "\n";
+    }
     return output.str();
   }
 
  private:
   friend class PlanBuilder;
   Plan(CapabilityFingerprint capability, ResourceBounds resources,
-       std::vector<BufferDescriptor> buffers, std::vector<CommandDescriptor> commands)
+       std::vector<BufferDescriptor> buffers, std::vector<CommandDescriptor> commands,
+       std::vector<EntryPointDescriptor> entry_points)
       : capability_(std::move(capability)),
         resources_(resources),
         buffers_(std::move(buffers)),
-        commands_(std::move(commands)) {}
+        commands_(std::move(commands)),
+        entry_points_(std::move(entry_points)) {}
   Plan() = default;
 
   CapabilityFingerprint capability_{};
   ResourceBounds resources_{};
   std::vector<BufferDescriptor> buffers_;
   std::vector<CommandDescriptor> commands_;
+  std::vector<EntryPointDescriptor> entry_points_;
 };
 
 /** Checked builder that is the only construction path for non-empty Physical Plans. */
@@ -273,8 +304,15 @@ class PlanBuilder final {
     return commands_.back().id;
   }
 
+  base::Status add_entry_point(std::string name, std::vector<BufferId> inputs,
+                               std::vector<BufferId> outputs) {
+    entry_points_.push_back({std::move(name), std::move(inputs), std::move(outputs)});
+    return {};
+  }
+
   [[nodiscard]] base::Result<Plan> finalize(CapabilityFingerprint capability) && {
-    Plan plan{std::move(capability), resources_, std::move(buffers_), std::move(commands_)};
+    Plan plan{std::move(capability), resources_, std::move(buffers_), std::move(commands_),
+              std::move(entry_points_)};
     base::Status status = plan.verify();
     if (!status.ok()) return status.with_context("physical-plan builder");
     return base::Result<Plan>(std::move(plan));
@@ -284,6 +322,7 @@ class PlanBuilder final {
   ResourceBounds resources_{};
   std::vector<BufferDescriptor> buffers_;
   std::vector<CommandDescriptor> commands_;
+  std::vector<EntryPointDescriptor> entry_points_;
 };
 
 }  // namespace superinfer::ir::physical

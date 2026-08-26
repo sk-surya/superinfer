@@ -97,11 +97,13 @@ int main() {
   assert(typed_builder
              .add_command(base::KernelId{1}, {typed_buffer.value()}, {}, 0, 0, 0)
              .has_value());
+  assert(typed_builder.add_entry_point("decode", {typed_buffer.value()}, {typed_buffer.value()}).ok());
   const auto typed_plan = std::move(typed_builder).finalize({120, "fixture-catalog"});
   assert(typed_plan.has_value());
   assert(typed_plan.value().commands().front().operands.front().dtype ==
          ir::physical::PhysicalDType::bf16);
   assert(typed_plan.value().commands().front().operands.front().shape == std::vector<std::uint64_t>({2, 4}));
+  assert(typed_plan.value().entry_points().size() == 1);
 
   ir::physical::PlanBuilder mismatched_operand_builder;
   mismatched_operand_builder.set_resource_bounds({32, 0, 1});

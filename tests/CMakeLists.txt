@@ -91,6 +91,12 @@ target_include_directories(superinfer_sm120_gated_delta_reference PRIVATE
   "${CMAKE_SOURCE_DIR}/backends")
 add_test(NAME superinfer.sm120.gated_delta_reference COMMAND superinfer_sm120_gated_delta_reference)
 
+add_executable(superinfer_sm120_reference_primitives integration/sm120/reference_primitives_test.cpp)
+target_link_libraries(superinfer_sm120_reference_primitives PRIVATE superinfer_ir)
+target_include_directories(superinfer_sm120_reference_primitives PRIVATE
+  "${CMAKE_SOURCE_DIR}/backends")
+add_test(NAME superinfer.sm120.reference_primitives COMMAND superinfer_sm120_reference_primitives)
+
 add_executable(superinfer_qwen38_frontend unit/frontends/qwen38_frontend_test.cpp)
 target_link_libraries(superinfer_qwen38_frontend PRIVATE superinfer_ir superinfer_compiler)
 target_include_directories(superinfer_qwen38_frontend PRIVATE
@@ -140,6 +146,7 @@ if(SUPERINFER_ENABLE_SANITIZERS)
     superinfer.sm120.memory_golden superinfer.sm120.specializer
     superinfer.sm120.baseline_provider superinfer.sm120.plan_binding
     superinfer.sm120.session_ownership
-    superinfer.sm120.reference_executor superinfer.artifact.binary
+    superinfer.sm120.reference_executor superinfer.sm120.reference_primitives
+    superinfer.artifact.binary
     PROPERTIES ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
 endif()

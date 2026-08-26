@@ -6,14 +6,14 @@ This is the durable record of what the user understands, what evidence supports 
 
 | Field | Value |
 |---|---|
-| Implementation phase | S02 — `sm120` Correctness Backend |
-| Current user gate | Gate A — semantic IR/compiler boundaries — L2 |
+| Implementation phase | S03 — Qwen3.8 end-to-end |
+| Current user gate | Gate B — one-token transformer execution — L2 |
 | User status | Packet presented |
 | Highest passed L2 gate | None |
-| Outstanding L2 gates | Gate A — semantic IR/compiler boundaries |
-| Debt distance | 1 |
+| Outstanding L2 gates | Gate A — semantic IR/compiler boundaries; Gate B — one-token transformer execution |
+| Debt distance | 2 under explicit D-014 autonomous-execution override |
 | Allowed autonomous work | All approved roadmap plans; preserve packets and branch checkpoints for later study. |
-| Next user action | Optional: study Gate A or a later packet and answer its exercise when convenient. |
+| Next user action | Optional: study Gate B packet and answer its five questions/experiment when convenient. |
 | Last updated | Autonomous execution enabled by explicit user directive on 2026-08-26 |
 
 ## Status Vocabulary
@@ -28,7 +28,7 @@ This is the durable record of what the user understands, what evidence supports 
 |---|---|---|---|---|---|
 | S00 CUDA execution model | S00 | L0/L1 | Not reached | Not started | No packet required |
 | Gate A — semantic IR/compiler boundaries | S01 | L2 | Reached | Packet presented | [GATE-A.md](understanding-packets/GATE-A.md) |
-| Gate B — one-token transformer execution | S02 | L2 | Not reached | Not started | Pending |
+| Gate B — one-token transformer execution | S02 | L2 | Reached | Packet presented | [GATE-B.md](understanding-packets/GATE-B.md) |
 | Gate C.1 — dense/NVFP4/Tensor Core mechanism | S04 | L2 | Not reached | Not started | Pending |
 | Gate C.2 — attention/KV mechanism | S04 | L2 | Not reached | Not started | Pending |
 | Gate C.3 — fusion/persistent mechanism | S04 | L2 | Not reached | Not started | Pending |
@@ -120,6 +120,37 @@ Copy this section for each reached L2 gate. Keep the packet itself in `.planning
 **Remaining unknowns:** Whether the user can distinguish semantic meaning, target lowering, and physical execution boundaries. This remains a study checkpoint, not an implementation blocker under D-014.
 
 **Agent assessment:** `in progress`, packet presented 2026-08-15; retained as a study checkpoint under D-014.
+
+### Gate B — one-token transformer execution
+
+| Field | Value |
+|---|---|
+| Level | L2 |
+| Implementation status | Reached |
+| User status | Packet presented |
+| Reached at | `023c505`; S02-03 evidence; 2026-08-26 |
+| Packet | [understanding-packets/GATE-B.md](understanding-packets/GATE-B.md) |
+| Debt distance after update | 2 under explicit D-014 autonomous-execution override |
+
+**Mental model:** Pending user explanation; do not self-certify.
+
+**Can explain:** Pending the five packet answers.
+
+**Can predict:** Pending the kernel-ID/scale experiment.
+
+**Can trace:** Pending the `[4]` host-to-RMSNorm-to-output trace.
+
+**Can diagnose:** Pending the operand/catalog/poisoning diagnosis answers.
+
+**Hands-on experiment:** Pending the command-ID change and observed output difference.
+
+**Five answers:** Not yet provided.
+
+**Remaining unknowns:** Qwen-derived hidden/KV shapes and prefill/decode entry semantics are pinned
+in S03-01; the current packet uses a four-element executable fixture.
+
+**Agent assessment:** `in progress`, packet presented 2026-08-26; retained as an unpassed autonomous
+study checkpoint under D-014.
 
 ## Autonomous execution override
 

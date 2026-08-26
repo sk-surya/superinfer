@@ -99,6 +99,16 @@ if(SUPERINFER_CUDA_AVAILABLE)
   set_target_properties(superinfer_sm120_cuda_ownership PROPERTIES CUDA_ARCHITECTURES "120a")
   add_test(NAME superinfer.sm120.cuda_ownership COMMAND superinfer_sm120_cuda_ownership)
   set_tests_properties(superinfer.sm120.cuda_ownership PROPERTIES SKIP_RETURN_CODE 77)
+
+  add_executable(superinfer_sm120_cuda_plan_executor gpu/sm120/cuda_plan_executor_test.cu)
+  target_compile_features(superinfer_sm120_cuda_plan_executor PRIVATE cuda_std_20)
+  target_include_directories(superinfer_sm120_cuda_plan_executor PRIVATE
+    "${CMAKE_SOURCE_DIR}/backends")
+  target_link_libraries(superinfer_sm120_cuda_plan_executor PRIVATE
+    superinfer_sm120_cuda_runtime CUDA::cudart)
+  set_target_properties(superinfer_sm120_cuda_plan_executor PROPERTIES CUDA_ARCHITECTURES "120a")
+  add_test(NAME superinfer.sm120.cuda_plan_executor COMMAND superinfer_sm120_cuda_plan_executor)
+  set_tests_properties(superinfer.sm120.cuda_plan_executor PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 if(SUPERINFER_ENABLE_SANITIZERS)

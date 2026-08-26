@@ -1,0 +1,48 @@
+{
+  "model": "Qwen3.8-27B",
+  "license": "apache-2.0",
+  "upstream": {
+    "repository": "Qwen/Qwen3.8-27B",
+    "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+  },
+  "derivative": {
+    "repository": "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+    "revision": "0cc27958cefbbe231782ec8511de8c4eb5233348",
+    "local_directory": "/srv/models/hf/Qwen3.8-27B-NVFP4-RTX5090-LMHead4"
+  },
+  "architecture": {
+    "config_architecture": "Qwen3_5ForConditionalGeneration",
+    "config_model_type": "qwen3_5",
+    "hidden_size": 5120,
+    "layers": 64,
+    "linear_attention_layers": 48,
+    "full_attention_layers": 16,
+    "attention_heads": 24,
+    "kv_heads": 4,
+    "head_dim": 256,
+    "rotary_dimension": 64,
+    "intermediate_size": 17408,
+    "vocab_size": 248320,
+    "context_length": 262144,
+    "rms_norm_epsilon": 1e-06,
+    "quantization": "NVFP4 W4A4 group_size=16, FP8 KV"
+  },
+  "inventory": {
+    "tensor_count": 2402,
+    "tensor_inventory_sha256": "cab1e4afdb94d48c0a1cfe6ee3833b22d9ec856c077fb1eeef92f674032aa3ab",
+    "files": {
+      "config.json": "78f65e03f2ac08a39320bf4a2633f1ae1526144da0fba1904b7371e682c304ea",
+      "generation_config.json": "7ae9e193dbcef99733ccf647c95ef668c35d1a80a8aa88a51ee40a9bcacf5a74",
+      "model.safetensors.index.json": "4f0c8847dd549636c873737a4703ff1f215a98ec6d5e90b082b31e9e26f4e765",
+      "model-00001-of-00003.safetensors": "cdd37b0e61eccc8a3d7d08f9d1a4f52856a9d88e4e8b42089bd18a970e3a01ec",
+      "model-00002-of-00003.safetensors": "4b547449a2b23c6cd414da0cf65ff9d7e17ad9aa2b119beedcbba14f649eb1dd",
+      "model-00003-of-00003.safetensors": "9ce944d534eabdd493076a3a52c7ebd31f41c135b340a1ea95c5a695e6f1f6b2",
+      "tokenizer.json": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+      "tokenizer_config.json": "c873857aae349387312ff4cb76d4a17a8d5ed79f89523146200a1570739132db",
+      "chat_template.jinja": "0a20a4673d45476ed88dcb4a60b6af35ca202ae470fee6fd2bd419758aabd9ab",
+      "vocab.json": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+      "merges.txt": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+      "hf_quant_config.json": "2c30a0d7e08c5eede4a273c9862aa90f49adfda1cd661dd564742749de9c1a2b"
+    }
+  }
+}

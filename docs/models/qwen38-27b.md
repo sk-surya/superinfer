@@ -1,0 +1,42 @@
+# Qwen3.8-27B support identity
+
+SuperInfer’s first model target is the NVFP4 RTX 5090 derivative of Qwen3.8-27B:
+
+- Base: `Qwen/Qwen3.8-27B` at `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`.
+- Derivative: `gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090` at
+  `0cc27958cefbbe231782ec8511de8c4eb5233348`.
+- Local acceptance source: `/srv/models/hf/Qwen3.8-27B-NVFP4-RTX5090-LMHead4`.
+- License: Apache-2.0.
+
+The config uses the `qwen3_5` Transformers architecture because Qwen3.8 is built on Qwen3.5’s
+architecture. It is a native vision-language model, not a plain decoder-only text model. The V0
+critical path initially validates text-only token execution while preserving the source’s semantic
+architecture: 64 layers, 48 linear-attention layers, 16 full-attention layers, hidden size 5120,
+24 query heads, 4 KV heads, head dimension 256, rotary dimension 64, intermediate size 17408,
+vocabulary 248320, and native context 262144.
+
+The derivative uses ModelOpt NVFP4 W4A4 weights with group size 16 and FP8 KV storage. The checked-in
+[source manifest](../../frontends/qwen38/manifest.json) records metadata, tensor-inventory hash,
+and complete local input hashes without checking model weights into the repository.
+
+## Validation
+
+Run the header-only validator before any bulk conversion:
+
+```sh
+PYTHONPATH=python python3 - <<'PY'
+from pathlib import Path
+from superinfer.convert.qwen38 import validate_source
+
+inventory = validate_source(
+    Path('/srv/models/hf/Qwen3.8-27B-NVFP4-RTX5090-LMHead4'),
+    upstream_revision='1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0',
+    derivative_revision='0cc27958cefbbe231782ec8511de8c4eb5233348',
+)
+print(inventory.manifest()['tensor_inventory_sha256'])
+PY
+```
+
+The validator checks required config/tokenizer fields, the index/header tensor-name bijection,
+positive shapes, safe offsets, known layer types, and stable revision formats. It reads safetensors
+headers only; a mismatch fails before payload materialization.

@@ -6,7 +6,7 @@ SuperInfer’s first model target is the NVFP4 RTX 5090 derivative of Qwen3.8-27
 - Derivative: `gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090` at
   `0cc27958cefbbe231782ec8511de8c4eb5233348`.
 - Local acceptance source: `/srv/models/hf/Qwen3.8-27B-NVFP4-RTX5090-LMHead4`.
-- Local variant identity: `8b5c890e6802402975a9aa26f28e6ad0a401ed786d24dc6b41c497d58dcab771`, the
+- Local variant identity: `9a7893ae914813023309e32adc5d18cf281d0ca8ba3063ae1ba0f85b33bcbb39`, the
   SHA-256 of the canonical validated metadata manifest and complete tensor/file hash inventory.
 - License: Apache-2.0.
 

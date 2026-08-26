@@ -51,6 +51,22 @@ class Qwen38Inventory:
             separators=(",", ":"),
         ).encode("utf-8")
 
+    def normalized_tensor_mapping(self) -> tuple[dict[str, Any], ...]:
+        """Return deterministic model-to-artifact tensor records without source paths."""
+
+        return tuple(
+            {
+                "name": tensor.name,
+                "role": tensor.role,
+                "dtype": tensor.dtype,
+                "shape": list(tensor.shape),
+                "source_shard": tensor.shard,
+                "data_start": tensor.data_start,
+                "data_end": tensor.data_end,
+            }
+            for tensor in self.tensors
+        )
+
     def manifest(self) -> dict[str, Any]:
         return {
             "model": "Qwen3.8-27B",
@@ -62,6 +78,7 @@ class Qwen38Inventory:
             "config": self.config,
             "tensor_count": len(self.tensors),
             "tensor_inventory_sha256": hashlib.sha256(self.canonical_tensor_bytes()).hexdigest(),
+            "tensor_mapping": self.normalized_tensor_mapping(),
             "file_sha256": dict(sorted(self.file_hashes.items())),
             "license": "apache-2.0",
         }

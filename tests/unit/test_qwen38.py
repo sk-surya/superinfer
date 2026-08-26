@@ -65,6 +65,7 @@ class Qwen38SourceTests(unittest.TestCase):
             self.assertEqual(first.manifest(), second.manifest())
             self.assertEqual(first.tensors[0].shape, (1,))
             self.assertEqual(first.tensors[0].data_end, 4)
+            self.assertEqual(first.normalized_tensor_mapping()[0]["role"], "weight")
 
     def test_config_mismatch_fails_before_tensor_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

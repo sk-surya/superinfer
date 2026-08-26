@@ -4,13 +4,33 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from superinfer.artifact import ArtifactError, MAXIMUM_ARTIFACT_BYTES, inspect_artifact, write_artifact
+from superinfer.artifact import (
+    ArtifactError,
+    MAXIMUM_ARTIFACT_BYTES,
+    inspect_artifact,
+    write_artifact,
+)
 
 
 class PythonArtifactTests(unittest.TestCase):
     def test_artifact_limit_covers_pinned_qwen_payload_budget(self) -> None:
         self.assertGreaterEqual(MAXIMUM_ARTIFACT_BYTES, 32 * (1 << 30))
+
+    def test_inspection_can_use_streaming_section_validation(self) -> None:
+        source = {
+            "manifest": {"revision": "r1"},
+            "tensors": [],
+            "physical_plan": "plan",
+            "payload_hex": "01020304",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "fixture.sinf"
+            write_artifact(source, path)
+            with patch("superinfer.artifact.STREAMING_INSPECTION_THRESHOLD_BYTES", 0):
+                summary = inspect_artifact(path)
+            self.assertEqual(summary["payload_bytes"], 4)
 
     def test_converter_bytes_and_inspection_are_deterministic(self) -> None:
         source = {

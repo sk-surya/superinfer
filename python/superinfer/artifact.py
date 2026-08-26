@@ -24,6 +24,7 @@ SECTION_NAMES = {
     5: "integrity",
 }
 MAXIMUM_ARTIFACT_BYTES = 1 << 35
+STREAMING_INSPECTION_THRESHOLD_BYTES = 1 << 30
 
 
 class ArtifactError(ValueError):
@@ -35,6 +36,20 @@ def _checksum(data: bytes) -> int:
     for byte in data:
         result ^= byte
         result = (result * 1099511628211) & ((1 << 64) - 1)
+    return result
+
+
+def _checksum_stream(stream: Any, size: int) -> int:
+    result = 1469598103934665603
+    remaining = size
+    while remaining:
+        chunk = stream.read(min(1024 * 1024, remaining))
+        if not chunk or len(chunk) > remaining:
+            raise ArtifactError("truncated artifact section")
+        for byte in chunk:
+            result ^= byte
+            result = (result * 1099511628211) & ((1 << 64) - 1)
+        remaining -= len(chunk)
     return result
 
 
@@ -212,6 +227,8 @@ def _validated_sections(data: bytes) -> dict[int, bytes]:
 def inspect_artifact(path: Path) -> dict[str, Any]:
     """Validate an artifact and return a stable machine-readable summary."""
 
+    if path.stat().st_size > STREAMING_INSPECTION_THRESHOLD_BYTES:
+        return _inspect_streaming_artifact(path)
     data = path.read_bytes()
     sections = _validated_sections(data)
     manifest = json.loads(sections[1])
@@ -223,3 +240,87 @@ def inspect_artifact(path: Path) -> dict[str, Any]:
         "tensor_count": len(tensors),
         "payload_bytes": len(sections[4]),
     }
+
+
+def _inspect_streaming_artifact(path: Path) -> dict[str, Any]:
+    """Inspect a large artifact without materializing its payload section."""
+
+    with path.open("rb") as stream:
+        header = stream.read(HEADER.size)
+        if len(header) != HEADER.size or header[:4] != MAGIC:
+            raise ArtifactError("invalid artifact magic or truncated header")
+        (
+            _magic,
+            major,
+            minor,
+            header_size,
+            section_count,
+            directory_offset,
+            total_size,
+        ) = HEADER.unpack(header)
+        file_size = path.stat().st_size
+        if major != FORMAT_MAJOR or minor > FORMAT_MINOR:
+            raise ArtifactError("unsupported artifact format version")
+        if (
+            header_size != HEADER.size
+            or not 0 < section_count <= 1024
+            or directory_offset != HEADER.size
+            or total_size != file_size
+            or total_size > MAXIMUM_ARTIFACT_BYTES
+        ):
+            raise ArtifactError("invalid artifact header bounds")
+        directory_end = directory_offset + section_count * DIRECTORY.size
+        if directory_end > file_size:
+            raise ArtifactError("truncated artifact section directory")
+        directory = stream.read(section_count * DIRECTORY.size)
+        if len(directory) != section_count * DIRECTORY.size:
+            raise ArtifactError("truncated artifact section directory")
+        records: list[tuple[int, int, int, int, int]] = []
+        for index in range(section_count):
+            record = DIRECTORY.unpack_from(directory, index * DIRECTORY.size)
+            kind, flags, offset, size, checksum = record
+            if kind not in SECTION_NAMES and flags & REQUIRED:
+                raise ArtifactError("unknown required section")
+            if offset % 8 or offset < directory_end or offset > file_size or size > file_size - offset:
+                raise ArtifactError("invalid artifact section offset or size")
+            if kind in SECTION_NAMES:
+                records.append(record)
+        ordered = sorted(records, key=lambda record: record[2])
+        for previous, current in zip(ordered, ordered[1:]):
+            if previous[2] + previous[3] > current[2]:
+                raise ArtifactError("artifact sections overlap")
+        if {record[0] for record in records} != {1, 2, 3, 4, 5} or len(records) != 5:
+            raise ArtifactError("artifact required section is missing or duplicated")
+
+        sections: dict[int, bytes] = {}
+        checksums: dict[int, int] = {}
+        for kind, _flags, offset, size, checksum in records:
+            stream.seek(offset)
+            if kind == 4:
+                actual = _checksum_stream(stream, size)
+            else:
+                payload = stream.read(size)
+                if len(payload) != size:
+                    raise ArtifactError("truncated artifact section")
+                sections[kind] = payload
+                actual = _checksum(payload)
+            if actual != checksum:
+                raise ArtifactError("artifact section checksum mismatch")
+            checksums[kind] = actual
+
+        integrity = sections[5]
+        if len(integrity) != 4 * INTEGRITY.size:
+            raise ArtifactError("artifact integrity table size mismatch")
+        for index in range(4):
+            kind, _reserved, checksum = INTEGRITY.unpack_from(integrity, index * INTEGRITY.size)
+            if kind not in checksums or kind == 5 or checksums[kind] != checksum:
+                raise ArtifactError("artifact integrity table mismatch")
+        manifest = json.loads(sections[1])
+        tensors = json.loads(sections[2])
+        return {
+            "format_version": FORMAT_MAJOR,
+            "sections": [SECTION_NAMES[index] for index in (1, 2, 3, 4, 5)],
+            "manifest": manifest,
+            "tensor_count": len(tensors),
+            "payload_bytes": next(record[3] for record in records if record[0] == 4),
+        }

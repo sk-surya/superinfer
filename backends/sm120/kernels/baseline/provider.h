@@ -9,7 +9,7 @@
 namespace superinfer::sm120 {
 
 /**
- * Correctness-first capability registry for the synthetic S02 operation set.
+ * Correctness-first capability registry for the currently implemented baseline operation set.
  *
  * The provider owns no device state and only returns immutable candidate metadata. Queries are
  * operation/target based; model identity is neither accepted nor inspected.

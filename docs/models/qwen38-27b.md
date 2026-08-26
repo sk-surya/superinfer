@@ -46,3 +46,27 @@ The validator checks required config/tokenizer fields, the index/header tensor-n
 positive shapes, safe offsets, the pinned layer schedule, and immutable source/file hashes. It parses
 safetensors headers before streaming shard bytes for authentication; a mismatch fails before payload
 materialization.
+
+## Payload artifact checkpoint
+
+The deterministic payload recipe streams the authenticated safetensors shards into a `.sinf` file
+without holding the model in host memory:
+
+```sh
+PYTHONPATH=python python3 - <<'PY'
+from pathlib import Path
+from superinfer.convert.qwen38 import write_qwen38_payload_artifact
+
+write_qwen38_payload_artifact(
+    Path('/srv/models/hf/Qwen3.8-27B-NVFP4-RTX5090-LMHead4'),
+    Path('build/evidence/qwen38-payload-v1.sinf'),
+)
+PY
+PYTHONPATH=python python3 -m superinfer inspect build/evidence/qwen38-payload-v1.sinf --json
+```
+
+The checked local artifact is 18,766,681,312 bytes with SHA-256
+`2cddcc2195c36cebd062ea340cc33c9aaf03d1e6627ce2b9301fe13231f5ebf6`. Large-artifact inspection is
+section-streamed and uses bounded memory. Its manifest deliberately reports
+`physical_execution_status: pending-baseline-provider-coverage`; this checkpoint proves source
+provenance and payload packaging, not Qwen token generation.

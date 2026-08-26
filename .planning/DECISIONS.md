@@ -107,3 +107,14 @@ independent learning trail and checkpoint history.
 **Consequence:** Phase and gate state records may show reached-but-unpassed gates beyond the original
 one-gate debt window. This is an explicit workflow override, not evidence that the user has passed a
 gate; no gate is marked passed without the user's own answers and experiment evidence.
+
+## D-015 — Canonical gated-delta attention semantic operation
+
+**Status:** Accepted
+**Decision:** Represent Qwen3.8’s Gated DeltaNet/linear-attention block with the generic Semantic IR
+operation `gated_delta_attention`, carrying key/value head dimensions and convolution-kernel
+dimension as semantic attributes. It is not a CUDA kernel or provider selection.
+**Why:** Qwen3.8 alternates linear-attention and full-attention layers; mapping the former to ordinary
+multi-head attention would erase state-transition and projection semantics before lowering.
+**Consequence:** Lowering and baseline execution must add an independent reference contract before
+this operation can be selected for a physical plan. The executor remains unchanged.

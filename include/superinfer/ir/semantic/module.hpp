@@ -48,6 +48,7 @@ enum class OperationKind {
   layer_norm,
   rope,
   qkv_projection,
+  gated_delta_attention,
   multi_head_attention,
   grouped_query_attention,
   local_attention,
@@ -71,6 +72,9 @@ struct OperationAttributes final {
   std::uint32_t expert_count{0};
   std::uint32_t top_k{0};
   std::uint32_t local_window{0};
+  std::uint32_t key_head_dimension{0};
+  std::uint32_t value_head_dimension{0};
+  std::uint32_t convolution_kernel_dimension{0};
 };
 
 struct Tensor final {
@@ -169,7 +173,8 @@ class Module final {
         producers[output.value()] = static_cast<std::int64_t>(index);
       }
       const OperationAttributes& attributes = operation.attributes;
-      const bool attention = operation.kind == OperationKind::multi_head_attention ||
+      const bool attention = operation.kind == OperationKind::gated_delta_attention ||
+                             operation.kind == OperationKind::multi_head_attention ||
                              operation.kind == OperationKind::grouped_query_attention ||
                              operation.kind == OperationKind::local_attention;
       if (attention && (attributes.num_heads == 0 || attributes.num_kv_heads == 0 ||
@@ -184,6 +189,12 @@ class Module final {
       }
       if (attention && attributes.rope_dimension % 2 != 0) {
         return base::Status::invalid_argument("attention rope dimension must be even");
+      }
+      if (operation.kind == OperationKind::gated_delta_attention &&
+          (attributes.key_head_dimension == 0 || attributes.value_head_dimension == 0 ||
+           attributes.convolution_kernel_dimension == 0)) {
+        return base::Status::invalid_argument(
+            "gated delta attention requires key/value head and convolution dimensions");
       }
       const bool moe = operation.kind == OperationKind::moe_route ||
                        operation.kind == OperationKind::moe_top_k ||
@@ -324,6 +335,7 @@ class Module final {
       case OperationKind::layer_norm: return "layer_norm";
       case OperationKind::rope: return "rope";
       case OperationKind::qkv_projection: return "qkv_projection";
+      case OperationKind::gated_delta_attention: return "gated_delta_attention";
       case OperationKind::multi_head_attention: return "multi_head_attention";
       case OperationKind::grouped_query_attention: return "grouped_query_attention";
       case OperationKind::local_attention: return "local_attention";

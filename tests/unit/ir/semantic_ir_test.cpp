@@ -96,15 +96,18 @@ int main() {
                            QuantizationIntent::none, TensorRole::activation});
   assert(family_input.has_value());
   OperationAttributes attention_attributes{4, 2, 2, 2, 0, 0, 0};
+  OperationAttributes gated_delta_attributes{48, 16, 128, 0, 0, 0, 0, 128, 128, 4};
   OperationAttributes moe_attributes{0, 0, 0, 0, 8, 2, 0};
   const std::vector<OperationKind> kinds{
       OperationKind::embedding, OperationKind::rms_norm, OperationKind::layer_norm,
-      OperationKind::rope, OperationKind::qkv_projection, OperationKind::multi_head_attention,
+      OperationKind::rope, OperationKind::qkv_projection, OperationKind::gated_delta_attention,
+      OperationKind::multi_head_attention,
       OperationKind::grouped_query_attention, OperationKind::local_attention, OperationKind::residual,
       OperationKind::gated_dense_ffn, OperationKind::moe_route, OperationKind::moe_top_k,
       OperationKind::moe_expert, OperationKind::moe_combine, OperationKind::lm_head,
       OperationKind::decode_logits, OperationKind::sampling_inputs};
   for (std::size_t index = 0; index < kinds.size(); ++index) {
+    const bool is_gated_delta = kinds[index] == OperationKind::gated_delta_attention;
     const bool is_attention = kinds[index] == OperationKind::multi_head_attention ||
                               kinds[index] == OperationKind::grouped_query_attention ||
                               kinds[index] == OperationKind::local_attention;
@@ -114,7 +117,8 @@ int main() {
                         kinds[index] == OperationKind::moe_combine;
     const auto operation = family_builder.add_operation(
         "family-" + std::to_string(index), kinds[index], {family_input.value()}, {},
-        is_attention ? attention_attributes : (is_moe ? moe_attributes : OperationAttributes{}));
+        is_gated_delta ? gated_delta_attributes
+                       : (is_attention ? attention_attributes : (is_moe ? moe_attributes : OperationAttributes{})));
     assert(operation.has_value());
   }
   assert(family_builder.add_entry_point("decode", {family_input.value()}, {family_input.value()}).ok());

@@ -85,6 +85,12 @@ target_include_directories(superinfer_sm120_reference_executor PRIVATE
   "${CMAKE_SOURCE_DIR}/backends")
 add_test(NAME superinfer.sm120.reference_executor COMMAND superinfer_sm120_reference_executor)
 
+add_executable(superinfer_qwen38_frontend unit/frontends/qwen38_frontend_test.cpp)
+target_link_libraries(superinfer_qwen38_frontend PRIVATE superinfer_ir)
+target_include_directories(superinfer_qwen38_frontend PRIVATE
+  "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/include")
+add_test(NAME superinfer.qwen38.frontend COMMAND superinfer_qwen38_frontend)
+
 add_executable(superinfer_artifact_test integration/artifact/artifact_test.cpp)
 target_link_libraries(superinfer_artifact_test PRIVATE superinfer_artifact)
 add_test(NAME superinfer.artifact.binary COMMAND superinfer_artifact_test)

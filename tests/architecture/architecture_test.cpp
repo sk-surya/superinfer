@@ -84,7 +84,25 @@ int main() {
   const FakeProvider provider;
   const FakeDecode decode;
   const FakeStorage storage;
-  assert(frontend.validate({"fixture", 0, {}}).ok());
+  assert(frontend.validate({"fixture", 0, {}, {}}).ok());
+
+  compiler::SourceInventory inventory{
+      "fixture",
+      2,
+      "inventory-sha",
+      {compiler::SourceTensorRecord{"embedding.weight", "embedding", "BF16", {8, 4}, 64, 64},
+       compiler::SourceTensorRecord{"lm_head.weight", "lm_head", "U8", {8, 2}, 128, 8}}};
+  assert(inventory.validate().ok());
+  assert(inventory.find_tensor("embedding.weight") != nullptr);
+  assert(inventory.find_tensor("missing") == nullptr);
+
+  compiler::SourceInventory duplicate_inventory = inventory;
+  duplicate_inventory.tensors[1].name = "embedding.weight";
+  assert(duplicate_inventory.validate().code() == base::StatusCode::invalid_argument);
+
+  compiler::SourceInventory overflowing_inventory = inventory;
+  overflowing_inventory.tensors[1].payload_offset = UINT64_MAX - 3;
+  assert(overflowing_inventory.validate().code() == base::StatusCode::out_of_range);
   assert(pass.apply().ok());
   assert(provider.enumerate({"embedding", 0}).has_value());
   assert(decode.requirements().workspace_bytes == 0);

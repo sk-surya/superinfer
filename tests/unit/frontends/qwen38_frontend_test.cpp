@@ -5,13 +5,36 @@
 #include <sm120/kernels/baseline/provider.h>
 
 #include <cassert>
+#include <vector>
+
+namespace {
+
+std::vector<superinfer::compiler::SourceTensorRecord> source_tensors() {
+  using superinfer::compiler::SourceTensorRecord;
+  std::vector<SourceTensorRecord> tensors;
+  tensors.push_back({"model.language_model.embed_tokens.weight", "embedding", "BF16",
+                     {248320, 5120}, 0, 2});
+  tensors.push_back({"lm_head.weight", "lm_head", "U8", {248320, 2560}, 2, 2});
+  tensors.push_back({"model.language_model.layers.0.input_layernorm.weight", "normalization", "BF16",
+                     {5120}, 4, 2});
+  tensors.push_back({"model.language_model.layers.0.post_attention_layernorm.weight", "normalization", "BF16",
+                     {5120}, 6, 2});
+  tensors.push_back({"lm_head.weight_scale", "scale", "F8_E4M3", {248320, 320}, 8, 2});
+  while (tensors.size() < superinfer::frontends::qwen38::kTensorCount) {
+    const std::uint64_t offset = tensors.size() * 2;
+    tensors.push_back({"filler_" + std::to_string(tensors.size()), "metadata", "BF16", {1}, offset, 2});
+  }
+  return tensors;
+}
+
+}  // namespace
 
 int main() {
   using namespace superinfer;
   frontends::qwen38::Frontend frontend;
   compiler::SourceInventory source{std::string{frontends::qwen38::kSourceIdentity},
                                    frontends::qwen38::kTensorCount,
-                                   std::string{frontends::qwen38::kTensorInventorySha256}};
+                                   std::string{frontends::qwen38::kTensorInventorySha256}, source_tensors()};
   assert(frontend.validate(source).ok());
   const auto module = frontend.emit(source);
   assert(module.has_value());
@@ -23,6 +46,22 @@ int main() {
   assert(module.value().dump().find("gated_delta_attention") != std::string::npos);
   assert(module.value().dump().find("tensor name=token_ids role=activation dtype=int32") !=
          std::string::npos);
+  assert(module.value().dump().find(
+             "tensor name=weight/model.language_model.embed_tokens.weight role=weight") !=
+         std::string::npos);
+  assert(module.value().dump().find("weight/lm_head.weight_scale") == std::string::npos);
+
+  for (const auto& operation : module.value().operations()) {
+    if (operation.name == "embedding") {
+      assert(operation.inputs.size() == 2);
+      assert(module.value().tensors()[operation.inputs[1].value()].name ==
+             "weight/model.language_model.embed_tokens.weight");
+    }
+    if (operation.name == "lm_head") {
+      assert(operation.inputs.size() == 2);
+      assert(module.value().tensors()[operation.inputs[1].value()].name == "weight/lm_head.weight");
+    }
+  }
 
   std::size_t gated_delta = 0;
   std::size_t full_attention = 0;
@@ -78,9 +117,9 @@ int main() {
   assert(physical.error().message().find("Qwen") == std::string::npos);
 
   const auto rejected_inventory = frontend.validate({std::string{frontends::qwen38::kSourceIdentity}, 1,
-                                                     std::string{frontends::qwen38::kTensorInventorySha256}});
+                                                     std::string{frontends::qwen38::kTensorInventorySha256}, {}});
   assert(!rejected_inventory.ok());
-  const auto rejected = frontend.validate({"Qwen/Qwen3.8-27B@wrong", 0, {}});
+  const auto rejected = frontend.validate({"Qwen/Qwen3.8-27B@wrong", 0, {}, {}});
   assert(!rejected.ok());
   assert(rejected.code() == base::StatusCode::failed_precondition);
   return 0;

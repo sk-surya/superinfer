@@ -36,7 +36,7 @@
   },
   "inventory": {
     "tensor_count": 2402,
-    "tensor_inventory_sha256": "cab1e4afdb94d48c0a1cfe6ee3833b22d9ec856c077fb1eeef92f674032aa3ab",
+    "tensor_inventory_sha256": "7342659a53eecbb04c47b5de89d957ca47cb021970cb252575b8b9161d0a84fc",
     "files": {
       "config.json": "78f65e03f2ac08a39320bf4a2633f1ae1526144da0fba1904b7371e682c304ea",
       "generation_config.json": "7ae9e193dbcef99733ccf647c95ef668c35d1a80a8aa88a51ee40a9bcacf5a74",

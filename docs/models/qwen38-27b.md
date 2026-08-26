@@ -23,6 +23,8 @@ convolution state. Its recurrent state is therefore distinct from the full-atten
 The derivative uses ModelOpt NVFP4 W4A4 weights with group size 16 and FP8 KV storage. The checked-in
 [source manifest](../../frontends/qwen38/manifest.json) records metadata, tensor-inventory hash,
 and complete local input hashes without checking model weights into the repository.
+The converter classifies packed weights separately from scale records; only semantic parameter
+records are handed to the frontend, while scale payloads remain storage-policy metadata.
 
 ## Validation
 
@@ -65,8 +67,8 @@ PY
 PYTHONPATH=python python3 -m superinfer inspect build/evidence/qwen38-payload-v1-final-a.sinf --json
 ```
 
-The final current-recipe checked local artifact is 18,766,690,368 bytes with SHA-256
-`6228af8884333c9e3fc8e507027a6676667fc7bc1ae681293b861562d4616506`; an independent final-b
+The final current-recipe checked local artifact is 18,766,674,736 bytes with SHA-256
+`e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5`; an independent final-b
 conversion is byte-identical. Large-artifact inspection is section-streamed and uses bounded memory.
 Its manifest includes the validated NVFP4/FP8 quantization contract and deliberately reports
 `physical_execution_status: pending-baseline-provider-coverage`; this checkpoint proves source

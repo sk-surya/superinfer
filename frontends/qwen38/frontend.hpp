@@ -16,7 +16,7 @@ inline constexpr std::string_view kSourceIdentity =
     "+LMHead4@62abd1d060bd801005f47754f01619054cc248d3417699ecea414c7ede1b3a4a";
 inline constexpr std::uint64_t kTensorCount = 2402;
 inline constexpr std::string_view kTensorInventorySha256 =
-    "cab1e4afdb94d48c0a1cfe6ee3833b22d9ec856c077fb1eeef92f674032aa3ab";
+    "7342659a53eecbb04c47b5de89d957ca47cb021970cb252575b8b9161d0a84fc";
 
 /**
  * Emits canonical Semantic IR for the pinned Qwen3.8 language path.
@@ -34,6 +34,11 @@ class Frontend final : public compiler::ModelFrontend {
     }
     if (source.tensor_count != kTensorCount || source.tensor_inventory_sha256 != kTensorInventorySha256) {
       return base::Status::failed_precondition("Qwen3.8 tensor inventory is not authenticated");
+    }
+    base::Status inventory_status = source.validate();
+    if (!inventory_status.ok()) return inventory_status.with_context("Qwen3.8 source tensor inventory");
+    if (source.tensors.empty()) {
+      return base::Status::failed_precondition("Qwen3.8 source tensor records are missing");
     }
     return {};
   }
@@ -64,7 +69,35 @@ class Frontend final : public compiler::ModelFrontend {
       base::Status error = embedding.error();
       return error.with_context("Qwen3.8 embedding");
     }
-    if (!builder.add_operation("embedding", OperationKind::embedding, {token_ids.value()},
+    std::vector<std::pair<std::string, TensorId>> source_weights;
+    source_weights.reserve(source.tensors.size());
+    for (const compiler::SourceTensorRecord& record : source.tensors) {
+      if (!is_semantic_parameter(record.role)) continue;
+      Shape shape;
+      shape.reserve(record.shape.size());
+      for (const std::uint64_t dimension : record.shape) {
+        shape.push_back(Dimension::static_value(dimension));
+      }
+      const auto source_spec = source_tensor_spec(record, std::move(shape));
+      if (!source_spec.has_value()) {
+        base::Status error = source_spec.error();
+        return error.with_context("Qwen3.8 source tensor " + record.name);
+      }
+      const auto source_weight = builder.add_tensor("weight/" + record.name, source_spec.value());
+      if (!source_weight.has_value()) {
+        base::Status error = source_weight.error();
+        return error.with_context("Qwen3.8 source tensor " + record.name);
+      }
+      source_weights.emplace_back(record.name, source_weight.value());
+    }
+    const auto embedding_weight = find_source_weight(source_weights,
+                                                      "model.language_model.embed_tokens.weight");
+    if (!embedding_weight.has_value()) {
+      base::Status error = embedding_weight.error();
+      return error.with_context("Qwen3.8 embedding weight binding");
+    }
+    if (!builder.add_operation("embedding", OperationKind::embedding,
+                               {token_ids.value(), embedding_weight.value()},
                                {embedding.value()})
              .has_value()) {
       return base::Status::invalid_argument("Qwen3.8 embedding operation could not be emitted");
@@ -108,8 +141,13 @@ class Frontend final : public compiler::ModelFrontend {
           !state_a_out.has_value() || !state_b_in.has_value() || !state_b_out.has_value()) {
         return base::Status::resource_exhausted("Qwen3.8 frontend tensor emission failed");
       }
+      std::vector<TensorId> input_norm_inputs{current};
+      const auto input_norm_weight = find_source_weight(
+          source_weights,
+          "model.language_model.layers." + std::to_string(layer) + ".input_layernorm.weight");
+      if (input_norm_weight.has_value()) input_norm_inputs.push_back(input_norm_weight.value());
       if (!builder.add_operation("layer_" + index(layer) + "_input_norm", OperationKind::rms_norm,
-                                 {current}, {input_norm.value()})
+                                 std::move(input_norm_inputs), {input_norm.value()})
                    .has_value()) {
         return base::Status::invalid_argument("Qwen3.8 input norm operation could not be emitted");
       }
@@ -147,12 +185,17 @@ class Frontend final : public compiler::ModelFrontend {
       } else {
         ++gated_delta_layers;
       }
+      std::vector<TensorId> post_norm_inputs{attention_residual.value()};
+      const auto post_norm_weight = find_source_weight(
+          source_weights,
+          "model.language_model.layers." + std::to_string(layer) + ".post_attention_layernorm.weight");
+      if (post_norm_weight.has_value()) post_norm_inputs.push_back(post_norm_weight.value());
       if (!builder.add_operation("layer_" + index(layer) + "_attention_residual",
                                  OperationKind::residual,
                                  {current, attention.value()}, {attention_residual.value()})
                    .has_value() ||
           !builder.add_operation("layer_" + index(layer) + "_post_norm", OperationKind::rms_norm,
-                                 {attention_residual.value()}, {post_norm.value()})
+                                 std::move(post_norm_inputs), {post_norm.value()})
                    .has_value() ||
           !builder.add_operation("layer_" + index(layer) + "_ffn", OperationKind::gated_dense_ffn,
                                  {post_norm.value()}, {ffn.value()})
@@ -170,7 +213,13 @@ class Frontend final : public compiler::ModelFrontend {
       base::Status error = logits.error();
       return error.with_context("Qwen3.8 logits");
     }
-    if (!builder.add_operation("lm_head", OperationKind::lm_head, {current}, {logits.value()})
+    const auto lm_head_weight = find_source_weight(source_weights, "lm_head.weight");
+    if (!lm_head_weight.has_value()) {
+      base::Status error = lm_head_weight.error();
+      return error.with_context("Qwen3.8 LM head weight binding");
+    }
+    if (!builder.add_operation("lm_head", OperationKind::lm_head,
+                               {current, lm_head_weight.value()}, {logits.value()})
              .has_value() ||
         !builder.add_entry_point("decode", {token_ids.value()}, {logits.value()}).ok()) {
       return base::Status::invalid_argument("Qwen3.8 output graph could not be emitted");
@@ -182,6 +231,47 @@ class Frontend final : public compiler::ModelFrontend {
   }
 
  private:
+  static bool is_semantic_parameter(std::string_view role) noexcept {
+    return role == "embedding" || role == "lm_head" || role == "normalization" ||
+           role == "attention" || role == "feed_forward" || role == "weight" || role == "bias";
+  }
+
+  static base::Result<ir::semantic::TensorSpec> source_tensor_spec(
+      const compiler::SourceTensorRecord& record, ir::semantic::Shape shape) {
+    ir::semantic::DType dtype;
+    ir::semantic::QuantizationIntent quantization = ir::semantic::QuantizationIntent::none;
+    if (record.dtype == "F32") {
+      dtype = ir::semantic::DType::f32;
+    } else if (record.dtype == "F16") {
+      dtype = ir::semantic::DType::f16;
+    } else if (record.dtype == "BF16") {
+      dtype = ir::semantic::DType::bf16;
+    } else if (record.dtype == "I8") {
+      dtype = ir::semantic::DType::int8;
+    } else if (record.dtype == "I32") {
+      dtype = ir::semantic::DType::int32;
+    } else if (record.dtype == "U8" || record.dtype == "F8_E4M3") {
+      // These records are packed/scaled storage for a semantic low-precision weight. The
+      // storage policy remains outside Semantic IR; the intent is the only semantic fact here.
+      dtype = ir::semantic::DType::int4;
+      quantization = ir::semantic::QuantizationIntent::symmetric;
+    } else {
+      return base::Status::unsupported("source tensor dtype is not supported by semantic IR: " +
+                                      record.dtype);
+    }
+    return ir::semantic::TensorSpec{std::move(shape), dtype, quantization,
+                                    ir::semantic::TensorRole::weight};
+  }
+
+  static base::Result<ir::semantic::TensorId> find_source_weight(
+      const std::vector<std::pair<std::string, ir::semantic::TensorId>>& source_weights,
+      std::string_view name) {
+    for (const auto& source_weight : source_weights) {
+      if (source_weight.first == name) return source_weight.second;
+    }
+    return base::Status::failed_precondition("required source tensor is absent: " + std::string{name});
+  }
+
   static std::string index(std::uint32_t value) {
     if (value < 10) return "0" + std::to_string(value);
     return std::to_string(value);

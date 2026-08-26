@@ -95,7 +95,7 @@ PINNED_UPSTREAM_REVISION = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
 PINNED_DERIVATIVE_REPOSITORY = "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090"
 PINNED_DERIVATIVE_REVISION = "0cc27958cefbbe231782ec8511de8c4eb5233348"
 PINNED_TENSOR_COUNT = 2402
-PINNED_TENSOR_INVENTORY_SHA256 = "cab1e4afdb94d48c0a1cfe6ee3833b22d9ec856c077fb1eeef92f674032aa3ab"
+PINNED_TENSOR_INVENTORY_SHA256 = "7342659a53eecbb04c47b5de89d957ca47cb021970cb252575b8b9161d0a84fc"
 PINNED_FILE_SHA256 = {
     "config.json": "78f65e03f2ac08a39320bf4a2633f1ae1526144da0fba1904b7371e682c304ea",
     "generation_config.json": "7ae9e193dbcef99733ccf647c95ef668c35d1a80a8aa88a51ee40a9bcacf5a74",
@@ -254,6 +254,10 @@ def _validate_quantization(model_dir: Path) -> dict[str, Any]:
         "excluded_module_patterns": sorted(excluded),
     }
 def _tensor_role(name: str) -> str:
+    if name.endswith(".weight_scale") or name.endswith(".weight_scale_2") or name.endswith(".input_scale"):
+        return "scale"
+    if name.endswith(".bias") or name.endswith(".dt_bias"):
+        return "bias"
     if "embed_tokens" in name:
         return "embedding"
     if "lm_head" in name:

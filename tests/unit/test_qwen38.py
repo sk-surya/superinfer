@@ -162,6 +162,18 @@ class Qwen38SourceTests(unittest.TestCase):
             with self.assertRaisesRegex(Qwen38ValidationError, r"quantization_mismatch \[hf_quant_config.quantization.quant_algo\]"):
                 validate_source(root, enforce_pinned=False)
 
+    def test_quantization_scale_records_are_not_semantic_weights(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_source(root, indexed_name="layer.weight_scale")
+            header = json.dumps(
+                {"layer.weight_scale": {"dtype": "F8_E4M3", "shape": [1], "data_offsets": [0, 1]}},
+                separators=(",", ":"),
+            ).encode("utf-8")
+            (root / "model-00001-of-00001.safetensors").write_bytes(struct.pack("<Q", len(header)) + header + b"\0")
+            inventory = validate_source(root, enforce_pinned=False)
+            self.assertEqual(inventory.tensors[0].role, "scale")
+
     def test_shard_path_escape_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

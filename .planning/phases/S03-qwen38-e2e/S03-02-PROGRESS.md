@@ -29,6 +29,12 @@ updated: 2026-08-26
 - Deterministic payload-bearing `.sinf` conversion now streams all three pinned safetensors shards
   in bounded chunks, preserves relative tensor offsets, and authenticates every source shard before
   writing. The artifact-size guard is 32 GiB so the 18.77-GB Qwen payload is representable.
+- The compiler-side `SourceInventory` now carries validated tensor records with semantic role, source
+  dtype/shape, and artifact-payload ranges. Qwen frontend emission consumes those records to create
+  deterministic semantic weight tensors and binds the embedding, LM head, and available layer-norm
+  weights without selecting layouts, CUDA kernels, or physical allocations.
+- ModelOpt scale/input-scale records are classified as storage metadata and are excluded from
+  semantic weight creation; the inventory pin was updated to the resulting canonical digest.
 
 ## Verification
 
@@ -40,12 +46,13 @@ updated: 2026-08-26
   `9f80231a9dc59c214ddf4aafd52d27dfbc10def2ce7dcceaaad9e44c2cfa414e`; its ledger requires
   27,778,892,088 bytes and leaves 6,580,846,280 bytes against the declared 32-GiB budget. This is
   provenance evidence, not a payload-bearing execution artifact.
-- Final pinned payload conversions completed under the quantization-aware recipe in 13m00s and
-  13m06s. `build/evidence/qwen38-payload-v1-final-a.sinf` and `...-final-b.sinf` are byte-identical
-  at 18,766,690,368 bytes; final-a SHA-256 is
-  `6228af8884333c9e3fc8e507027a6676667fc7bc1ae681293b861562d4616506`. Header inspection confirms
+- Final pinned payload conversions completed under the quantization-aware recipe. The regenerated
+  `build/evidence/qwen38-payload-v1-final-a.sinf` and `...-final-b.sinf` are byte-identical at
+  18,766,674,736 bytes; both SHA-256 values are
+  `e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5`. Header inspection confirms
   five aligned sections, an 18,765,513,016-byte payload section, 2,402 tensor records, the pinned
-  derivative revision, and the NVFP4/FP8 quantization contract. This is a payload/provenance
+  derivative revision, the updated inventory digest `7342659a53eecbb04c47b5de89d957ca47cb021970cb252575b8b9161d0a84fc`,
+  and the NVFP4/FP8 quantization contract. This is a payload/provenance
   artifact, not yet an executable plan.
 - Independent streaming inspection validates the full payload checksum and integrity table with
   approximately 18 MiB resident memory. `Specializer` now receives a `KernelProvider`, selects a
@@ -56,12 +63,14 @@ updated: 2026-08-26
 - Independent CPU primitive contracts now cover embedding, linear/LM projection, gated FFN, and
   grouped attention with shape, finite-input, and negative-path tests. Full graph weight binding
   and CUDA-provider differential execution remain open.
+- CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
+  tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
+  sanitizer, and wheel stages.
 
 ## Remaining S03-02 work
 
-- Connect the validated tensor inventory to semantic weight records consumed by the compiler rather
-  than only the serialized tensor table.
-- Bind the independent primitive contracts into a full graph reference harness and add the
+- Complete the remaining per-operation source-weight bindings and bind the independent primitive
+  contracts into a full graph reference harness; then add the
   weight-connected CUDA providers before advertising Qwen capabilities.
 - Implement or explicitly stage target-provider capability coverage and compile a non-placeholder
   Physical Plan.

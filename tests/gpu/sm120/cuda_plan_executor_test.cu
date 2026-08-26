@@ -9,6 +9,10 @@
 
 namespace {
 
+__global__ void injected_async_fault() {
+  if (threadIdx.x == 0) *static_cast<volatile std::uint32_t*>(nullptr) = 1U;
+}
+
 superinfer::ir::physical::Plan make_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
@@ -312,5 +316,13 @@ int main() {
   for (std::size_t index = 0; index < compiled_output.size(); ++index) {
     assert(std::abs(compiled_output[index] - left[index] / denominator * scale[index]) < 1.0e-5F);
   }
+
+  auto poisoned = sm120::cuda_runtime::CudaPlanSession::create(plan, 120, "baseline-v1");
+  assert(poisoned.has_value());
+  injected_async_fault<<<1, 1>>>();
+  assert(cudaGetLastError() == cudaSuccess);
+  assert(!poisoned.value().synchronize_for_test().ok());
+  assert(poisoned.value().poisoned());
+  assert(!poisoned.value().execute().ok());
   return 0;
 }

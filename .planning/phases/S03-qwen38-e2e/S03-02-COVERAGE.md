@@ -6,13 +6,13 @@ ID. The payload artifact records the same status in its manifest.
 
 | Semantic operation | Lowered capability | Baseline status | Evidence / remaining boundary |
 | --- | --- | --- | --- |
-| embedding | `embedding` | unavailable | No weight-connected embedding command or provider |
+| embedding | `embedding` | unavailable | Generic CPU primitive exists; no weight-connected embedding command or provider |
 | RMSNorm | `rms_norm` | executable baseline | Kernel ID 5; differential/reference fixture exists |
-| Gated Delta attention | `gated_delta_attention` | reference-only | Independent CPU oracle exists; CUDA provider/state binding absent |
-| grouped full attention | `attention` | unavailable | KV layout exists; full attention provider and RoPE path absent |
+| Gated Delta attention | `gated_delta_attention` | reference-only | Independent recurrent CPU oracle exists; CUDA provider/state binding absent |
+| grouped full attention | `attention` | unavailable | Generic grouped-attention CPU primitive exists; KV/RoPE provider path absent |
 | residual | `residual` | executable baseline | Kernel ID 4; CUDA and CPU fixture coverage exists |
-| gated dense FFN | `gated_dense_ffn` | unavailable | NVFP4 weight decode, projections, activation, and provider absent |
-| LM head | `lm_head` | unavailable | Weight binding and vocabulary projection provider absent |
+| gated dense FFN | `gated_dense_ffn` | unavailable | Generic CPU gated-FFN primitive exists; NVFP4 weight decode and provider absent |
+| LM head | `lm_head` | unavailable | Generic CPU linear primitive exists; artifact weight binding and provider absent |
 
 The current `Physical Plan` status is `pending-baseline-provider-coverage`. `Specializer` queries
 the injected `KernelProvider` for every lowered requirement and fails closed at the first missing

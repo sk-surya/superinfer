@@ -50,13 +50,16 @@ updated: 2026-08-26
   the Physical Plan; it no longer owns a kernel-ID table.
 - The explicit [operation coverage matrix](S03-02-COVERAGE.md) records which baseline commands are
   executable and which Qwen operations remain reference-only or unavailable.
+- Independent CPU primitive contracts now cover embedding, linear/LM projection, gated FFN, and
+  grouped attention with shape, finite-input, and negative-path tests. Full graph weight binding
+  and CUDA-provider differential execution remain open.
 
 ## Remaining S03-02 work
 
 - Connect the validated tensor inventory to semantic weight records consumed by the compiler rather
   than only the serialized tensor table.
-- Add independent reference contracts for embedding, projections, gated-delta/full attention, FFN,
-  and logits before advertising provider capabilities.
+- Bind the independent primitive contracts into a full graph reference harness and add the
+  weight-connected CUDA providers before advertising Qwen capabilities.
 - Implement or explicitly stage target-provider capability coverage and compile a non-placeholder
   Physical Plan.
 - Complete conversion and runtime differential evidence before S03-03 acceptance.

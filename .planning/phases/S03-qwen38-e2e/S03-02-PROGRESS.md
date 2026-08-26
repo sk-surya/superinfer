@@ -14,6 +14,8 @@ updated: 2026-08-26
 - Qwen source validation authenticates the pinned repositories/revisions, exact layer schedule and
   linear-attention dimensions, tokenizer structure, indexed shard containment, metadata hashes, and
   streamed payload hashes.
+- Qwen conversion now validates and records the ModelOpt NVFP4 contract, group size 16, FP8 KV
+  policy, excluded module patterns, and observed BF16/F32/FP8/U8 tensor storage dtypes.
 - Qwen Semantic IR preserves full-attention KV state and Gated DeltaNet recurrent/convolution state
   through explicit state tensors and 128 state edges.
 - KV cache and greedy decode contracts are bounded, allocation-free after construction, deterministic,
@@ -38,12 +40,13 @@ updated: 2026-08-26
   `9f80231a9dc59c214ddf4aafd52d27dfbc10def2ce7dcceaaad9e44c2cfa414e`; its ledger requires
   27,778,892,088 bytes and leaves 6,580,846,280 bytes against the declared 32-GiB budget. This is
   provenance evidence, not a payload-bearing execution artifact.
-- Real pinned payload conversion completed in 13m12.57s using 791.80s CPU time and produced the
-  current-recipe `build/evidence/qwen38-payload-v1-second.sinf` at 18,766,682,312 bytes with
-  SHA-256 `2c228c1f0a4083ac82a8b89a928cc1f620152661cc721ad06c27bab410fc2b69`. A third clean
-  conversion is byte-identical. Header inspection confirms five aligned sections, an
-  18,765,513,016-byte payload section, 2,402 tensor records, and the pinned derivative revision.
-  This is a payload/provenance artifact, not yet an executable plan.
+- Final pinned payload conversions completed under the quantization-aware recipe in 13m00s and
+  13m06s. `build/evidence/qwen38-payload-v1-final-a.sinf` and `...-final-b.sinf` are byte-identical
+  at 18,766,690,368 bytes; final-a SHA-256 is
+  `6228af8884333c9e3fc8e507027a6676667fc7bc1ae681293b861562d4616506`. Header inspection confirms
+  five aligned sections, an 18,765,513,016-byte payload section, 2,402 tensor records, the pinned
+  derivative revision, and the NVFP4/FP8 quantization contract. This is a payload/provenance
+  artifact, not yet an executable plan.
 - Independent streaming inspection validates the full payload checksum and integrity table with
   approximately 18 MiB resident memory. `Specializer` now receives a `KernelProvider`, selects a
   deterministic candidate through that extension surface, and propagates candidate workspace into

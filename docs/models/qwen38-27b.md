@@ -62,12 +62,12 @@ write_qwen38_payload_artifact(
     Path('build/evidence/qwen38-payload-v1.sinf'),
 )
 PY
-PYTHONPATH=python python3 -m superinfer inspect build/evidence/qwen38-payload-v1-second.sinf --json
+PYTHONPATH=python python3 -m superinfer inspect build/evidence/qwen38-payload-v1-final-a.sinf --json
 ```
 
-The current-recipe checked local artifact is 18,766,682,312 bytes with SHA-256
-`2c228c1f0a4083ac82a8b89a928cc1f620152661cc721ad06c27bab410fc2b69`; an independent third
+The final current-recipe checked local artifact is 18,766,690,368 bytes with SHA-256
+`6228af8884333c9e3fc8e507027a6676667fc7bc1ae681293b861562d4616506`; an independent final-b
 conversion is byte-identical. Large-artifact inspection is section-streamed and uses bounded memory.
-Its manifest deliberately reports
+Its manifest includes the validated NVFP4/FP8 quantization contract and deliberately reports
 `physical_execution_status: pending-baseline-provider-coverage`; this checkpoint proves source
 provenance and payload packaging, not Qwen token generation.

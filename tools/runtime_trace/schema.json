@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SuperInfer CUDA lifecycle trace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "device_allocations",
+    "device_frees",
+    "stream_creations",
+    "stream_destroys",
+    "event_creations",
+    "event_destroys",
+    "kernel_bindings",
+    "device_synchronizations"
+  ],
+  "properties": {
+    "device_allocations": {"type": "integer", "minimum": 0},
+    "device_frees": {"type": "integer", "minimum": 0},
+    "stream_creations": {"type": "integer", "minimum": 0},
+    "stream_destroys": {"type": "integer", "minimum": 0},
+    "event_creations": {"type": "integer", "minimum": 0},
+    "event_destroys": {"type": "integer", "minimum": 0},
+    "kernel_bindings": {"type": "integer", "minimum": 0},
+    "device_synchronizations": {"type": "integer", "minimum": 0}
+  }
+}

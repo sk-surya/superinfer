@@ -76,10 +76,17 @@ int main() {
   auto session = sm120::cuda_runtime::CudaPlanSession::create(plan, 120, "baseline-v1");
   assert(session.has_value());
   assert(session.value().device_arena_bytes() == 48);
+  assert(session.value().lifecycle_trace().device_allocations == 1);
+  assert(session.value().lifecycle_trace().stream_creations == 1);
+  assert(session.value().lifecycle_trace().event_creations == 2);
+  assert(session.value().lifecycle_trace().kernel_bindings == 2);
+  assert(session.value().lifecycle_trace().device_synchronizations == 0);
   assert(session.value().execute().ok());
   assert(session.value().execute().ok());
   assert(session.value().execute().ok());
+  assert(session.value().lifecycle_trace().device_synchronizations == 0);
   assert(session.value().synchronize_for_test().ok());
+  assert(session.value().lifecycle_trace().device_synchronizations == 1);
   assert(session.value().trace().commands_executed == 6);
   assert(session.value().trace().launches == 6);
 
@@ -130,6 +137,23 @@ int main() {
       mismatch_plan.value(), 120, "baseline-v1");
   assert(!rejected_mismatch.has_value());
   assert(rejected_mismatch.error().code() == base::StatusCode::invalid_argument);
+
+  ir::physical::PlanBuilder workspace_builder;
+  workspace_builder.set_resource_bounds({48, 16, 1});
+  for (std::uint64_t offset = 0; offset < 48; offset += 16) {
+    assert(workspace_builder.add_buffer(offset, 16, 16).has_value());
+  }
+  assert(workspace_builder
+             .add_command(base::KernelId{4},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}}, {}, 0, 0, 8)
+             .has_value());
+  const auto workspace_plan = std::move(workspace_builder).finalize({120, "baseline-v1"});
+  assert(workspace_plan.has_value());
+  const auto rejected_workspace = sm120::cuda_runtime::CudaPlanSession::create(
+      workspace_plan.value(), 120, "baseline-v1");
+  assert(!rejected_workspace.has_value());
+  assert(rejected_workspace.error().code() == base::StatusCode::unsupported);
 
   const auto numeric_plan = make_numeric_plan();
   auto numeric = sm120::cuda_runtime::CudaPlanSession::create(numeric_plan, 120, "baseline-v1");

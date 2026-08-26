@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string_view>
 #include <vector>
 
@@ -231,6 +232,7 @@ class CudaPlanSession final {
       }
       const detail::LaunchFunction launcher = detail::resolve(command.kernel.value());
       if (launcher == nullptr) return base::Status::unsupported("CUDA kernel ID is not registered");
+      ++session.lifecycle_trace_->kernel_bindings;
       if (command.workspace_size != 0) {
         return base::Status::unsupported("CUDA baseline has no command workspace contract");
       }
@@ -238,9 +240,11 @@ class CudaPlanSession final {
       if (!command_status.ok()) return command_status;
       session.launchers_.push_back(launcher);
     }
-    auto device_arena = DeviceBuffer::allocate(plan.resources().arena_bytes);
+    auto device_arena = DeviceBuffer::allocate(plan.resources().arena_bytes,
+                                                session.lifecycle_trace_.get());
     if (!device_arena.has_value()) return detail::contextual(device_arena.error(), "CUDA device arena");
-    auto workspace = DeviceBuffer::allocate(plan.resources().workspace_bytes);
+    auto workspace = DeviceBuffer::allocate(plan.resources().workspace_bytes,
+                                             session.lifecycle_trace_.get());
     if (!workspace.has_value()) return detail::contextual(workspace.error(), "CUDA workspace arena");
 
     std::uint32_t stream_count = 0;
@@ -256,13 +260,13 @@ class CudaPlanSession final {
 
     session.streams_.reserve(stream_count);
     for (std::uint32_t index = 0; index < stream_count; ++index) {
-      auto stream = StreamOwner::create();
+      auto stream = StreamOwner::create(session.lifecycle_trace_.get());
       if (!stream.has_value()) return detail::contextual(stream.error(), "CUDA stream creation");
       session.streams_.push_back(std::move(stream).value());
     }
     session.events_.reserve(plan.commands().size());
     for (std::size_t index = 0; index < plan.commands().size(); ++index) {
-      auto event = EventOwner::create();
+      auto event = EventOwner::create(session.lifecycle_trace_.get());
       if (!event.has_value()) return detail::contextual(event.error(), "CUDA event creation");
       session.events_.push_back(std::move(event).value());
     }
@@ -321,6 +325,7 @@ class CudaPlanSession final {
   /** Explicit test/profiling synchronization; never called by execute(). */
   base::Status synchronize_for_test() noexcept {
     if (poisoned_) return base::Status::failed_precondition("CUDA session is poisoned");
+    ++lifecycle_trace_->device_synchronizations;
     const cudaError_t error = cudaDeviceSynchronize();
     if (error != cudaSuccess) return poison(error, "explicit test synchronization");
     return {};
@@ -330,6 +335,7 @@ class CudaPlanSession final {
     if (poisoned_) return base::Status::failed_precondition("CUDA session is poisoned");
     const auto validation = validate_copy(id, source.size());
     if (!validation.ok()) return validation;
+    ++lifecycle_trace_->device_synchronizations;
     const cudaError_t sync_error = cudaDeviceSynchronize();
     if (sync_error != cudaSuccess) return poison(sync_error, "host-to-device copy boundary");
     const auto& buffer = plan_.buffers()[id.value()];
@@ -343,6 +349,7 @@ class CudaPlanSession final {
     if (poisoned_) return base::Status::failed_precondition("CUDA session is poisoned");
     const auto validation = validate_copy(id, destination.size());
     if (!validation.ok()) return validation;
+    ++lifecycle_trace_->device_synchronizations;
     const cudaError_t sync_error = cudaDeviceSynchronize();
     if (sync_error != cudaSuccess) return poison(sync_error, "device-to-host copy boundary");
     const auto& buffer = plan_.buffers()[id.value()];
@@ -354,12 +361,16 @@ class CudaPlanSession final {
   }
 
   [[nodiscard]] const CudaExecutionTrace& trace() const noexcept { return trace_; }
+  [[nodiscard]] const CudaLifecycleTrace& lifecycle_trace() const noexcept {
+    return *lifecycle_trace_;
+  }
   [[nodiscard]] std::uint64_t device_arena_bytes() const noexcept { return device_arena_.bytes(); }
   [[nodiscard]] std::uint64_t workspace_bytes() const noexcept { return workspace_.bytes(); }
   [[nodiscard]] bool poisoned() const noexcept { return poisoned_; }
 
  private:
-  explicit CudaPlanSession(const ir::physical::Plan& plan) : plan_(plan) {}
+  explicit CudaPlanSession(const ir::physical::Plan& plan)
+      : plan_(plan), lifecycle_trace_(std::make_shared<CudaLifecycleTrace>()) {}
 
   base::Status validate_copy(ir::physical::BufferId id, std::size_t bytes) const noexcept {
     if (id.value() >= plan_.buffers().size()) return base::Status::out_of_range("CUDA buffer is undefined");
@@ -375,6 +386,7 @@ class CudaPlanSession final {
   }
 
   ir::physical::Plan plan_;
+  std::shared_ptr<CudaLifecycleTrace> lifecycle_trace_;
   DeviceBuffer device_arena_;
   DeviceBuffer workspace_;
   std::vector<StreamOwner> streams_;

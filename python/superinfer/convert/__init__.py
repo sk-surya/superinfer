@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from superinfer.artifact import write_artifact
-from .qwen38 import write_qwen38_metadata_artifact
+from .qwen38 import write_qwen38_metadata_artifact, write_qwen38_payload_artifact
 
 
 def convert_file(source: Path, output: Path) -> None:
@@ -17,4 +17,4 @@ def convert_file(source: Path, output: Path) -> None:
     write_artifact(normalized, output)
 
 
-__all__ = ["convert_file", "write_qwen38_metadata_artifact"]
+__all__ = ["convert_file", "write_qwen38_metadata_artifact", "write_qwen38_payload_artifact"]

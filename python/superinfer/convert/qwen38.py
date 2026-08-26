@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import struct
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from superinfer.artifact import write_artifact
+from superinfer.artifact import write_artifact, write_streaming_artifact
 
 
 class Qwen38ValidationError(ValueError):
@@ -284,6 +286,29 @@ def _file_sha256(path: Path, field: str) -> str:
     return digest.hexdigest()
 
 
+def _file_sha256_entry(entry: tuple[Path, str]) -> tuple[str, str]:
+    """Hash one validation input; kept module-level for executor portability."""
+
+    path, field = entry
+    return field, _file_sha256(path, field)
+
+
+def _parallel_file_hashes(model_dir: Path, filenames: tuple[str, ...]) -> dict[str, str]:
+    """Hash independent source files concurrently while preserving deterministic output."""
+
+    entries: list[tuple[Path, str]] = []
+    for filename in filenames:
+        path = model_dir / filename
+        if not path.is_file():
+            raise Qwen38ValidationError("missing_file", filename, "required provenance input is missing")
+        entries.append((path, filename))
+    if not entries:
+        return {}
+    worker_count = min(len(entries), max(1, int((os.cpu_count() or 1) * 0.9)))
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="sinf-hash") as executor:
+        return dict(executor.map(_file_sha256_entry, entries))
+
+
 def _inventory(model_dir: Path, index: Mapping[str, Any]) -> tuple[TensorRecord, ...]:
     weight_map = _required_mapping(index.get("weight_map"), "model.safetensors.index.json.weight_map")
     grouped: dict[str, list[str]] = {}
@@ -356,13 +381,9 @@ def validate_source(
     _validate_tokenizer(model_dir)
     index = _required_mapping(_read_json(model_dir / "model.safetensors.index.json", "tensor_index"), "tensor_index")
     tensors = _inventory(model_dir, index)
-    file_hashes: dict[str, str] = {}
+    file_hashes: dict[str, str]
     shard_names = sorted({record.shard for record in tensors})
-    for filename in (*_REQUIRED_FILES, *shard_names):
-        path = model_dir / filename
-        if not path.is_file():
-            raise Qwen38ValidationError("missing_file", filename, "required provenance input is missing")
-        file_hashes[filename] = _file_sha256(path, filename)
+    file_hashes = _parallel_file_hashes(model_dir, (*_REQUIRED_FILES, *shard_names))
     try:
         template = (model_dir / "chat_template.jinja").read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
@@ -483,3 +504,72 @@ def write_qwen38_metadata_artifact(
         },
         output,
     )
+
+
+def write_qwen38_payload_artifact(
+    model_dir: Path,
+    output: Path,
+    *,
+    max_context: int | None = None,
+    enforce_pinned: bool = True,
+) -> None:
+    """Write a deterministic `.sinf` with indexed source shards copied in bounded chunks."""
+    inventory = validate_source(model_dir, enforce_pinned=enforce_pinned)
+    text_config = inventory.config["text_config"]
+    if not isinstance(text_config, dict):
+        raise Qwen38ValidationError("invalid_type", "text_config", "expected an object")
+    context = max_context if max_context is not None else int(text_config["max_position_embeddings"])
+    if context <= 0 or context > int(text_config["max_position_embeddings"]):
+        raise Qwen38ValidationError("invalid_value", "max_context", "context exceeds pinned model capacity")
+
+    shard_names = sorted({record.shard for record in inventory.tensors})
+    payload_files = tuple(model_dir / name for name in shard_names)
+    shard_table: list[dict[str, Any]] = []
+    tensor_table: list[dict[str, Any]] = []
+    payload_offset = 0
+    header_sizes: dict[str, int] = {}
+    for shard in shard_names:
+        path = _safe_shard_path(model_dir, shard)
+        try:
+            with path.open("rb") as stream:
+                raw_size = stream.read(8)
+            header_size = struct.unpack("<Q", raw_size)[0]
+            shard_size = path.stat().st_size
+        except (OSError, struct.error) as error:
+            raise Qwen38ValidationError("tensor_io", shard, str(error)) from error
+        header_sizes[shard] = header_size
+        shard_table.append({
+            "name": shard,
+            "payload_offset": payload_offset,
+            "bytes": shard_size,
+            "sha256": inventory.file_hashes[shard],
+        })
+        payload_offset += shard_size
+    for tensor in inventory.tensors:
+        shard_base = next(item["payload_offset"] for item in shard_table if item["name"] == tensor.shard)
+        tensor_table.append({
+            **asdict(tensor),
+            "artifact_payload_offset": shard_base + 8 + header_sizes[tensor.shard] + tensor.data_start,
+            "artifact_payload_end": shard_base + 8 + header_sizes[tensor.shard] + tensor.data_end,
+        })
+
+    manifest = inventory.manifest()
+    manifest["conversion"] = {
+        "recipe": "qwen38-payload-v1",
+        "max_context": context,
+        "payload_included": True,
+        "physical_execution_status": "pending-baseline-provider-coverage",
+        "payload_shards": shard_table,
+    }
+    physical_plan = json.dumps(
+        {
+            "version": 1,
+            "target": "sm_120a",
+            "kernel_catalog": "baseline-v1",
+            "status": "pending-baseline-provider-coverage",
+            "commands": [],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    write_streaming_artifact(manifest, tensor_table, physical_plan, payload_files, output)

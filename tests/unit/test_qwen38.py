@@ -8,6 +8,7 @@ from superinfer.artifact import inspect_artifact
 from superinfer.convert.qwen38 import (
     Qwen38ValidationError,
     validate_source,
+    write_qwen38_payload_artifact,
     write_qwen38_metadata_artifact,
 )
 
@@ -150,6 +151,19 @@ class Qwen38SourceTests(unittest.TestCase):
             statuses = {entry["baseline_status"] for entry in conversion["operation_capabilities"]}
             self.assertEqual(statuses, {"executable", "unavailable"})
             self.assertGreater(conversion["memory_ledger_bytes"]["margin"], 0)
+
+    def test_payload_artifact_streams_shards_and_is_deterministic(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_source(root)
+            first_path = root / "first-payload.sinf"
+            second_path = root / "second-payload.sinf"
+            write_qwen38_payload_artifact(root, first_path, enforce_pinned=False)
+            write_qwen38_payload_artifact(root, second_path, enforce_pinned=False)
+            self.assertEqual(first_path.read_bytes(), second_path.read_bytes())
+            summary = inspect_artifact(first_path)
+            self.assertEqual(summary["payload_bytes"], (root / "model-00001-of-00001.safetensors").stat().st_size)
+            self.assertTrue(summary["manifest"]["conversion"]["payload_included"])
 
 
 if __name__ == "__main__":

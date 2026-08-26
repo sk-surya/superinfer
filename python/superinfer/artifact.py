@@ -6,7 +6,7 @@ import json
 import os
 import struct
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 MAGIC = b"SINF"
@@ -76,6 +76,76 @@ def write_artifact(source: Mapping[str, Any], path: Path) -> None:
     temporary = path.with_name(path.name + ".partial")
     temporary.write_bytes(output)
     os.replace(temporary, path)
+
+
+def write_streaming_artifact(
+    manifest: Mapping[str, Any],
+    tensors: Any,
+    physical_plan: str,
+    payload_files: Sequence[Path],
+    path: Path,
+) -> None:
+    """Write a deterministic artifact while copying payload files in bounded chunks."""
+
+    section_data = [
+        _canonical_json(manifest),
+        _canonical_json(tensors),
+        physical_plan.encode("utf-8"),
+    ]
+    payload_size = 0
+    payload_checksum = 1469598103934665603
+    for payload_path in payload_files:
+        with payload_path.open("rb") as stream:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                payload_size += len(chunk)
+                for byte in chunk:
+                    payload_checksum ^= byte
+                    payload_checksum = (payload_checksum * 1099511628211) & ((1 << 64) - 1)
+    section_sizes = [len(value) for value in section_data] + [payload_size]
+    checksums = [_checksum(value) for value in section_data] + [payload_checksum]
+    integrity = b"".join(INTEGRITY.pack(index + 1, 0, checksum) for index, checksum in enumerate(checksums))
+    section_sizes.append(len(integrity))
+    directory_end = HEADER.size + len(section_sizes) * DIRECTORY.size
+    records: list[tuple[int, int, int, int, int]] = []
+    cursor = directory_end
+    for index, (size, checksum) in enumerate(zip(section_sizes, checksums + [_checksum(integrity)]), start=1):
+        cursor = _align8(cursor)
+        records.append((index, REQUIRED, cursor, size, checksum))
+        cursor += size
+    total_size = cursor
+    path.parent.mkdir(parents=True, exist_ok=True)
+    output_temporary = path.with_name(path.name + ".partial")
+    with output_temporary.open("wb") as stream:
+        stream.write(b"\0" * directory_end)
+        for value in section_data:
+            aligned = _align8(stream.tell())
+            stream.write(b"\0" * (aligned - stream.tell()))
+            stream.write(value)
+        aligned = _align8(stream.tell())
+        stream.write(b"\0" * (aligned - stream.tell()))
+        for payload_path in payload_files:
+            with payload_path.open("rb") as payload_stream:
+                while True:
+                    chunk = payload_stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    stream.write(chunk)
+        aligned = _align8(stream.tell())
+        stream.write(b"\0" * (aligned - stream.tell()))
+        stream.write(integrity)
+        stream.flush()
+        if stream.tell() != total_size:
+            raise ArtifactError("streaming artifact size accounting mismatch")
+        stream.seek(0)
+        stream.write(HEADER.pack(MAGIC, FORMAT_MAJOR, FORMAT_MINOR, HEADER.size, len(records),
+                                 HEADER.size, total_size))
+        stream.seek(HEADER.size)
+        for record in records:
+            stream.write(DIRECTORY.pack(*record))
+    os.replace(output_temporary, path)
 
 
 def _validated_sections(data: bytes) -> dict[int, bytes]:

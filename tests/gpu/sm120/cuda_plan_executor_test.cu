@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <utility>
 
 namespace {
@@ -317,12 +318,14 @@ int main() {
     assert(std::abs(compiled_output[index] - left[index] / denominator * scale[index]) < 1.0e-5F);
   }
 
-  auto poisoned = sm120::cuda_runtime::CudaPlanSession::create(plan, 120, "baseline-v1");
-  assert(poisoned.has_value());
-  injected_async_fault<<<1, 1>>>();
-  assert(cudaGetLastError() == cudaSuccess);
-  assert(!poisoned.value().synchronize_for_test().ok());
-  assert(poisoned.value().poisoned());
-  assert(!poisoned.value().execute().ok());
+  if (std::getenv("SUPERINFER_INJECT_ASYNC_FAULT") != nullptr) {
+    auto poisoned = sm120::cuda_runtime::CudaPlanSession::create(plan, 120, "baseline-v1");
+    assert(poisoned.has_value());
+    injected_async_fault<<<1, 1>>>();
+    assert(cudaGetLastError() == cudaSuccess);
+    assert(!poisoned.value().synchronize_for_test().ok());
+    assert(poisoned.value().poisoned());
+    assert(!poisoned.value().execute().ok());
+  }
   return 0;
 }

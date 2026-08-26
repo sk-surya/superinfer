@@ -18,6 +18,16 @@ insufficient driver, or a non-`sm_120a` target. They do not reset devices or ter
 model processes. The test lane captures correctness and lifecycle evidence only; performance
 measurements belong to the benchmark protocol.
 
+The deferred-error poisoning check is intentionally opt-in because it creates a real illegal device
+access:
+
+```sh
+SUPERINFER_INJECT_ASYNC_FAULT=1 \
+  build/cuda-sm120a-13.1/tests/superinfer_sm120_cuda_plan_executor
+```
+
+Do not combine that negative test with a clean sanitizer run.
+
 For sanitizer qualification, run the installed tool explicitly:
 
 ```sh

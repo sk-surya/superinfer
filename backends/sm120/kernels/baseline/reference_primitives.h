@@ -114,6 +114,31 @@ class ReferencePrimitives final {
     return result;
   }
 
+  /** Composes the independent NVFP4 materialization oracle with a row-major linear projection. */
+  static base::Result<std::vector<float>> nvfp4_linear(
+      std::span<const std::uint8_t> packed_weights,
+      std::span<const std::uint8_t> block_scales,
+      float weight_scale_2,
+      std::size_t output,
+      std::size_t input,
+      std::span<const float> values) {
+    if (values.size() != input) {
+      return base::Status::invalid_argument("NVFP4 linear input shape is invalid");
+    }
+    const auto dequantized = dequantize_nvfp4(
+        packed_weights, output, input, block_scales, weight_scale_2);
+    if (!dequantized.has_value()) {
+      base::Status error = dequantized.error();
+      return error.with_context("NVFP4 linear dequantization");
+    }
+    const auto projected = linear(dequantized.value(), output, input, values);
+    if (!projected.has_value()) {
+      base::Status error = projected.error();
+      return error.with_context("NVFP4 linear projection");
+    }
+    return projected;
+  }
+
   static base::Result<std::vector<float>> gated_ffn(std::span<const float> gate_weights,
                                                      std::span<const float> up_weights,
                                                      std::span<const float> down_weights,

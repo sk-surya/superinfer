@@ -110,6 +110,10 @@ updated: 2026-08-26
   FP32 activation CUDA implementation and RTX 5090 differential fixture. The specializer also
   normalizes semantic norm operands `[input, scale, output]` into the physical command contract
   `[input, output, scale]`, fixing the previously untested ordering mismatch.
+- The independent reference layer now composes NVFP4 dequantization with row-major linear
+  projection, including tensor-shape and input-cardinality failure checks. This provides the
+  trusted quantized LM/FFN comparison contract while the target-side quantized matmul remains
+  intentionally unadvertised.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

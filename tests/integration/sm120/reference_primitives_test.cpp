@@ -81,5 +81,16 @@ int main() {
   assert(!ReferencePrimitives::dequantize_nvfp4(
                    packed_nvfp4, 1, 16, block_scales, 0.0F)
               .has_value());
+
+  const std::vector<std::uint8_t> linear_packed(8, 0x11);
+  const std::vector<float> linear_input(16, 1.0F);
+  const auto nvfp4_linear = ReferencePrimitives::nvfp4_linear(
+      linear_packed, block_scales, 2.0F, 1, 16, linear_input);
+  assert(nvfp4_linear.has_value());
+  assert(nvfp4_linear.value().size() == 1);
+  assert(std::fabs(nvfp4_linear.value().front() - 16.0F) < 1.0e-6F);
+  assert(!ReferencePrimitives::nvfp4_linear(
+                   linear_packed, block_scales, 2.0F, 1, 16, short_input)
+              .has_value());
   return 0;
 }

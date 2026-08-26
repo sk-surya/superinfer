@@ -11,7 +11,7 @@ ID. The payload artifact records the same status in its manifest.
 | Gated Delta attention | `gated_delta_attention` | reference-only | Independent recurrent CPU oracle exists; CUDA provider/state binding absent |
 | grouped full attention | `attention` | unavailable | Generic grouped-attention CPU primitive exists; KV/RoPE provider path absent |
 | residual | `residual` | executable baseline | Kernel ID 4; CUDA and CPU fixture coverage exists |
-| gated dense FFN | `gated_dense_ffn` | unavailable | Generic CPU gated-FFN primitive exists; NVFP4 weight decode and provider absent |
+| gated dense FFN | `gated_dense_ffn` | unavailable | Independent CPU graph oracle now composes the gated-FFN primitive; NVFP4 decode/provider absent |
 | LM head | `lm_head` | unavailable | Weight-connected independent CPU graph oracle now exists; no NVFP4 artifact/provider path |
 
 The current `Physical Plan` status is `pending-baseline-provider-coverage`. `Specializer` queries

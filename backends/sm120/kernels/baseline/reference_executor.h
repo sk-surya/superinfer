@@ -121,6 +121,33 @@ class ReferenceExecutor final {
         }
         result.tensors[output.value()] = {module.tensors()[output.value()].name, shape,
                                           projected.value()};
+      } else if (operation.kind == ir::semantic::OperationKind::gated_dense_ffn) {
+        if (operation.inputs.size() != 4 || shape.size() != 2 || shape[0] != 1 ||
+            result.tensors[operation.inputs[1].value()].shape.size() != 2 ||
+            result.tensors[operation.inputs[2].value()].shape !=
+                result.tensors[operation.inputs[1].value()].shape ||
+            result.tensors[operation.inputs[3].value()].shape.size() != 2 ||
+            result.tensors[operation.inputs[1].value()].shape[1] !=
+                result.tensors[operation.inputs[0].value()].values.size() ||
+            result.tensors[operation.inputs[3].value()].shape[0] != shape[1] ||
+            result.tensors[operation.inputs[3].value()].shape[1] !=
+                result.tensors[operation.inputs[1].value()].shape[0]) {
+          return base::Status::invalid_argument(
+              "reference gated FFN requires input, gate/up/down weights, and row output");
+        }
+        const auto projected = reference::ReferencePrimitives::gated_ffn(
+            result.tensors[operation.inputs[1].value()].values,
+            result.tensors[operation.inputs[2].value()].values,
+            result.tensors[operation.inputs[3].value()].values,
+            static_cast<std::size_t>(result.tensors[operation.inputs[1].value()].shape[1]),
+            static_cast<std::size_t>(result.tensors[operation.inputs[1].value()].shape[0]),
+            result.tensors[operation.inputs[0].value()].values);
+        if (!projected.has_value()) {
+          base::Status error = projected.error();
+          return error.with_context("reference gated FFN primitive");
+        }
+        result.tensors[output.value()] = {module.tensors()[output.value()].name, shape,
+                                          projected.value()};
       } else if (operation.kind == ir::semantic::OperationKind::residual) {
         if (operation.inputs.size() != 2 || result.tensors[operation.inputs[0].value()].shape !=
                                                 result.tensors[operation.inputs[1].value()].shape) {

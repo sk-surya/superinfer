@@ -66,6 +66,9 @@ updated: 2026-08-26
 - The CPU reference graph now composes weight-connected embedding and LM-head operations through
   those independent primitives, with strict integer-token, shape, finite-input, and error-context
   checks. This remains an oracle only; no provider capability is advertised.
+- The same graph oracle now composes gated dense FFN projections with explicit gate/up/down weight
+  shapes and a checked SiLU-gating numerical contract; NVFP4 decoding and CUDA execution remain
+  intentionally unavailable.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

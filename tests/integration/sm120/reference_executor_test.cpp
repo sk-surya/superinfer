@@ -43,6 +43,10 @@ struct WeightedFixture final {
   superinfer::ir::semantic::TensorId token;
   superinfer::ir::semantic::TensorId table;
   superinfer::ir::semantic::TensorId embedding;
+  superinfer::ir::semantic::TensorId gate_weight;
+  superinfer::ir::semantic::TensorId up_weight;
+  superinfer::ir::semantic::TensorId down_weight;
+  superinfer::ir::semantic::TensorId ffn;
   superinfer::ir::semantic::TensorId projection_weight;
 };
 
@@ -58,24 +62,41 @@ WeightedFixture make_weighted_fixture() {
   const auto embedding = builder.add_tensor(
       "embedding", {{Dimension::static_value(1), Dimension::static_value(2)}, DType::f32,
       QuantizationIntent::none, TensorRole::activation});
+  const auto gate_weight = builder.add_tensor(
+      "gate_weight", {{Dimension::static_value(2), Dimension::static_value(2)}, DType::f32,
+      QuantizationIntent::none, TensorRole::weight});
+  const auto up_weight = builder.add_tensor(
+      "up_weight", {{Dimension::static_value(2), Dimension::static_value(2)}, DType::f32,
+      QuantizationIntent::none, TensorRole::weight});
+  const auto down_weight = builder.add_tensor(
+      "down_weight", {{Dimension::static_value(2), Dimension::static_value(2)}, DType::f32,
+      QuantizationIntent::none, TensorRole::weight});
+  const auto ffn = builder.add_tensor(
+      "ffn", {{Dimension::static_value(1), Dimension::static_value(2)}, DType::f32,
+      QuantizationIntent::none, TensorRole::activation});
   const auto projection_weight = builder.add_tensor(
       "projection_weight", {{Dimension::static_value(2), Dimension::static_value(2)}, DType::f32,
       QuantizationIntent::none, TensorRole::weight});
   const auto logits = builder.add_tensor(
       "logits", {{Dimension::static_value(1), Dimension::static_value(2)}, DType::f32,
       QuantizationIntent::none, TensorRole::logits});
-  assert(token.has_value() && table.has_value() && embedding.has_value() &&
+  assert(token.has_value() && table.has_value() && embedding.has_value() && gate_weight.has_value() &&
+         up_weight.has_value() && down_weight.has_value() && ffn.has_value() &&
          projection_weight.has_value() && logits.has_value());
   assert(builder.add_operation("embedding", OperationKind::embedding,
                                {token.value(), table.value()}, {embedding.value()})
              .has_value());
+  assert(builder.add_operation(
+             "ffn", OperationKind::gated_dense_ffn,
+             {embedding.value(), gate_weight.value(), up_weight.value(), down_weight.value()}, {ffn.value()})
+             .has_value());
   assert(builder.add_operation("lm_head", OperationKind::lm_head,
-                               {embedding.value(), projection_weight.value()}, {logits.value()})
+                               {ffn.value(), projection_weight.value()}, {logits.value()})
              .has_value());
   const auto module = std::move(builder).build();
   assert(module.has_value());
-  return {std::move(module).value(), token.value(), table.value(), embedding.value(),
-          projection_weight.value()};
+  return {std::move(module).value(), token.value(), table.value(), embedding.value(), gate_weight.value(),
+          up_weight.value(), down_weight.value(), ffn.value(), projection_weight.value()};
 }
 
 }  // namespace
@@ -106,10 +127,16 @@ int main() {
       weighted.module,
       {{weighted.token, {1}, {2.0F}},
        {weighted.table, {3, 2}, {1.0F, 2.0F, 3.0F, 4.0F, 5.0F, 6.0F}},
+       {weighted.gate_weight, {2, 2}, {1.0F, 0.0F, 0.0F, 1.0F}},
+       {weighted.up_weight, {2, 2}, {1.0F, 0.0F, 0.0F, 1.0F}},
+       {weighted.down_weight, {2, 2}, {1.0F, 0.0F, 0.0F, 1.0F}},
        {weighted.projection_weight, {2, 2}, {1.0F, 0.0F, 0.0F, 1.0F}}});
   assert(weighted_result.has_value());
   assert(weighted_result.value().find("embedding") != nullptr);
   assert(weighted_result.value().find("logits") != nullptr);
-  assert(weighted_result.value().find("logits")->values == std::vector<float>({5.0F, 6.0F}));
+  const float expected_first = 5.0F / (1.0F + std::exp(-5.0F)) * 5.0F;
+  const float expected_second = 6.0F / (1.0F + std::exp(-6.0F)) * 6.0F;
+  assert(std::abs(weighted_result.value().find("logits")->values[0] - expected_first) < 1.0e-5F);
+  assert(std::abs(weighted_result.value().find("logits")->values[1] - expected_second) < 1.0e-5F);
   return 0;
 }

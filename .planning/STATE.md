@@ -48,7 +48,7 @@ S00–S06 critical path: correct Qwen3.8 from `.sinf` and the first reproducible
 |---|---|
 | Current gate | Gate B — one-token transformer execution — L2, reached; packet presented |
 | User status | Packet presented |
-| Implementation phase | S03 — Qwen3.8 end-to-end; S03-01 next |
+| Implementation phase | S03 — Qwen3.8 end-to-end; S03-02 lowering/conversion |
 | Highest passed L2 gate | None |
 | Debt distance | 2 under explicit D-014 autonomous-execution override; neither gate is user-passed |
 | Allowed next autonomous work | All approved S02–S08 plans, with gate packets/checkpoints retained |
@@ -59,7 +59,7 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
 
 ## Next Command
 
-Execute `.planning/phases/S03-qwen38-e2e/S03-02-PLAN.md`; preserve Gates A and B as unpassed study checkpoints.
+Continue `.planning/phases/S03-qwen38-e2e/S03-02-PLAN.md`; preserve Gates A and B as unpassed study checkpoints.
 
 ## Known Blockers
 

@@ -6,7 +6,7 @@ This is the durable record of what the user understands, what evidence supports 
 
 | Field | Value |
 |---|---|
-| Implementation phase | S03 — Qwen3.8 end-to-end |
+| Implementation phase | S03 — Qwen3.8 end-to-end, S03-02 lowering/conversion |
 | Current user gate | Gate B — one-token transformer execution — L2 |
 | User status | Packet presented |
 | Highest passed L2 gate | None |
@@ -14,7 +14,7 @@ This is the durable record of what the user understands, what evidence supports 
 | Debt distance | 2 under explicit D-014 autonomous-execution override |
 | Allowed autonomous work | All approved roadmap plans; preserve packets and branch checkpoints for later study. |
 | Next user action | Optional: study Gate B packet and answer its five questions/experiment when convenient. |
-| Last updated | Autonomous execution enabled by explicit user directive on 2026-08-26 |
+| Last updated | S03-02 checkpoint; autonomous execution enabled by explicit user directive on 2026-08-26 |
 
 ## Status Vocabulary
 

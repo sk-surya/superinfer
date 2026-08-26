@@ -1,3 +1,9 @@
+# The test suite uses assert as its compact assertion primitive. Keep assertions active in
+# release CUDA builds so side-effecting fixture setup is not compiled away by NDEBUG.
+if(NOT MSVC)
+  add_compile_options(-UNDEBUG)
+endif()
+
 add_executable(superinfer_base_contracts unit/base/contracts_test.cpp)
 target_link_libraries(superinfer_base_contracts PRIVATE superinfer_base)
 add_test(NAME superinfer.base.contracts COMMAND superinfer_base_contracts)

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from superinfer.artifact import inspect_artifact
+from superinfer.artifact import ArtifactError, inspect_artifact, read_tensor_payload
 from superinfer.convert.qwen38 import (
     Qwen38ValidationError,
     validate_source,
@@ -217,11 +217,23 @@ class Qwen38SourceTests(unittest.TestCase):
             self.assertEqual(summary["payload_bytes"], (root / "model-00001-of-00001.safetensors").stat().st_size)
             conversion = summary["manifest"]["conversion"]
             self.assertTrue(conversion["payload_included"])
+            self.assertEqual(read_tensor_payload(first_path, "weight"), b"\0\0\0\0")
+            with self.assertRaisesRegex(ArtifactError, "tensor is not present"):
+                read_tensor_payload(first_path, "missing")
             self.assertEqual(
                 {entry["baseline_status"] for entry in conversion["operation_capabilities"]},
                 {"executable", "unavailable"},
             )
             self.assertGreater(conversion["memory_ledger_bytes"]["margin"], 0)
+
+    def test_tensor_payload_requires_payload_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_source(root)
+            metadata_path = root / "metadata.sinf"
+            write_qwen38_metadata_artifact(root, metadata_path, max_context=64, enforce_pinned=False)
+            with self.assertRaisesRegex(ArtifactError, "payload offsets"):
+                read_tensor_payload(metadata_path, "weight")
 
 
 if __name__ == "__main__":

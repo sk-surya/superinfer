@@ -242,6 +242,57 @@ def inspect_artifact(path: Path) -> dict[str, Any]:
     }
 
 
+def read_tensor_payload(path: Path, tensor_name: str) -> bytes:
+    """Read one tensor from a validated payload artifact using its relative tensor-table range.
+
+    Validation is performed before the seek, so callers do not consume bytes from a corrupted
+    section. Only the requested tensor bytes are materialized; the full payload is never loaded.
+    """
+
+    if not tensor_name:
+        raise ArtifactError("tensor name is empty")
+    inspect_artifact(path)
+    with path.open("rb") as stream:
+        header = stream.read(HEADER.size)
+        if len(header) != HEADER.size:
+            raise ArtifactError("truncated artifact header")
+        _magic, _major, _minor, _header_size, section_count, directory_offset, _total_size = HEADER.unpack(header)
+        stream.seek(directory_offset)
+        directory = stream.read(section_count * DIRECTORY.size)
+        if len(directory) != section_count * DIRECTORY.size:
+            raise ArtifactError("truncated artifact section directory")
+        records = {
+            record[0]: record
+            for record in (
+                DIRECTORY.unpack_from(directory, index * DIRECTORY.size)
+                for index in range(section_count)
+            )
+            if record[0] in {2, 4}
+        }
+        tensor_record = records[2]
+        stream.seek(tensor_record[2])
+        tensor_table_bytes = stream.read(tensor_record[3])
+        tensors = json.loads(tensor_table_bytes)
+        tensor = next((item for item in tensors if item.get("name") == tensor_name), None)
+        if tensor is None:
+            raise ArtifactError(f"tensor is not present: {tensor_name}")
+        if "artifact_payload_offset" not in tensor or "artifact_payload_end" not in tensor:
+            raise ArtifactError("tensor payload offsets are absent")
+        try:
+            start = int(tensor["artifact_payload_offset"])
+            end = int(tensor["artifact_payload_end"])
+        except (TypeError, ValueError) as error:
+            raise ArtifactError("tensor payload offsets are invalid") from error
+        payload_size = records[4][3]
+        if start < 0 or end < start or end > payload_size:
+            raise ArtifactError("tensor payload offsets are outside payload")
+        stream.seek(records[4][2] + start)
+        payload = stream.read(end - start)
+        if len(payload) != end - start:
+            raise ArtifactError("truncated tensor payload")
+        return payload
+
+
 def _inspect_streaming_artifact(path: Path) -> dict[str, Any]:
     """Inspect a large artifact without materializing its payload section."""
 

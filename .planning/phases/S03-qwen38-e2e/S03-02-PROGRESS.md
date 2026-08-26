@@ -89,6 +89,10 @@ updated: 2026-08-26
   ownership in `ArtifactView`, rejects offset/length overflow and out-of-section access, and is
   covered by the binary artifact test; tensor-table parsing and artifact-to-token binding remain
   intentionally separate work.
+- Python conversion tooling now reads one validated tensor payload by name through the signed
+  tensor-table offsets without materializing the full artifact payload. It rejects metadata-only
+  artifacts, missing names, malformed ranges, and truncation, and is covered by deterministic
+  payload-artifact tests.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

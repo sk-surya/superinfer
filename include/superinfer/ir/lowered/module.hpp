@@ -23,6 +23,7 @@ enum class LayoutKind { row_major, column_major, blocked };
 struct Tensor final {
   LoweredTensorId id;
   semantic::TensorId semantic_origin;
+  std::string name;
   semantic::TensorRole role;
   std::vector<std::uint64_t> physical_shape;
   LayoutKind layout;
@@ -217,12 +218,14 @@ class ModuleBuilder final {
                                            base::MemorySpace memory_space, std::uint64_t alignment,
                                            semantic::DType storage_dtype,
                                            semantic::DType accumulation_dtype,
-                                           semantic::TensorRole role = semantic::TensorRole::activation) {
+                                           semantic::TensorRole role = semantic::TensorRole::activation,
+                                           std::string name = {}) {
     if (shape.empty() || alignment == 0 || origin.value() == UINT64_MAX) {
       return base::Status::invalid_argument("lowered tensor descriptor is incomplete");
     }
-    tensors_.push_back({LoweredTensorId{tensors_.size()}, origin, role, std::move(shape), layout,
-                        memory_space, alignment, storage_dtype, accumulation_dtype});
+    tensors_.push_back({LoweredTensorId{tensors_.size()}, origin, std::move(name), role,
+                        std::move(shape), layout, memory_space, alignment, storage_dtype,
+                        accumulation_dtype});
     return tensors_.back().id;
   }
 

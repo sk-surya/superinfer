@@ -639,6 +639,12 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
           !has_dtype(0, ir::physical::PhysicalDType::u8) ||
           !has_dtype(1, ir::physical::PhysicalDType::u8) ||
           !has_dtype(2, ir::physical::PhysicalDType::f32) ||
+          plan.buffers()[command.buffers[0].value()].tensor.encoding !=
+              ir::physical::StorageEncoding::nvfp4_packed ||
+          plan.buffers()[command.buffers[1].value()].tensor.encoding !=
+              ir::physical::StorageEncoding::fp8_e4m3_group_scale ||
+          plan.buffers()[command.buffers[2].value()].tensor.encoding !=
+              ir::physical::StorageEncoding::none ||
           plan.buffers()[command.buffers[2].value()].size % sizeof(float) != 0 ||
           plan.buffers()[command.buffers[2].value()].size / sizeof(float) % 16 != 0 ||
           plan.buffers()[command.buffers[0].value()].size !=
@@ -728,6 +734,10 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
           packed.tensor.dtype != ir::physical::PhysicalDType::u8 ||
           scales.tensor.dtype != ir::physical::PhysicalDType::u8 ||
           output.tensor.dtype != ir::physical::PhysicalDType::f32 ||
+          packed.tensor.encoding != ir::physical::StorageEncoding::nvfp4_packed ||
+          scales.tensor.encoding != ir::physical::StorageEncoding::fp8_e4m3_group_scale ||
+          input.tensor.encoding != ir::physical::StorageEncoding::none ||
+          output.tensor.encoding != ir::physical::StorageEncoding::none ||
           input.size == 0 || output.size == 0 || input.size % sizeof(float) != 0 ||
           output.size % sizeof(float) != 0 || input.size / sizeof(float) % 16 != 0) {
         return base::Status::invalid_argument(

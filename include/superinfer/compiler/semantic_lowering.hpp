@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -48,7 +49,7 @@ class SemanticLowering final {
       const auto lowered = builder.add_tensor(
           tensor.id, std::move(shape), ir::lowered::LayoutKind::row_major,
           base::MemorySpace::device, options.required_alignment, tensor.spec.dtype,
-          ir::semantic::DType::f32, tensor.spec.role);
+          ir::semantic::DType::f32, tensor.spec.role, tensor.name);
       if (!lowered.has_value()) {
         base::Status error = lowered.error();
         return error.with_context("semantic tensor lowering");
@@ -56,19 +57,113 @@ class SemanticLowering final {
       lowered_tensors.push_back(lowered.value());
     }
 
+    const auto add_f32_scratch = [&](ir::semantic::TensorId origin)
+        -> base::Result<ir::lowered::LoweredTensorId> {
+      const ir::semantic::Tensor& source = semantic.tensors()[origin.value()];
+      std::vector<std::uint64_t> shape;
+      shape.reserve(source.spec.shape.size());
+      for (const ir::semantic::Dimension& dimension : source.spec.shape) {
+        if (dimension.is_symbolic) {
+          return base::Status::unsupported("target lowering scratch tensor requires static dimensions");
+        }
+        shape.push_back(dimension.value);
+      }
+      return builder.add_tensor(origin, std::move(shape), ir::lowered::LayoutKind::row_major,
+                                base::MemorySpace::device, options.required_alignment,
+                                ir::semantic::DType::f32, ir::semantic::DType::f32,
+                                source.spec.role, source.name + "$fp32");
+    };
+
+    const auto emit_cast = [&](ir::semantic::DType source_dtype,
+                               ir::semantic::DType destination_dtype,
+                               ir::lowered::LoweredTensorId source,
+                               ir::lowered::LoweredTensorId destination) -> base::Status {
+      if (source_dtype == destination_dtype) return {};
+      if (!((source_dtype == ir::semantic::DType::bf16 &&
+             destination_dtype == ir::semantic::DType::f32) ||
+            (source_dtype == ir::semantic::DType::f32 &&
+             destination_dtype == ir::semantic::DType::bf16))) {
+        return base::Status::unsupported("target lowering lacks an explicit dtype conversion");
+      }
+      return builder.add_kernel_requirement("cast", options.target_capability,
+                                            {source, destination});
+    };
+
     for (const ir::semantic::Operation& operation : semantic.operations()) {
       const std::string_view capability = capability_name(operation.kind);
       if (capability.empty()) {
         return base::Status::unsupported("semantic operation has no generic lowering capability");
       }
+      std::vector<ir::lowered::LoweredTensorId> inputs;
+      inputs.reserve(operation.inputs.size());
+      for (const ir::semantic::TensorId input : operation.inputs) {
+        inputs.push_back(lowered_tensors[input.value()]);
+      }
+      std::vector<ir::lowered::LoweredTensorId> outputs;
+      outputs.reserve(operation.outputs.size());
+      for (const ir::semantic::TensorId output : operation.outputs) {
+        outputs.push_back(lowered_tensors[output.value()]);
+      }
+
+      // The authored Qwen graph uses BF16 activations, while the correctness-first SM120
+      // providers intentionally consume FP32 activations. Materialize that boundary explicitly;
+      // never let a provider reinterpret BF16 storage as float memory.
+      const bool fp32_activation_contract = operation.kind == ir::semantic::OperationKind::embedding ||
+                                             operation.kind == ir::semantic::OperationKind::rms_norm ||
+                                             operation.kind == ir::semantic::OperationKind::residual ||
+                                             operation.kind == ir::semantic::OperationKind::gated_dense_ffn ||
+                                             operation.kind == ir::semantic::OperationKind::lm_head;
+      const std::size_t converted_inputs =
+          operation.kind == ir::semantic::OperationKind::residual ? inputs.size() :
+          std::min<std::size_t>(inputs.size(), 1);
+      if (fp32_activation_contract) {
+        for (std::size_t index = 0; index < converted_inputs; ++index) {
+          if (semantic.tensors()[operation.inputs[index].value()].spec.dtype !=
+              ir::semantic::DType::bf16) {
+            continue;
+          }
+          const auto scratch = add_f32_scratch(operation.inputs[index]);
+          if (!scratch.has_value()) {
+            base::Status error = scratch.error();
+            return error.with_context("activation scratch lowering");
+          }
+          base::Status cast = emit_cast(ir::semantic::DType::bf16, ir::semantic::DType::f32,
+                                        inputs[index], scratch.value());
+          if (!cast.ok()) return cast.with_context("activation input lowering");
+          inputs[index] = scratch.value();
+        }
+      }
+
+      ir::semantic::DType output_dtype = ir::semantic::DType::f32;
+      if (!operation.outputs.empty()) {
+        output_dtype = semantic.tensors()[operation.outputs.front().value()].spec.dtype;
+      }
+      ir::lowered::LoweredTensorId output_target{};
+      bool cast_output = fp32_activation_contract && !outputs.empty() &&
+                         output_dtype == ir::semantic::DType::bf16;
+      if (cast_output) {
+        const auto scratch = add_f32_scratch(operation.outputs.front());
+        if (!scratch.has_value()) {
+          base::Status error = scratch.error();
+          return error.with_context("activation output lowering");
+        }
+        output_target = scratch.value();
+        outputs.front() = output_target;
+      }
+
       std::vector<ir::lowered::LoweredTensorId> operands;
-      operands.reserve(operation.inputs.size() + operation.outputs.size());
-      for (const ir::semantic::TensorId input : operation.inputs) operands.push_back(lowered_tensors[input.value()]);
-      for (const ir::semantic::TensorId output : operation.outputs) operands.push_back(lowered_tensors[output.value()]);
+      operands.reserve(inputs.size() + outputs.size());
+      operands.insert(operands.end(), inputs.begin(), inputs.end());
+      operands.insert(operands.end(), outputs.begin(), outputs.end());
       base::Status requirement = builder.add_kernel_requirement(
           std::string{capability}, options.target_capability, std::move(operands),
           operation.attributes);
       if (!requirement.ok()) return requirement.with_context("semantic operation lowering");
+      if (cast_output) {
+        base::Status cast = emit_cast(ir::semantic::DType::f32, ir::semantic::DType::bf16,
+                                      output_target, lowered_tensors[operation.outputs.front().value()]);
+        if (!cast.ok()) return cast.with_context("activation output lowering");
+      }
     }
     for (const ir::semantic::StateEdge& edge : semantic.state_edges()) {
       const auto slot = builder.add_state_slot(

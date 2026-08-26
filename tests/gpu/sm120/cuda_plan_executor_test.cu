@@ -141,7 +141,10 @@ superinfer::ir::physical::Plan make_nvfp4_dequantize_plan() {
                             typed_tensor(ir::physical::PhysicalDType::u8, {16},
                                          ir::physical::StorageEncoding::nvfp4_packed))
              .has_value());
-  assert(builder.add_buffer(8, 1, 1, typed_tensor(ir::physical::PhysicalDType::u8, {1})).has_value());
+  assert(builder.add_buffer(8, 1, 1,
+                            typed_tensor(ir::physical::PhysicalDType::u8, {1},
+                                         ir::physical::StorageEncoding::fp8_e4m3_group_scale))
+             .has_value());
   assert(builder.add_buffer(16, 64, 8, typed_tensor(ir::physical::PhysicalDType::f32, {16})).has_value());
   assert(builder
              .add_command(base::KernelId{9},
@@ -220,7 +223,10 @@ superinfer::ir::physical::Plan make_nvfp4_linear_plan() {
                             typed_tensor(ir::physical::PhysicalDType::u8, {4, 8},
                                          ir::physical::StorageEncoding::nvfp4_packed))
              .has_value());
-  assert(builder.add_buffer(72, 1, 1, typed_tensor(ir::physical::PhysicalDType::u8, {4, 1})).has_value());
+  assert(builder.add_buffer(72, 1, 1,
+                            typed_tensor(ir::physical::PhysicalDType::u8, {4, 1},
+                                         ir::physical::StorageEncoding::fp8_e4m3_group_scale))
+             .has_value());
   assert(builder.add_buffer(80, 4, 4, typed_tensor(ir::physical::PhysicalDType::f32, {4})).has_value());
   assert(builder
              .add_command(base::KernelId{13},

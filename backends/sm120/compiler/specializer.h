@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -197,7 +198,15 @@ class Specializer final {
     descriptor.alignment = alignment;
     descriptor.encoding = tensor.storage_dtype == ir::semantic::DType::int4
                               ? ir::physical::StorageEncoding::nvfp4_packed
-                              : ir::physical::StorageEncoding::none;
+                              : (tensor.storage_dtype == ir::semantic::DType::int8
+                                     ? ir::physical::StorageEncoding::fp8_e4m3_group_scale
+                                     : ir::physical::StorageEncoding::none);
+    if (tensor.role == ir::semantic::TensorRole::weight && !tensor.name.empty()) {
+      constexpr std::string_view prefix = "weight/";
+      descriptor.artifact_name = tensor.name.starts_with(prefix)
+                                     ? tensor.name.substr(prefix.size())
+                                     : tensor.name;
+    }
     return descriptor;
   }
 
@@ -206,7 +215,7 @@ class Specializer final {
       case ir::semantic::DType::f32: return ir::physical::PhysicalDType::f32;
       case ir::semantic::DType::f16: return ir::physical::PhysicalDType::f16;
       case ir::semantic::DType::bf16: return ir::physical::PhysicalDType::bf16;
-      case ir::semantic::DType::int8: return ir::physical::PhysicalDType::int8;
+      case ir::semantic::DType::int8: return ir::physical::PhysicalDType::u8;
       case ir::semantic::DType::int32: return ir::physical::PhysicalDType::int32;
       case ir::semantic::DType::int4: return ir::physical::PhysicalDType::u8;
     }

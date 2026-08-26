@@ -143,15 +143,23 @@ int main() {
   const auto lowered = compiler::SemanticLowering{}.lower(module.value(), {120, 16});
   assert(lowered.has_value());
   assert(lowered.value().verify().ok());
-  assert(lowered.value().tensors().size() == module.value().tensors().size());
-  assert(lowered.value().kernel_requirements().size() == module.value().operations().size());
+  assert(lowered.value().tensors().size() > module.value().tensors().size());
+  assert(lowered.value().kernel_requirements().size() > module.value().operations().size());
+  std::size_t lowered_casts = 0;
+  for (const auto& requirement : lowered.value().kernel_requirements()) {
+    lowered_casts += requirement.operation == "cast";
+  }
+  assert(lowered_casts > 0);
   assert(lowered.value().state_slots().size() == 128);
   assert(lowered.value().state_transitions().size() == 384);
   assert(lowered.value().entry_points().size() == 1);
   assert(lowered.value().entry_points().front().inputs.size() == 1);
   assert(lowered.value().entry_points().front().outputs.size() == 1);
-  assert(lowered.value().kernel_requirements()[1].operation == "rms_norm");
-  assert(lowered.value().kernel_requirements()[2].operation == "gated_delta_attention");
+  assert(lowered.value().kernel_requirements()[1].operation == "cast");
+  assert(lowered.value().kernel_requirements()[2].operation == "cast");
+  assert(lowered.value().kernel_requirements()[3].operation == "rms_norm");
+  assert(lowered.value().kernel_requirements()[4].operation == "cast");
+  assert(lowered.value().kernel_requirements()[5].operation == "gated_delta_attention");
   std::size_t lowered_kv = 0;
   std::size_t lowered_decode_state = 0;
   for (const auto& tensor : lowered.value().tensors()) {
@@ -170,11 +178,11 @@ int main() {
   sm120::BaselineProvider provider;
   const auto physical = sm120::Specializer{}.compile(
       lowered.value(),
-      {compiler::TargetProfile::offline_sm120a(32ULL << 30U, "baseline-v1"), 0, 512}, provider);
+      {compiler::TargetProfile::offline_sm120a(32ULL << 30U, "baseline-v1"), 0, 2048}, provider);
   assert(!physical.has_value());
   assert(physical.error().code() == base::StatusCode::unsupported);
   assert(!physical.error().context().empty());
-  assert(physical.error().context().back() == "embedding");
+  assert(physical.error().context().back() == "gated_delta_attention");
   assert(physical.error().message().find("Qwen") == std::string::npos);
 
   const auto rejected_inventory = frontend.validate({std::string{frontends::qwen38::kSourceIdentity}, 1,

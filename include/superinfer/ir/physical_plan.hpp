@@ -30,6 +30,8 @@ struct PhysicalTensorDescriptor final {
   PhysicalLayout layout{PhysicalLayout::row_major};
   std::uint64_t alignment{0};
   StorageEncoding encoding{StorageEncoding::none};
+  /** Optional source tensor identity used by offline artifact materialization. */
+  std::string artifact_name;
 };
 
 /** A command operand binds a typed logical view to one physical allocation. */

@@ -202,7 +202,7 @@ superinfer::ir::lowered::Module make_nvfp4_linear_fixture(bool valid) {
       ir::semantic::TensorId{1}, {2, 16}, ir::lowered::LayoutKind::row_major,
       base::MemorySpace::device, 16,
       valid ? ir::semantic::DType::int4 : ir::semantic::DType::f32,
-      ir::semantic::DType::f32, ir::semantic::TensorRole::weight);
+      ir::semantic::DType::f32, ir::semantic::TensorRole::weight, "layer.weight");
   const auto scales = builder.add_tensor(
       ir::semantic::TensorId{2}, {2, 1}, ir::lowered::LayoutKind::row_major,
       base::MemorySpace::device, 16, ir::semantic::DType::int8, ir::semantic::DType::f32,
@@ -294,6 +294,11 @@ int main() {
          ir::physical::PhysicalDType::u8);
   assert(nvfp4_linear_result.value().plan.buffers()[1].tensor.encoding ==
          ir::physical::StorageEncoding::nvfp4_packed);
+  assert(nvfp4_linear_result.value().plan.buffers()[1].tensor.artifact_name == "layer.weight");
+  assert(nvfp4_linear_result.value().plan.buffers()[2].tensor.dtype ==
+         ir::physical::PhysicalDType::u8);
+  assert(nvfp4_linear_result.value().plan.buffers()[2].tensor.encoding ==
+         ir::physical::StorageEncoding::fp8_e4m3_group_scale);
   const auto invalid_nvfp4_linear = specializer.compile(
       make_nvfp4_linear_fixture(false), {target, 256, 64}, provider);
   assert(!invalid_nvfp4_linear.has_value());

@@ -152,7 +152,9 @@ class KvCacheState final {
 
   base::Status commit_step() noexcept {
     if (!in_flight_) return base::Status::failed_precondition("KV cache step is not in flight");
-    const std::uint64_t expected = (std::uint64_t{1} << layout_.layer_count) - 1;
+    const std::uint64_t expected = layout_.layer_count == 64
+                                       ? std::numeric_limits<std::uint64_t>::max()
+                                       : (std::uint64_t{1} << layout_.layer_count) - 1;
     if (written_layers_ != expected) {
       return base::Status::failed_precondition("KV cache step is missing one or more layers");
     }

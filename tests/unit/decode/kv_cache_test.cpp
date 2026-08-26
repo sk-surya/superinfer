@@ -43,5 +43,15 @@ int main() {
   state.reset();
   assert(state.next_position() == 0);
   assert(!state.read_layer(0, 0, key_read, value_read).ok());
+
+  const KvCacheLayout max_layers{64, 1, 1, 1, 1, 16};
+  std::vector<std::byte> max_storage(max_layers.storage_bytes().value());
+  auto max_state = KvCacheState::create(max_layers, max_storage).value();
+  assert(max_state.begin_step(0).ok());
+  const std::array<std::byte, 1> one{std::byte{1}};
+  for (std::uint32_t layer = 0; layer < 64; ++layer) {
+    assert(max_state.write_layer(layer, one, one).ok());
+  }
+  assert(max_state.commit_step().ok());
   return 0;
 }

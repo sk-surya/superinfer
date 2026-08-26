@@ -149,9 +149,12 @@ updated: 2026-08-26
 
 ## Remaining S03-02 work
 
-- Complete the remaining per-operation source-weight bindings and bind the independent primitive
-  contracts into a full graph reference harness; then add the
-  weight-connected CUDA providers before advertising Qwen capabilities.
-- Implement or explicitly stage target-provider capability coverage and compile a non-placeholder
-  Physical Plan.
-- Complete conversion and runtime differential evidence before S03-03 acceptance.
+- Expand Qwen attention nodes into generic projection, q/k normalization, RoPE, cache-append, and
+  output-projection commands; the current generic attention and recurrent commands intentionally
+  reject the richer 12-operand frontend nodes.
+- Carry the validated NVFP4 sidecar bindings through target lowering into quantized projection
+  commands, including artifact payload-to-buffer materialization and LM/FFN numerical differential
+  fixtures.
+- Add the Qwen linear-attention convolution/gate projections and recurrent state transitions, then
+  compile a non-placeholder full-graph Physical Plan.
+- Complete conversion/runtime staged differential evidence before S03-03 acceptance.

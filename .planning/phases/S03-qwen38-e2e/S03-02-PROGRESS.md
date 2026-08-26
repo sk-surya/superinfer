@@ -28,6 +28,10 @@ updated: 2026-08-26
   and wheel stages.
 - Strict validation of the local pinned source passes 2,402 tensors, the canonical inventory digest,
   all required metadata hashes, and all three safetensors shard hashes.
+- Real-source metadata-only rehearsal produced a 1,017,232-byte `.sinf` with SHA-256
+  `9f80231a9dc59c214ddf4aafd52d27dfbc10def2ce7dcceaaad9e44c2cfa414e`; its ledger requires
+  27,778,892,088 bytes and leaves 6,580,846,280 bytes against the declared 32-GiB budget. This is
+  provenance evidence, not a payload-bearing execution artifact.
 
 ## Remaining S03-02 work
 

@@ -132,6 +132,52 @@ __global__ inline void nvfp4_linear_f32(const float* input, const std::uint8_t* 
   }
 }
 
+/** Reference-correct grouped-query attention over a pre-materialized contiguous KV window. */
+__global__ inline void grouped_attention_f32(const float* query, const float* keys,
+                                             const float* values, float* output,
+                                             std::size_t query_heads, std::size_t kv_heads,
+                                             std::size_t head_dimension, std::size_t positions) {
+  const std::size_t group = query_heads / kv_heads;
+  const float scale = rsqrtf(static_cast<float>(head_dimension));
+  for (std::size_t query_head = blockIdx.x * blockDim.x + threadIdx.x;
+       query_head < query_heads; query_head += blockDim.x * gridDim.x) {
+    const std::size_t kv_head = query_head / group;
+    float maximum = -3.402823466e+38F;
+    for (std::size_t position = 0; position < positions; ++position) {
+      float score = 0.0F;
+      for (std::size_t dimension = 0; dimension < head_dimension; ++dimension) {
+        score += query[query_head * head_dimension + dimension] *
+                 keys[(position * kv_heads + kv_head) * head_dimension + dimension];
+      }
+      maximum = fmaxf(maximum, score * scale);
+    }
+    float denominator = 0.0F;
+    for (std::size_t position = 0; position < positions; ++position) {
+      float score = 0.0F;
+      for (std::size_t dimension = 0; dimension < head_dimension; ++dimension) {
+        score += query[query_head * head_dimension + dimension] *
+                 keys[(position * kv_heads + kv_head) * head_dimension + dimension];
+      }
+      denominator += expf(score * scale - maximum);
+    }
+    for (std::size_t dimension = 0; dimension < head_dimension; ++dimension) {
+      float attended = 0.0F;
+      for (std::size_t position = 0; position < positions; ++position) {
+        float score = 0.0F;
+        for (std::size_t score_dimension = 0; score_dimension < head_dimension;
+             ++score_dimension) {
+          score += query[query_head * head_dimension + score_dimension] *
+                   keys[(position * kv_heads + kv_head) * head_dimension + score_dimension];
+        }
+        const float probability = expf(score * scale - maximum) / denominator;
+        attended += probability *
+                    values[(position * kv_heads + kv_head) * head_dimension + dimension];
+      }
+      output[query_head * head_dimension + dimension] = attended;
+    }
+  }
+}
+
 __global__ inline void rms_norm_f32(const float* input, const float* scale, float* output,
                                     std::size_t elements, float epsilon) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
@@ -309,6 +355,24 @@ inline cudaError_t launch_nvfp4_linear(const ir::physical::CommandDescriptor& co
       static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,
       output_elements, command.scalar);
+  return cudaGetLastError();
+}
+
+inline cudaError_t launch_attention(const ir::physical::CommandDescriptor& command,
+                                    const ir::physical::Plan& plan, void* arena, void*,
+                                    cudaStream_t stream) {
+  if (command.buffers.size() != 4) return cudaErrorInvalidValue;
+  const auto& query = plan.buffers()[command.buffers[0].value()];
+  const auto& keys = plan.buffers()[command.buffers[1].value()];
+  const auto& values = plan.buffers()[command.buffers[2].value()];
+  const auto& output = plan.buffers()[command.buffers[3].value()];
+  const auto dimensions = command.attention;
+  grouped_attention_f32<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, query.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, keys.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, values.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), dimensions.query_heads,
+      dimensions.key_value_heads, dimensions.head_dimension, dimensions.positions);
   return cudaGetLastError();
 }
 
@@ -509,6 +573,42 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       }
       return {};
     }
+    case 14: {
+      if (!exact_buffers(4)) {
+        return base::Status::invalid_argument(
+            "CUDA attention requires query, key, value, and output buffers");
+      }
+      const auto& query = plan.buffers()[command.buffers[0].value()];
+      const auto& keys = plan.buffers()[command.buffers[1].value()];
+      const auto& values = plan.buffers()[command.buffers[2].value()];
+      const auto& output = plan.buffers()[command.buffers[3].value()];
+      const auto dimensions = command.attention;
+      if (dimensions.query_heads == 0 || dimensions.key_value_heads == 0 ||
+          dimensions.head_dimension == 0 || dimensions.positions == 0 ||
+          dimensions.query_heads % dimensions.key_value_heads != 0) {
+        return base::Status::invalid_argument("CUDA attention dimensions are invalid");
+      }
+      const auto product = [](std::uint64_t first, std::uint64_t second,
+                              std::uint64_t third) -> std::uint64_t {
+        if (first != 0 && second > std::numeric_limits<std::uint64_t>::max() / first) return 0;
+        const std::uint64_t first_two = first * second;
+        if (third != 0 && first_two > std::numeric_limits<std::uint64_t>::max() / third) return 0;
+        return first_two * third;
+      };
+      const std::uint64_t query_elements = product(
+          dimensions.query_heads, dimensions.head_dimension, 1);
+      const std::uint64_t cache_elements = product(
+          dimensions.positions, dimensions.key_value_heads, dimensions.head_dimension);
+      if (query_elements == 0 || cache_elements == 0 ||
+          query.size != query_elements * sizeof(float) ||
+          output.size != query_elements * sizeof(float) ||
+          keys.size != cache_elements * sizeof(float) ||
+          values.size != cache_elements * sizeof(float)) {
+        return base::Status::invalid_argument(
+            "CUDA attention buffer sizes do not match its authored dimensions");
+      }
+      return {};
+    }
     case 4:
       if (!same_sizes(3)) return base::Status::invalid_argument("CUDA residual requires three equal-sized f32 buffers");
       return {};
@@ -547,6 +647,7 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 5: return &launch_rms_norm;
     case 12: return &launch_rms_norm_bf16;
     case 13: return &launch_nvfp4_linear;
+    case 14: return &launch_attention;
     case 6: return &launch_layer_norm;
     default: return nullptr;
   }

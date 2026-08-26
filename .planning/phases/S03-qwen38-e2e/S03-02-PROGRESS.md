@@ -118,6 +118,10 @@ updated: 2026-08-26
   packed E2M1 weights, FP8 group scales, and `weight_scale_2`; its shape checks and RTX 5090
   result match the CPU NVFP4 linear oracle. Qwen graph promotion still requires sidecar scale
   binding and a complete artifact-to-command composition.
+- A generic grouped-query attention baseline is now provider ID 14. Its Physical Plan carries
+  authored query-head, KV-head, head-dimension, and position counts; the CUDA command validates
+  contiguous FP32 query/cache/output shapes and matches the independent grouped-attention oracle
+  on RTX 5090. Qwen projection, RoPE, KV append, and recurrent DeltaNet composition remain open.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

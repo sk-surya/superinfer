@@ -66,7 +66,8 @@ class SemanticLowering final {
       for (const ir::semantic::TensorId input : operation.inputs) operands.push_back(lowered_tensors[input.value()]);
       for (const ir::semantic::TensorId output : operation.outputs) operands.push_back(lowered_tensors[output.value()]);
       base::Status requirement = builder.add_kernel_requirement(
-          std::string{capability}, options.target_capability, std::move(operands));
+          std::string{capability}, options.target_capability, std::move(operands),
+          operation.attributes);
       if (!requirement.ok()) return requirement.with_context("semantic operation lowering");
     }
     return std::move(builder).build();

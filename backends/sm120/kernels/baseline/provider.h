@@ -57,6 +57,9 @@ class BaselineProvider final : public kernels::KernelProvider {
     if (query.operation == "nvfp4_linear") {
       return std::vector<kernels::KernelCandidate>{{base::KernelId{13}, "sm120.baseline", true, 0}};
     }
+    if (query.operation == "attention") {
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{14}, "sm120.baseline", true, 0}};
+    }
     if (query.operation == "lm_head") {
       if (query.storage_dtype != "f32") {
         return base::Status::unsupported("baseline LM head does not support the requested storage dtype");

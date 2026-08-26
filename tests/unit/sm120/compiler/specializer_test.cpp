@@ -137,6 +137,36 @@ superinfer::ir::lowered::Module make_bf16_rms_norm_fixture() {
   return std::move(module).value();
 }
 
+superinfer::ir::lowered::Module make_attention_fixture() {
+  using namespace superinfer;
+  ir::lowered::ModuleBuilder builder;
+  const auto query = builder.add_tensor(
+      ir::semantic::TensorId{0}, {2, 2}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  const auto keys = builder.add_tensor(
+      ir::semantic::TensorId{1}, {2, 1, 2}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32,
+      ir::semantic::TensorRole::kv_cache);
+  const auto values = builder.add_tensor(
+      ir::semantic::TensorId{2}, {2, 1, 2}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32,
+      ir::semantic::TensorRole::kv_cache);
+  const auto output = builder.add_tensor(
+      ir::semantic::TensorId{3}, {2, 2}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  assert(query.has_value() && keys.has_value() && values.has_value() && output.has_value());
+  ir::semantic::OperationAttributes attributes;
+  attributes.num_heads = 2;
+  attributes.num_kv_heads = 1;
+  attributes.head_dimension = 2;
+  assert(builder.add_kernel_requirement(
+      "attention", 120, {query.value(), keys.value(), values.value(), output.value()}, attributes)
+             .ok());
+  const auto module = std::move(builder).build();
+  assert(module.has_value());
+  return std::move(module).value();
+}
+
 }  // namespace
 
 int main() {
@@ -175,6 +205,16 @@ int main() {
       make_bf16_rms_norm_fixture(), {target, 256, 64}, provider);
   assert(bf16_norm_result.has_value());
   assert(bf16_norm_result.value().plan.commands().front().kernel.value() == 12);
+
+  const auto attention_result = specializer.compile(
+      make_attention_fixture(), {target, 256, 128}, provider);
+  assert(attention_result.has_value());
+  assert(attention_result.value().plan.commands().front().kernel.value() == 14);
+  const auto attention_dimensions = attention_result.value().plan.commands().front().attention;
+  assert(attention_dimensions.query_heads == 2);
+  assert(attention_dimensions.key_value_heads == 1);
+  assert(attention_dimensions.head_dimension == 2);
+  assert(attention_dimensions.positions == 2);
 
   const auto second = specializer.compile(make_fixture(), {target, 256, 64}, provider);
   assert(second.has_value());

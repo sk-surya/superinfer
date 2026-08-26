@@ -41,6 +41,7 @@ struct KernelRequirement final {
   std::string operation;
   std::uint32_t target_capability;
   std::vector<LoweredTensorId> operands;
+  semantic::OperationAttributes attributes;
 };
 
 /** Immutable target-aware module used as input to physical planning. */
@@ -156,9 +157,10 @@ class ModuleBuilder final {
   }
 
   base::Status add_kernel_requirement(std::string operation, std::uint32_t target_capability,
-                                      std::vector<LoweredTensorId> operands = {}) {
+                                      std::vector<LoweredTensorId> operands = {},
+                                      semantic::OperationAttributes attributes = {}) {
     kernel_requirements_.push_back(
-        {std::move(operation), target_capability, std::move(operands)});
+        {std::move(operation), target_capability, std::move(operands), attributes});
     return {};
   }
 

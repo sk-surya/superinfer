@@ -117,10 +117,25 @@ class Specializer final {
         std::swap(operands[1], operands[3]);
         std::swap(operands[2], operands[3]);
       }
+      ir::physical::AttentionDimensions attention{};
+      if (requirement.operation == "attention") {
+        if (requirement.operands.size() < 4 || requirement.attributes.num_heads == 0 ||
+            requirement.attributes.num_kv_heads == 0 || requirement.attributes.head_dimension == 0) {
+          return base::Status::invalid_argument("attention requirement lacks authored dimensions");
+        }
+        const auto& key_tensor = lowered.tensors()[requirement.operands[1].value()];
+        if (key_tensor.physical_shape.size() != 3 || key_tensor.physical_shape[0] == 0 ||
+            key_tensor.physical_shape[0] > std::numeric_limits<std::uint32_t>::max()) {
+          return base::Status::invalid_argument("attention key tensor lacks a static position dimension");
+        }
+        attention = {requirement.attributes.num_heads, requirement.attributes.num_kv_heads,
+                     requirement.attributes.head_dimension,
+                     static_cast<std::uint32_t>(key_tensor.physical_shape[0])};
+      }
       workspace_bytes = std::max(workspace_bytes, candidate.value().workspace_bytes);
       const auto command = plan_builder.add_command(
           candidate.value().id, std::move(operands), dependencies, 0, 0,
-          candidate.value().workspace_bytes);
+          candidate.value().workspace_bytes, 1.0e-5F, 1.0F, attention);
       if (!command.has_value()) {
         base::Status error = command.error();
         return error.with_context("physical command");

@@ -37,6 +37,14 @@ struct BufferDescriptor final {
   std::uint64_t alignment;
 };
 
+/** Compile-time dimensions required by physical attention commands. Zero means not applicable. */
+struct AttentionDimensions final {
+  std::uint32_t query_heads{0};
+  std::uint32_t key_value_heads{0};
+  std::uint32_t head_dimension{0};
+  std::uint32_t positions{0};
+};
+
 struct CommandDescriptor final {
   CommandId id;
   base::KernelId kernel;
@@ -47,6 +55,7 @@ struct CommandDescriptor final {
   std::uint64_t workspace_size;
   float epsilon{1.0e-5F};
   float scalar{1.0F};
+  AttentionDimensions attention{};
 };
 
 class PlanBuilder;
@@ -144,7 +153,14 @@ class Plan final {
     for (const CommandDescriptor& command : commands_) {
       output << "command id=" << command.id.value() << " kernel=" << command.kernel.value()
              << " stream=" << command.stream << " workspace=" << command.workspace_offset << "+"
-             << command.workspace_size << "\n";
+             << command.workspace_size;
+      if (command.attention.query_heads != 0 || command.attention.key_value_heads != 0 ||
+          command.attention.head_dimension != 0 || command.attention.positions != 0) {
+        output << " attention=" << command.attention.query_heads << "x"
+               << command.attention.key_value_heads << "x" << command.attention.head_dimension
+               << "@" << command.attention.positions;
+      }
+      output << "\n";
     }
     return output.str();
   }
@@ -180,10 +196,11 @@ class PlanBuilder final {
                                       std::vector<CommandId> dependencies,
                                       std::uint32_t stream, std::uint64_t workspace_offset,
                                       std::uint64_t workspace_size, float epsilon = 1.0e-5F,
-                                      float scalar = 1.0F) {
+                                      float scalar = 1.0F,
+                                      AttentionDimensions attention = {}) {
     commands_.push_back({CommandId{commands_.size()}, kernel, std::move(buffers),
                          std::move(dependencies), stream, workspace_offset, workspace_size,
-                         epsilon, scalar});
+                         epsilon, scalar, attention});
     return commands_.back().id;
   }
 

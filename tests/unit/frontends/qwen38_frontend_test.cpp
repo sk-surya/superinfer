@@ -15,6 +15,7 @@ int main() {
   assert(module.has_value());
   assert(module.value().verify().ok());
   assert(module.value().entry_points().size() == 1);
+  assert(module.value().state_edges().size() == 128);
   assert(module.value().dump().find("cuda") == std::string::npos);
   assert(module.value().dump().find("Qwen") == std::string::npos);
   assert(module.value().dump().find("gated_delta_attention") != std::string::npos);
@@ -29,6 +30,13 @@ int main() {
   }
   assert(gated_delta == 48);
   assert(full_attention == 16);
+  for (const auto& operation : module.value().operations()) {
+    if (operation.kind == ir::semantic::OperationKind::gated_delta_attention ||
+        operation.kind == ir::semantic::OperationKind::grouped_query_attention) {
+      assert(operation.inputs.size() == 3);
+      assert(operation.outputs.size() == 3);
+    }
+  }
 
   const auto lowered = compiler::SemanticLowering{}.lower(module.value(), {120, 16});
   assert(lowered.has_value());

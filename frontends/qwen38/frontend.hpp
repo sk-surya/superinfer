@@ -80,8 +80,32 @@ class Frontend final : public compiler::ModelFrontend {
       const auto post_norm = builder.add_tensor("layer_" + index(layer) + "_post_norm", hidden_spec);
       const auto ffn = builder.add_tensor("layer_" + index(layer) + "_ffn", hidden_spec);
       const auto output = builder.add_tensor("layer_" + index(layer) + "_output", hidden_spec);
+      const bool full_attention = (layer % 4U) == 3U;
+      const TensorSpec linear_state_spec{{Dimension::static_value(16), Dimension::static_value(128),
+                                          Dimension::static_value(128)},
+                                         DType::bf16, QuantizationIntent::none,
+                                         TensorRole::kv_cache};
+      const TensorSpec convolution_state_spec{{Dimension::static_value(4), Dimension::static_value(5120)},
+                                              DType::bf16, QuantizationIntent::none,
+                                              TensorRole::decode_state};
+      const TensorSpec full_key_state_spec{{Dimension::static_value(4), Dimension::static_value(256)},
+                                           DType::bf16, QuantizationIntent::none,
+                                           TensorRole::kv_cache};
+      const auto state_a_in = builder.add_tensor(
+          "layer_" + index(layer) + (full_attention ? "_key_state_in" : "_delta_state_in"),
+          full_attention ? full_key_state_spec : linear_state_spec);
+      const auto state_a_out = builder.add_tensor(
+          "layer_" + index(layer) + (full_attention ? "_key_state_out" : "_delta_state_out"),
+          full_attention ? full_key_state_spec : linear_state_spec);
+      const auto state_b_in = builder.add_tensor(
+          "layer_" + index(layer) + (full_attention ? "_value_state_in" : "_convolution_state_in"),
+          full_attention ? full_key_state_spec : convolution_state_spec);
+      const auto state_b_out = builder.add_tensor(
+          "layer_" + index(layer) + (full_attention ? "_value_state_out" : "_convolution_state_out"),
+          full_attention ? full_key_state_spec : convolution_state_spec);
       if (!input_norm.has_value() || !attention.has_value() || !attention_residual.has_value() ||
-          !post_norm.has_value() || !ffn.has_value() || !output.has_value()) {
+          !post_norm.has_value() || !ffn.has_value() || !output.has_value() || !state_a_in.has_value() ||
+          !state_a_out.has_value() || !state_b_in.has_value() || !state_b_out.has_value()) {
         return base::Status::resource_exhausted("Qwen3.8 frontend tensor emission failed");
       }
       if (!builder.add_operation("layer_" + index(layer) + "_input_norm", OperationKind::rms_norm,
@@ -89,7 +113,6 @@ class Frontend final : public compiler::ModelFrontend {
                    .has_value()) {
         return base::Status::invalid_argument("Qwen3.8 input norm operation could not be emitted");
       }
-      const bool full_attention = (layer % 4U) == 3U;
       OperationAttributes attention_attributes;
       attention_attributes.num_heads = full_attention ? 24 : 48;
       attention_attributes.num_kv_heads = full_attention ? 4 : 16;
@@ -104,9 +127,19 @@ class Frontend final : public compiler::ModelFrontend {
                                                ? OperationKind::grouped_query_attention
                                                : OperationKind::gated_delta_attention;
       if (!builder.add_operation("layer_" + index(layer) + "_attention", attention_kind,
-                                 {input_norm.value()}, {attention.value()}, attention_attributes)
+                                 {input_norm.value(), state_a_in.value(), state_b_in.value()},
+                                 {attention.value(), state_a_out.value(), state_b_out.value()},
+                                 attention_attributes)
                    .has_value()) {
         return base::Status::invalid_argument("Qwen3.8 attention operation could not be emitted");
+      }
+      if (!builder.add_state_edge("layer_" + index(layer) + "_state_a", state_a_in.value(),
+                                 state_a_out.value())
+                   .ok() ||
+          !builder.add_state_edge("layer_" + index(layer) + "_state_b", state_b_in.value(),
+                                 state_b_out.value())
+                   .ok()) {
+        return base::Status::invalid_argument("Qwen3.8 attention state could not be emitted");
       }
       if (full_attention) {
         ++full_attention_layers;

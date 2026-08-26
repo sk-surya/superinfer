@@ -225,6 +225,12 @@ class Module final {
           edge.destination.value() >= tensors_.size()) {
         return base::Status::invalid_argument("state edge has invalid name or tensor reference");
       }
+      if ((tensors_[edge.source.value()].spec.role != TensorRole::kv_cache &&
+           tensors_[edge.source.value()].spec.role != TensorRole::decode_state) ||
+          (tensors_[edge.destination.value()].spec.role != TensorRole::kv_cache &&
+           tensors_[edge.destination.value()].spec.role != TensorRole::decode_state)) {
+        return base::Status::invalid_argument("state edge endpoints must be state tensors");
+      }
     }
     return {};
   }

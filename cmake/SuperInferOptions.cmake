@@ -1,13 +1,17 @@
 function(superinfer_apply_warnings target)
   if(MSVC)
-    target_compile_options(${target} INTERFACE /W4 /WX)
+    target_compile_options(${target} INTERFACE
+      "$<$<COMPILE_LANGUAGE:CXX>:/W4;/WX>")
   else()
-    target_compile_options(${target} INTERFACE -Wall -Wextra -Wpedantic -Werror)
+    target_compile_options(${target} INTERFACE
+      "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic;-Werror>")
   endif()
 
   if(SUPERINFER_ENABLE_SANITIZERS AND NOT MSVC)
-    target_compile_options(${target} INTERFACE -fsanitize=address,undefined -fno-omit-frame-pointer)
-    target_link_options(${target} INTERFACE -fsanitize=address,undefined)
+    target_compile_options(${target} INTERFACE
+      "$<$<COMPILE_LANGUAGE:CXX>:-fsanitize=address,undefined;-fno-omit-frame-pointer>")
+    target_link_options(${target} INTERFACE
+      "$<$<LINK_LANGUAGE:CXX>:-fsanitize=address,undefined>")
   endif()
 endfunction()
 

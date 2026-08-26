@@ -50,10 +50,20 @@ file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/artifacts/S00/architecture-targets.jso
 ]=])
 
 if(SUPERINFER_CUDA_AVAILABLE)
+  find_package(CUDAToolkit REQUIRED)
   add_library(superinfer_cuda INTERFACE)
   target_compile_features(superinfer_cuda INTERFACE cuda_std_20)
   target_compile_definitions(superinfer_cuda INTERFACE SUPERINFER_TARGET_SM120A=1)
   set_target_properties(superinfer_cuda PROPERTIES CUDA_ARCHITECTURES "120a")
+
+  add_library(superinfer_sm120_cuda_runtime STATIC
+    backends/sm120/runtime/cuda_ownership.cu)
+  target_compile_features(superinfer_sm120_cuda_runtime PUBLIC cuda_std_20)
+  target_include_directories(superinfer_sm120_cuda_runtime PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/backends>")
+  target_link_libraries(superinfer_sm120_cuda_runtime PUBLIC superinfer_base CUDA::cudart)
+  set_target_properties(superinfer_sm120_cuda_runtime PROPERTIES CUDA_ARCHITECTURES "120a")
 endif()
 
 if(SUPERINFER_BUILD_TESTS)

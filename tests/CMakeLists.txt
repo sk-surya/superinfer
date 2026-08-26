@@ -89,6 +89,18 @@ add_executable(superinfer_artifact_test integration/artifact/artifact_test.cpp)
 target_link_libraries(superinfer_artifact_test PRIVATE superinfer_artifact)
 add_test(NAME superinfer.artifact.binary COMMAND superinfer_artifact_test)
 
+if(SUPERINFER_CUDA_AVAILABLE)
+  add_executable(superinfer_sm120_cuda_ownership gpu/sm120/cuda_ownership_test.cu)
+  target_compile_features(superinfer_sm120_cuda_ownership PRIVATE cuda_std_20)
+  target_include_directories(superinfer_sm120_cuda_ownership PRIVATE
+    "${CMAKE_SOURCE_DIR}/backends")
+  target_link_libraries(superinfer_sm120_cuda_ownership PRIVATE
+    superinfer_sm120_cuda_runtime CUDA::cudart)
+  set_target_properties(superinfer_sm120_cuda_ownership PROPERTIES CUDA_ARCHITECTURES "120a")
+  add_test(NAME superinfer.sm120.cuda_ownership COMMAND superinfer_sm120_cuda_ownership)
+  set_tests_properties(superinfer.sm120.cuda_ownership PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
 if(SUPERINFER_ENABLE_SANITIZERS)
   set_tests_properties(
     superinfer.base.contracts superinfer.architecture superinfer.ir.semantic

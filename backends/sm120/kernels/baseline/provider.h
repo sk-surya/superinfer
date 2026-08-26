@@ -36,6 +36,9 @@ class BaselineProvider final : public kernels::KernelProvider {
     if (query.operation == "layer_norm") {
       return std::vector<kernels::KernelCandidate>{{base::KernelId{6}, "sm120.baseline", true, 0}};
     }
+    if (query.operation == "embedding") {
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{7}, "sm120.baseline", true, 0}};
+    }
     return base::Status::unsupported("no executable baseline candidate for operation");
   }
 };

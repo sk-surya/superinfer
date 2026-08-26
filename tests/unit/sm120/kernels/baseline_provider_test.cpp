@@ -20,8 +20,8 @@ int main() {
   assert(!unsupported_operation.has_value());
   assert(unsupported_operation.error().code() == superinfer::base::StatusCode::unsupported);
 
-  constexpr std::array<std::pair<std::string_view, std::uint64_t>, 4> operations{{
-      {"copy", 1}, {"residual", 4}, {"rms_norm", 5}, {"layer_norm", 6}}};
+  constexpr std::array<std::pair<std::string_view, std::uint64_t>, 5> operations{{
+      {"copy", 1}, {"residual", 4}, {"rms_norm", 5}, {"layer_norm", 6}, {"embedding", 7}}};
   for (const auto& operation : operations) {
     const auto candidates = provider.enumerate({operation.first, 120});
     assert(candidates.has_value());
@@ -30,8 +30,8 @@ int main() {
     assert(candidates.value().front().deterministic);
     assert(candidates.value().front().workspace_bytes == 0);
   }
-  for (const std::string_view operation : {"cast", "elementwise", "rope", "matmul", "embedding",
-                                            "attention", "moe_route", "activation", "sampling"}) {
+  for (const std::string_view operation : {"cast", "elementwise", "rope", "matmul", "attention",
+                                            "moe_route", "activation", "sampling"}) {
     const auto candidates = provider.enumerate({operation, 120});
     assert(!candidates.has_value());
     assert(candidates.error().code() == superinfer::base::StatusCode::unsupported);

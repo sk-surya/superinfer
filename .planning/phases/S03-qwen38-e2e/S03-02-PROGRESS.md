@@ -72,6 +72,10 @@ updated: 2026-08-26
 - The same graph oracle now composes gated dense FFN projections with explicit gate/up/down weight
   shapes and a checked SiLU-gating numerical contract; NVFP4 decoding and CUDA execution remain
   intentionally unavailable.
+- A generic FP32 embedding baseline is now registered through `KernelProvider` ID 7, resolved by
+  the SM120 CUDA executor, and checked on RTX 5090. It is not promoted into the Qwen artifact
+  matrix because the pinned embedding is BF16 and needs a matching materialization/differential
+  contract.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

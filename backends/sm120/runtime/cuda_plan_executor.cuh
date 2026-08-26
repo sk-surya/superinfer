@@ -29,6 +29,15 @@ __global__ inline void residual_f32(const float* left, const float* right, float
   }
 }
 
+__global__ inline void embedding_f32(const std::uint32_t* token, const float* table, float* output,
+                                     std::size_t vocabulary, std::size_t hidden) {
+  const std::uint32_t row = *token;
+  for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < hidden;
+       index += blockDim.x * gridDim.x) {
+    output[index] = row < vocabulary ? table[static_cast<std::size_t>(row) * hidden + index] : 0.0F;
+  }
+}
+
 __global__ inline void rms_norm_f32(const float* input, const float* scale, float* output,
                                     std::size_t elements, float epsilon) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
@@ -75,6 +84,26 @@ inline cudaError_t launch_copy(const ir::physical::CommandDescriptor& command,
   return cudaMemcpyAsync(buffer_pointer(plan, arena, destination.id),
                          buffer_pointer(plan, arena, source.id), static_cast<std::size_t>(bytes),
                          cudaMemcpyDeviceToDevice, stream);
+}
+
+inline cudaError_t launch_embedding(const ir::physical::CommandDescriptor& command,
+                                    const ir::physical::Plan& plan, void* arena, void*,
+                                    cudaStream_t stream) {
+  if (command.buffers.size() != 3) return cudaErrorInvalidValue;
+  const auto& token = plan.buffers()[command.buffers[0].value()];
+  const auto& table = plan.buffers()[command.buffers[1].value()];
+  const auto& output = plan.buffers()[command.buffers[2].value()];
+  if (token.size != sizeof(std::uint32_t) || output.size == 0 || output.size % sizeof(float) != 0 ||
+      table.size == 0 || table.size % output.size != 0) {
+    return cudaErrorInvalidValue;
+  }
+  const std::size_t hidden = static_cast<std::size_t>(output.size / sizeof(float));
+  const std::size_t vocabulary = static_cast<std::size_t>(table.size / output.size);
+  embedding_f32<<<1, 256, 0, stream>>>(
+      static_cast<const std::uint32_t*>(buffer_pointer(plan, arena, token.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, table.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), vocabulary, hidden);
+  return cudaGetLastError();
 }
 
 inline cudaError_t launch_residual(const ir::physical::CommandDescriptor& command,
@@ -151,6 +180,16 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
         return base::Status::invalid_argument("CUDA copy requires two equal-sized buffers");
       }
       return {};
+    case 7:
+      if (!exact_buffers(3) || plan.buffers()[command.buffers[0].value()].size != sizeof(std::uint32_t) ||
+          plan.buffers()[command.buffers[2].value()].size == 0 ||
+          plan.buffers()[command.buffers[2].value()].size % sizeof(float) != 0 ||
+          plan.buffers()[command.buffers[1].value()].size == 0 ||
+          plan.buffers()[command.buffers[1].value()].size %
+              plan.buffers()[command.buffers[2].value()].size != 0) {
+        return base::Status::invalid_argument("CUDA embedding requires token, table, and f32 output buffers");
+      }
+      return {};
     case 4:
       if (!same_sizes(3)) return base::Status::invalid_argument("CUDA residual requires three equal-sized f32 buffers");
       return {};
@@ -168,6 +207,7 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
 inline LaunchFunction resolve(std::uint64_t kernel_id) {
   switch (kernel_id) {
     case 1: return &launch_copy;
+    case 7: return &launch_embedding;
     case 4: return &launch_residual;
     case 5: return &launch_rms_norm;
     case 6: return &launch_layer_norm;

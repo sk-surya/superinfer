@@ -60,6 +60,24 @@ superinfer::ir::physical::Plan make_numeric_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_embedding_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({48, 0, 1});
+  assert(builder.add_buffer(0, 4, 4).has_value());
+  assert(builder.add_buffer(8, 24, 8).has_value());
+  assert(builder.add_buffer(40, 8, 8).has_value());
+  assert(builder
+             .add_command(base::KernelId{7},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}},
+                          {}, 0, 0, 0)
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 }  // namespace
 
 int main() {
@@ -191,6 +209,25 @@ int main() {
              .ok());
   assert((sum == std::array<float, 4>{6.0F, 8.0F, 10.0F, 12.0F}));
   assert(copied == sum);
+
+  const auto embedding_plan = make_embedding_plan();
+  auto embedding = sm120::cuda_runtime::CudaPlanSession::create(embedding_plan, 120, "baseline-v1");
+  assert(embedding.has_value());
+  const std::uint32_t token = 2;
+  const std::array<float, 6> table{1.0F, 2.0F, 3.0F, 4.0F, 5.0F, 6.0F};
+  assert(embedding.value().copy_to_device(
+      ir::physical::BufferId{0},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(&token), sizeof(token))).ok());
+  assert(embedding.value().copy_to_device(
+      ir::physical::BufferId{1},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(table.data()), sizeof(table))).ok());
+  assert(embedding.value().execute().ok());
+  assert(embedding.value().synchronize_for_test().ok());
+  std::array<float, 2> embedded{};
+  assert(embedding.value().copy_from_device(
+      ir::physical::BufferId{2},
+      base::ByteView(reinterpret_cast<std::byte*>(embedded.data()), sizeof(embedded))).ok());
+  assert((embedded == std::array<float, 2>{5.0F, 6.0F}));
 
   ir::physical::PlanBuilder norm_builder;
   norm_builder.set_resource_bounds({48, 0, 1});

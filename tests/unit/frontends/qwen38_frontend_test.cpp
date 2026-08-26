@@ -141,7 +141,7 @@ int main() {
   assert(!physical.has_value());
   assert(physical.error().code() == base::StatusCode::unsupported);
   assert(!physical.error().context().empty());
-  assert(physical.error().context().back() == "embedding");
+  assert(physical.error().context().back() == "gated_delta_attention");
   assert(physical.error().message().find("Qwen") == std::string::npos);
 
   const auto rejected_inventory = frontend.validate({std::string{frontends::qwen38::kSourceIdentity}, 1,

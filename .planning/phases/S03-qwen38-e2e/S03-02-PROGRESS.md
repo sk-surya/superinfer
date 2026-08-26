@@ -18,6 +18,9 @@ updated: 2026-08-26
   through explicit state tensors and 128 state edges.
 - KV cache and greedy decode contracts are bounded, allocation-free after construction, deterministic,
   and covered by CPU tests for append, commit, rollback, reset, argmax ties, stop, and bounds.
+- An independent CPU Gated DeltaNet oracle covers Q/K normalization, grouped key/value heads, decay,
+  beta delta updates, recurrent state, and split-step continuation; no provider advertises this
+  operation yet.
 - Deterministic metadata `.sinf` recipe emits source mapping, operation coverage, and a 32-GiB memory
   ledger. It explicitly records that payload materialization and physical provider coverage remain
   pending.

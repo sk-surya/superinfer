@@ -2,6 +2,7 @@
 #include <superinfer/compiler/semantic_lowering.hpp>
 #include <frontends/qwen38/frontend.hpp>
 #include <sm120/compiler/specializer.h>
+#include <sm120/kernels/baseline/provider.h>
 
 #include <cassert>
 
@@ -66,9 +67,10 @@ int main() {
     }
   }
   assert(saw_f32_delta_state);
+  sm120::BaselineProvider provider;
   const auto physical = sm120::Specializer{}.compile(
       lowered.value(),
-      {compiler::TargetProfile::offline_sm120a(32ULL << 30U, "baseline-v1"), 0, 512});
+      {compiler::TargetProfile::offline_sm120a(32ULL << 30U, "baseline-v1"), 0, 512}, provider);
   assert(!physical.has_value());
   assert(physical.error().code() == base::StatusCode::unsupported);
   assert(!physical.error().context().empty());

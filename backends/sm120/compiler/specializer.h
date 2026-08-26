@@ -11,6 +11,7 @@
 #include <superinfer/compiler/target.h>
 #include <superinfer/ir/lowered/module.hpp>
 #include <superinfer/ir/physical_plan.hpp>
+#include <superinfer/kernels/kernel_provider.hpp>
 
 namespace superinfer::sm120 {
 
@@ -34,7 +35,8 @@ struct SpecializationResult final {
 class Specializer final {
  public:
   [[nodiscard]] base::Result<SpecializationResult> compile(
-      const ir::lowered::Module& lowered, const CompileOptions& options) const {
+      const ir::lowered::Module& lowered, const CompileOptions& options,
+      const kernels::KernelProvider& provider) const {
     base::Status target_status = options.target.validate();
     if (!target_status.ok()) return target_status.with_context("sm120 target");
     base::Status lowered_status = lowered.verify();
@@ -86,13 +88,14 @@ class Specializer final {
     }
 
     std::vector<ir::physical::CommandId> dependencies;
+    std::uint64_t workspace_bytes = 0;
     for (const ir::lowered::KernelRequirement& requirement : lowered.kernel_requirements()) {
       if (requirement.target_capability != options.target.compute_capability) {
         return base::Status::unsupported("lowered kernel requirement targets an incompatible capability");
       }
-      const auto kernel = kernel_id(requirement.operation);
-      if (!kernel.has_value()) {
-        base::Status error = kernel.error();
+      const auto candidate = select_candidate(provider, requirement);
+      if (!candidate.has_value()) {
+        base::Status error = candidate.error();
         return error.with_context(requirement.operation);
       }
       if (requirement.operands.empty()) {
@@ -108,14 +111,18 @@ class Specializer final {
         }
         operands.push_back(buffer_for_tensor[operand.value()]);
       }
-      const auto command = plan_builder.add_command(kernel.value(), std::move(operands), dependencies,
-                                                    0, 0, 0);
+      workspace_bytes = std::max(workspace_bytes, candidate.value().workspace_bytes);
+      const auto command = plan_builder.add_command(
+          candidate.value().id, std::move(operands), dependencies, 0, 0,
+          candidate.value().workspace_bytes);
       if (!command.has_value()) {
         base::Status error = command.error();
         return error.with_context("physical command");
       }
       dependencies = {command.value()};
     }
+    plan_builder.set_resource_bounds(
+        {memory.value().device_arena_bytes, workspace_bytes, options.max_commands});
     const auto plan = std::move(plan_builder).finalize(
         {options.target.compute_capability, options.target.kernel_catalog});
     if (!plan.has_value()) {
@@ -164,13 +171,31 @@ class Specializer final {
     return base::Status::unsupported("lowered tensor dtype is unsupported by sm120 baseline");
   }
 
-  static base::Result<base::KernelId> kernel_id(std::string_view operation) {
-    constexpr std::string_view names[] = {"copy", "residual", "rms_norm", "layer_norm"};
-    constexpr std::uint64_t ids[] = {1, 4, 5, 6};
-    for (std::size_t index = 0; index < std::size(names); ++index) {
-      if (operation == names[index]) return base::KernelId{ids[index]};
+  struct SelectedKernel final {
+    base::KernelId id;
+    std::uint64_t workspace_bytes;
+  };
+
+  static base::Result<SelectedKernel> select_candidate(
+      const kernels::KernelProvider& provider, const ir::lowered::KernelRequirement& requirement) {
+    const auto candidates = provider.enumerate({requirement.operation, requirement.target_capability});
+    if (!candidates.has_value()) return candidates.error();
+    if (candidates.value().empty()) {
+      return base::Status::unsupported("kernel provider returned no candidates");
     }
-    return base::Status::unsupported("baseline kernel operation is not registered");
+    const kernels::KernelCandidate* selected = nullptr;
+    for (const kernels::KernelCandidate& candidate : candidates.value()) {
+      if (candidate.id.value() == 0 || !candidate.deterministic) continue;
+      if (selected == nullptr || candidate.workspace_bytes < selected->workspace_bytes ||
+          (candidate.workspace_bytes == selected->workspace_bytes &&
+           candidate.id.value() < selected->id.value())) {
+        selected = &candidate;
+      }
+    }
+    if (selected == nullptr) {
+      return base::Status::failed_precondition("kernel provider has no deterministic usable candidate");
+    }
+    return SelectedKernel{selected->id, selected->workspace_bytes};
   }
 };
 

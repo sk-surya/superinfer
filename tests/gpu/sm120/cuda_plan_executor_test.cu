@@ -1,5 +1,6 @@
 #include <sm120/runtime/cuda_plan_executor.cuh>
 #include <sm120/compiler/specializer.h>
+#include <sm120/kernels/baseline/provider.h>
 
 #include <cassert>
 #include <array>
@@ -288,9 +289,10 @@ int main() {
              .ok());
   const auto lowered = std::move(lowered_builder).build();
   assert(lowered.has_value());
+  sm120::BaselineProvider provider;
   const auto specialized = sm120::Specializer{}.compile(
       lowered.value(), {compiler::TargetProfile::offline_sm120a(1ULL << 30U, "baseline-v1"),
-                        256, 8});
+                        256, 8}, provider);
   assert(specialized.has_value());
   auto compiled_session = sm120::cuda_runtime::CudaPlanSession::create(
       specialized.value().plan, 120, "baseline-v1");

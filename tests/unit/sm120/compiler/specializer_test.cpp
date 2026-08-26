@@ -1,6 +1,7 @@
 #include <superinfer/compiler/target.h>
 #include <superinfer/ir/lowered/module.hpp>
 #include <sm120/compiler/specializer.h>
+#include <sm120/kernels/baseline/provider.h>
 
 #include <cassert>
 #include <string>
@@ -35,7 +36,8 @@ int main() {
   using namespace superinfer;
   const auto target = compiler::TargetProfile::offline_sm120a(1ULL << 30U, "baseline-v1");
   sm120::Specializer specializer;
-  const auto result = specializer.compile(make_fixture(), {target, 256, 64});
+  sm120::BaselineProvider provider;
+  const auto result = specializer.compile(make_fixture(), {target, 256, 64}, provider);
   assert(result.has_value());
   assert(result.value().plan.verify().ok());
   assert(result.value().plan.capability().target_capability == 120);
@@ -47,19 +49,19 @@ int main() {
   assert(result.value().plan.commands().front().kernel.value() == 5);
   assert(result.value().plan.commands().front().buffers.size() == 3);
 
-  const auto second = specializer.compile(make_fixture(), {target, 256, 64});
+  const auto second = specializer.compile(make_fixture(), {target, 256, 64}, provider);
   assert(second.has_value());
   assert(second.value().plan.dump() == result.value().plan.dump());
   assert(second.value().memory.dump() == result.value().memory.dump());
 
   auto incompatible = target;
   incompatible.compute_capability = 89;
-  const auto rejected = specializer.compile(make_fixture(), {incompatible, 256, 64});
+  const auto rejected = specializer.compile(make_fixture(), {incompatible, 256, 64}, provider);
   assert(!rejected.has_value());
   assert(rejected.error().code() == base::StatusCode::unsupported);
 
   const auto low_budget = specializer.compile(
-      make_fixture(), {compiler::TargetProfile::offline_sm120a(8, "baseline-v1"), 256, 64});
+      make_fixture(), {compiler::TargetProfile::offline_sm120a(8, "baseline-v1"), 256, 64}, provider);
   assert(!low_budget.has_value());
   assert(low_budget.error().code() == base::StatusCode::resource_exhausted);
 
@@ -72,7 +74,7 @@ int main() {
   assert(role_builder.add_kernel_requirement("rms_norm", 120, {kv_tensor.value()}).ok());
   const auto role_module = std::move(role_builder).build();
   assert(role_module.has_value());
-  const auto role_result = specializer.compile(role_module.value(), {target, 256, 64});
+  const auto role_result = specializer.compile(role_module.value(), {target, 256, 64}, provider);
   assert(role_result.has_value());
   assert(role_result.value().memory.allocations.front().allocation_class ==
          compiler::AllocationClass::kv_state);

@@ -83,6 +83,27 @@ def _write_source(root: Path, *, indexed_name: str = "weight") -> None:
     )
 
 
+def _write_quantized_source(root: Path, *, include_tensor_scale: bool = True) -> None:
+    _write_source(root)
+    descriptors: dict[str, object] = {
+        "layer.weight": {"dtype": "U8", "shape": [2, 8], "data_offsets": [0, 8]},
+        "layer.weight_scale": {"dtype": "F8_E4M3", "shape": [2, 1], "data_offsets": [8, 10]},
+    }
+    if include_tensor_scale:
+        descriptors["layer.weight_scale_2"] = {
+            "dtype": "F32", "shape": [], "data_offsets": [10, 14]
+        }
+    header = json.dumps(descriptors, separators=(",", ":")).encode("utf-8")
+    payload = b"\0" * (14 if include_tensor_scale else 10)
+    (root / "model-00001-of-00001.safetensors").write_bytes(
+        struct.pack("<Q", len(header)) + header + payload
+    )
+    (root / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {name: "model-00001-of-00001.safetensors" for name in descriptors}}),
+        encoding="utf-8",
+    )
+
+
 class Qwen38SourceTests(unittest.TestCase):
     def test_inventory_is_deterministic_and_authenticates_payload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -173,6 +194,30 @@ class Qwen38SourceTests(unittest.TestCase):
             (root / "model-00001-of-00001.safetensors").write_bytes(struct.pack("<Q", len(header)) + header + b"\0")
             inventory = validate_source(root, enforce_pinned=False)
             self.assertEqual(inventory.tensors[0].role, "scale")
+
+    def test_quantized_weights_record_validated_sidecar_bindings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_quantized_source(root)
+            inventory = validate_source(root, enforce_pinned=False)
+            bindings = inventory.manifest()["quantization"]["bindings"]
+            self.assertEqual(
+                bindings,
+                [{
+                    "weight": "layer.weight",
+                    "block_scale": "layer.weight_scale",
+                    "tensor_scale": "layer.weight_scale_2",
+                    "group_size": 16,
+                    "layout": "nvfp4-row-major-packed-low-high",
+                }],
+            )
+
+    def test_quantized_weight_without_tensor_scale_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_quantized_source(root, include_tensor_scale=False)
+            with self.assertRaisesRegex(Qwen38ValidationError, r"missing_quantization_scale \[layer.weight\]"):
+                validate_source(root, enforce_pinned=False)
 
     def test_shard_path_escape_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

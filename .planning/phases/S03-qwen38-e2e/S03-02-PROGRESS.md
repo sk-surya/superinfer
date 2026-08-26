@@ -122,6 +122,10 @@ updated: 2026-08-26
   authored query-head, KV-head, head-dimension, and position counts; the CUDA command validates
   contiguous FP32 query/cache/output shapes and matches the independent grouped-attention oracle
   on RTX 5090. Qwen projection, RoPE, KV append, and recurrent DeltaNet composition remain open.
+- Conversion now validates every packed NVFP4 weight's paired `weight_scale` and scalar
+  `weight_scale_2` records, including ModelOpt dtype/shape contracts, and records deterministic
+  sidecar bindings in the manifest. The pinned payload inventory contains 401 valid pairs; missing
+  or mismatched sidecars fail before artifact emission.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

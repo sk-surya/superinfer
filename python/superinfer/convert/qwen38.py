@@ -383,6 +383,51 @@ def _inventory(model_dir: Path, index: Mapping[str, Any]) -> tuple[TensorRecord,
     return tuple(records)
 
 
+def _quantization_bindings(tensors: tuple[TensorRecord, ...]) -> list[dict[str, Any]]:
+    """Validate and name the ModelOpt NVFP4 sidecars for every packed weight."""
+
+    by_name = {tensor.name: tensor for tensor in tensors}
+    bindings: list[dict[str, Any]] = []
+    for weight in tensors:
+        if weight.dtype != "U8":
+            continue
+        if not weight.name.endswith(".weight"):
+            raise Qwen38ValidationError(
+                "quantization_shape_mismatch", weight.name, "packed NVFP4 weight name is invalid"
+            )
+        weight_prefix = weight.name[: -len(".weight")]
+        block_name = f"{weight_prefix}.weight_scale"
+        tensor_name = f"{weight_prefix}.weight_scale_2"
+        block_scale = by_name.get(block_name)
+        tensor_scale = by_name.get(tensor_name)
+        if block_scale is None or tensor_scale is None:
+            raise Qwen38ValidationError(
+                "missing_quantization_scale", weight.name, "NVFP4 weight sidecars are incomplete"
+            )
+        if block_scale.dtype != "F8_E4M3" or tensor_scale.dtype != "F32":
+            raise Qwen38ValidationError(
+                "quantization_scale_mismatch", weight.name, "NVFP4 sidecar dtypes are invalid"
+            )
+        if len(weight.shape) != 2 or weight.shape[1] == 0 or weight.shape[1] % 8 != 0:
+            raise Qwen38ValidationError(
+                "quantization_shape_mismatch", weight.name, "packed NVFP4 weight shape is invalid"
+            )
+        if block_scale.shape != (weight.shape[0], weight.shape[1] // 8) or tensor_scale.shape != ():
+            raise Qwen38ValidationError(
+                "quantization_shape_mismatch", weight.name, "NVFP4 sidecar shapes do not match weight"
+            )
+        bindings.append(
+            {
+                "weight": weight.name,
+                "block_scale": block_name,
+                "tensor_scale": tensor_name,
+                "group_size": 16,
+                "layout": "nvfp4-row-major-packed-low-high",
+            }
+        )
+    return bindings
+
+
 def validate_source(
     model_dir: Path,
     *,
@@ -415,6 +460,7 @@ def validate_source(
     index = _required_mapping(_read_json(model_dir / "model.safetensors.index.json", "tensor_index"), "tensor_index")
     tensors = _inventory(model_dir, index)
     quantization["observed_tensor_dtypes"] = sorted({tensor.dtype for tensor in tensors})
+    quantization["bindings"] = _quantization_bindings(tensors)
     file_hashes: dict[str, str]
     shard_names = sorted({record.shard for record in tensors})
     file_hashes = _parallel_file_hashes(model_dir, (*_REQUIRED_FILES, *shard_names))

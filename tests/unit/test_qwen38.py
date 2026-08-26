@@ -58,7 +58,18 @@ def _write_source(root: Path, *, indexed_name: str = "weight") -> None:
     (root / "chat_template.jinja").write_text("{{ messages }}", encoding="utf-8")
     (root / "vocab.json").write_text(json.dumps({"x": 0}), encoding="utf-8")
     (root / "merges.txt").write_text("", encoding="utf-8")
-    (root / "hf_quant_config.json").write_text("{}", encoding="utf-8")
+    (root / "hf_quant_config.json").write_text(
+        json.dumps({
+            "producer": {"name": "modelopt", "version": "fixture"},
+            "quantization": {
+                "quant_algo": "NVFP4",
+                "group_size": 16,
+                "kv_cache_quant_algo": "FP8",
+                "exclude_modules": [],
+            },
+        }),
+        encoding="utf-8",
+    )
     header = json.dumps(
         {indexed_name: {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}},
         separators=(",", ":"),
@@ -84,6 +95,7 @@ class Qwen38SourceTests(unittest.TestCase):
             self.assertEqual(first.tensors[0].data_end, 4)
             self.assertEqual(first.normalized_tensor_mapping()[0]["role"], "weight")
             self.assertIn("model-00001-of-00001.safetensors", first.file_hashes)
+            self.assertEqual(first.manifest()["quantization"]["algorithm"], "NVFP4")
 
     def test_config_mismatch_fails_before_tensor_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -120,6 +132,34 @@ class Qwen38SourceTests(unittest.TestCase):
             _write_source(root)
             (root / "config.json").write_bytes(b"{\xff")
             with self.assertRaisesRegex(Qwen38ValidationError, r"invalid_encoding \[config\]"):
+                validate_source(root, enforce_pinned=False)
+
+    def test_tokenizer_eos_contract_is_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_source(root)
+            (root / "tokenizer_config.json").write_text(
+                json.dumps({"tokenizer_class": "Qwen2Tokenizer", "model_max_length": 262144, "eos_token": "bad"}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(Qwen38ValidationError, r"tokenizer_mismatch \[tokenizer_config.eos_token\]"):
+                validate_source(root, enforce_pinned=False)
+
+    def test_quantization_contract_is_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_source(root)
+            quantization = {
+                "producer": {"name": "modelopt", "version": "fixture"},
+                "quantization": {
+                    "quant_algo": "FP8",
+                    "group_size": 16,
+                    "kv_cache_quant_algo": "FP8",
+                    "exclude_modules": [],
+                },
+            }
+            (root / "hf_quant_config.json").write_text(json.dumps(quantization), encoding="utf-8")
+            with self.assertRaisesRegex(Qwen38ValidationError, r"quantization_mismatch \[hf_quant_config.quantization.quant_algo\]"):
                 validate_source(root, enforce_pinned=False)
 
     def test_shard_path_escape_is_rejected(self) -> None:

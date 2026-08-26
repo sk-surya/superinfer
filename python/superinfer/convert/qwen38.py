@@ -45,6 +45,7 @@ class Qwen38Inventory:
     derivative_repository: str
     derivative_revision: str
     config: Mapping[str, Any]
+    quantization: Mapping[str, Any]
     tensors: tuple[TensorRecord, ...]
     file_hashes: Mapping[str, str]
 
@@ -80,6 +81,7 @@ class Qwen38Inventory:
             "derivative_revision": self.derivative_revision,
             "architecture": self.config["architectures"][0],
             "config": self.config,
+            "quantization": self.quantization,
             "tensor_count": len(self.tensors),
             "tensor_inventory_sha256": hashlib.sha256(self.canonical_tensor_bytes()).hexdigest(),
             "tensor_mapping": self.normalized_tensor_mapping(),
@@ -225,6 +227,32 @@ def _validate_tokenizer(model_dir: Path) -> None:
         )
 
 
+def _validate_quantization(model_dir: Path) -> dict[str, Any]:
+    value = _required_mapping(_read_json(model_dir / "hf_quant_config.json", "hf_quant_config"), "hf_quant_config")
+    producer = _required_mapping(value.get("producer"), "hf_quant_config.producer")
+    quantization = _required_mapping(value.get("quantization"), "hf_quant_config.quantization")
+    if producer.get("name") != "modelopt" or not isinstance(producer.get("version"), str):
+        raise Qwen38ValidationError("quantization_mismatch", "hf_quant_config.producer", "expected ModelOpt producer")
+    if quantization.get("quant_algo") != "NVFP4":
+        raise Qwen38ValidationError("quantization_mismatch", "hf_quant_config.quantization.quant_algo", "expected NVFP4")
+    if quantization.get("group_size") != 16:
+        raise Qwen38ValidationError("quantization_mismatch", "hf_quant_config.quantization.group_size", "expected 16")
+    if quantization.get("kv_cache_quant_algo") != "FP8":
+        raise Qwen38ValidationError(
+            "quantization_mismatch", "hf_quant_config.quantization.kv_cache_quant_algo", "expected FP8"
+        )
+    excluded = quantization.get("exclude_modules")
+    if not isinstance(excluded, list) or not all(isinstance(entry, str) and entry for entry in excluded):
+        raise Qwen38ValidationError(
+            "quantization_mismatch", "hf_quant_config.quantization.exclude_modules", "expected non-empty strings"
+        )
+    return {
+        "algorithm": "NVFP4",
+        "group_size": 16,
+        "kv_cache_algorithm": "FP8",
+        "producer": {"name": "modelopt", "version": producer["version"]},
+        "excluded_module_patterns": sorted(excluded),
+    }
 def _tensor_role(name: str) -> str:
     if "embed_tokens" in name:
         return "embedding"
@@ -379,8 +407,10 @@ def validate_source(
         raise Qwen38ValidationError("source_identity_mismatch", "source", "repository and revision are immutable")
     config = _validate_config(_required_mapping(_read_json(model_dir / "config.json", "config"), "config"))
     _validate_tokenizer(model_dir)
+    quantization = _validate_quantization(model_dir)
     index = _required_mapping(_read_json(model_dir / "model.safetensors.index.json", "tensor_index"), "tensor_index")
     tensors = _inventory(model_dir, index)
+    quantization["observed_tensor_dtypes"] = sorted({tensor.dtype for tensor in tensors})
     file_hashes: dict[str, str]
     shard_names = sorted({record.shard for record in tensors})
     file_hashes = _parallel_file_hashes(model_dir, (*_REQUIRED_FILES, *shard_names))
@@ -396,6 +426,7 @@ def validate_source(
         derivative_repository,
         derivative_revision,
         config,
+        quantization,
         tensors,
         file_hashes,
     )

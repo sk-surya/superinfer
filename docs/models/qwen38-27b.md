@@ -23,7 +23,7 @@ and complete local input hashes without checking model weights into the reposito
 
 ## Validation
 
-Run the header-only validator before any bulk conversion:
+Run the provenance validator before any bulk conversion:
 
 ```sh
 PYTHONPATH=python python3 - <<'PY'
@@ -40,5 +40,6 @@ PY
 ```
 
 The validator checks required config/tokenizer fields, the index/header tensor-name bijection,
-positive shapes, safe offsets, known layer types, and stable revision formats. It reads safetensors
-headers only; a mismatch fails before payload materialization.
+positive shapes, safe offsets, the pinned layer schedule, and immutable source/file hashes. It parses
+safetensors headers before streaming shard bytes for authentication; a mismatch fails before payload
+materialization.

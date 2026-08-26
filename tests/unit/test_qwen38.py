@@ -4,7 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from superinfer.convert.qwen38 import Qwen38ValidationError, validate_source
+from superinfer.artifact import inspect_artifact
+from superinfer.convert.qwen38 import (
+    Qwen38ValidationError,
+    validate_source,
+    write_qwen38_metadata_artifact,
+)
 
 
 def _config() -> dict[str, object]:
@@ -118,6 +123,23 @@ class Qwen38SourceTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(Qwen38ValidationError, "invalid_tensor_index"):
                 validate_source(root, enforce_pinned=False)
+
+    def test_metadata_artifact_is_deterministic_and_declares_unavailable_kernels(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_source(root)
+            first_path = root / "first.sinf"
+            second_path = root / "second.sinf"
+            write_qwen38_metadata_artifact(root, first_path, max_context=64, enforce_pinned=False)
+            write_qwen38_metadata_artifact(root, second_path, max_context=64, enforce_pinned=False)
+            self.assertEqual(first_path.read_bytes(), second_path.read_bytes())
+            summary = inspect_artifact(first_path)
+            conversion = summary["manifest"]["conversion"]
+            self.assertFalse(conversion["payload_included"])
+            self.assertEqual(conversion["max_context"], 64)
+            statuses = {entry["baseline_status"] for entry in conversion["operation_capabilities"]}
+            self.assertEqual(statuses, {"executable", "unavailable"})
+            self.assertGreater(conversion["memory_ledger_bytes"]["margin"], 0)
 
 
 if __name__ == "__main__":

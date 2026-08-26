@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from superinfer.artifact import write_artifact
+
 
 class Qwen38ValidationError(ValueError):
     """A source/config/tensor contract violation with a stable field-oriented diagnostic."""
@@ -381,3 +383,99 @@ def validate_source(
             if inventory.file_hashes.get(filename) != expected:
                 raise Qwen38ValidationError("source_hash_mismatch", filename, "pinned source hash differs")
     return inventory
+
+
+_QWEN38_OPERATION_CAPABILITIES = (
+    "embedding",
+    "rms_norm",
+    "gated_delta_attention",
+    "attention",
+    "residual",
+    "gated_dense_ffn",
+    "lm_head",
+)
+_SM120_EXECUTABLE_BASELINE = frozenset({"rms_norm", "residual"})
+
+
+def write_qwen38_metadata_artifact(
+    model_dir: Path,
+    output: Path,
+    *,
+    max_context: int | None = None,
+    enforce_pinned: bool = True,
+) -> None:
+    """Write deterministic source metadata and an explicit pre-execution coverage ledger.
+
+    This recipe intentionally contains no model-weight payload. It is the reproducible conversion
+    checkpoint used before a physical plan is accepted; the manifest says exactly which baseline
+    capabilities remain unavailable rather than manufacturing executable kernel records.
+    """
+    inventory = validate_source(model_dir, enforce_pinned=enforce_pinned)
+    text_config = inventory.config["text_config"]
+    assert isinstance(text_config, dict)
+    context = max_context if max_context is not None else int(text_config["max_position_embeddings"])
+    if context <= 0 or context > int(text_config["max_position_embeddings"]):
+        raise Qwen38ValidationError("invalid_value", "max_context", "context exceeds pinned model capacity")
+
+    shard_bytes = sum(
+        (model_dir / name).stat().st_size
+        for name in inventory.file_hashes
+        if name.endswith(".safetensors")
+    )
+    full_attention_layers = 16
+    linear_attention_layers = 48
+    kv_bytes = full_attention_layers * context * 4 * 256 * 2
+    delta_state_bytes = linear_attention_layers * 16 * 128 * 128 * 2
+    convolution_state_bytes = linear_attention_layers * 4 * 5120 * 2
+    activation_bytes = 8 * 5120 * 2
+    workspace_bytes = 256 * 1024 * 1024
+    device_budget_bytes = 32 * 1024**3
+    required_bytes = shard_bytes + kv_bytes + delta_state_bytes + convolution_state_bytes + activation_bytes + workspace_bytes
+
+    manifest = inventory.manifest()
+    manifest["conversion"] = {
+        "recipe": "qwen38-metadata-v1",
+        "max_context": context,
+        "payload_included": False,
+        "physical_execution_status": "pending-baseline-provider-coverage",
+        "operation_capabilities": [
+            {
+                "semantic_operation": operation,
+                "target_capability": operation,
+                "baseline_status": "executable" if operation in _SM120_EXECUTABLE_BASELINE else "unavailable",
+            }
+            for operation in _QWEN38_OPERATION_CAPABILITIES
+        ],
+        "memory_ledger_bytes": {
+            "weights": shard_bytes,
+            "full_attention_kv": kv_bytes,
+            "gated_delta_state": delta_state_bytes,
+            "convolution_state": convolution_state_bytes,
+            "activation_safety": activation_bytes,
+            "workspace": workspace_bytes,
+            "device_budget": device_budget_bytes,
+            "required": required_bytes,
+            "margin": device_budget_bytes - required_bytes,
+        },
+    }
+    tensor_table = list(inventory.normalized_tensor_mapping())
+    physical_plan = json.dumps(
+        {
+            "version": 1,
+            "target": "sm_120a",
+            "kernel_catalog": "baseline-v1",
+            "status": "pending-baseline-provider-coverage",
+            "commands": [],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    write_artifact(
+        {
+            "manifest": manifest,
+            "tensors": tensor_table,
+            "physical_plan": physical_plan,
+            "payload_hex": "",
+        },
+        output,
+    )

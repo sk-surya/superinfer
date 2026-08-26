@@ -69,6 +69,10 @@ add_executable(superinfer_sm120_plan_binding unit/sm120/runtime/plan_binding_tes
 target_link_libraries(superinfer_sm120_plan_binding PRIVATE superinfer_runtime)
 add_test(NAME superinfer.sm120.plan_binding COMMAND superinfer_sm120_plan_binding)
 
+add_executable(superinfer_sm120_session_ownership unit/sm120/runtime/session_ownership_test.cpp)
+target_link_libraries(superinfer_sm120_session_ownership PRIVATE superinfer_runtime)
+add_test(NAME superinfer.sm120.session_ownership COMMAND superinfer_sm120_session_ownership)
+
 add_executable(superinfer_sm120_reference_executor integration/sm120/reference_executor_test.cpp)
 target_link_libraries(superinfer_sm120_reference_executor PRIVATE superinfer_ir)
 target_include_directories(superinfer_sm120_reference_executor PRIVATE
@@ -87,6 +91,7 @@ if(SUPERINFER_ENABLE_SANITIZERS)
     superinfer.sm120.memory_planner superinfer.sm120.memory_property
     superinfer.sm120.memory_golden superinfer.sm120.specializer
     superinfer.sm120.baseline_provider superinfer.sm120.plan_binding
+    superinfer.sm120.session_ownership
     superinfer.sm120.reference_executor superinfer.artifact.binary
     PROPERTIES ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
 endif()

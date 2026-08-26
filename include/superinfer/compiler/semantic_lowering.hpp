@@ -48,7 +48,7 @@ class SemanticLowering final {
       const auto lowered = builder.add_tensor(
           tensor.id, std::move(shape), ir::lowered::LayoutKind::row_major,
           base::MemorySpace::device, options.required_alignment, tensor.spec.dtype,
-          ir::semantic::DType::f32);
+          ir::semantic::DType::f32, tensor.spec.role);
       if (!lowered.has_value()) {
         base::Status error = lowered.error();
         return error.with_context("semantic tensor lowering");

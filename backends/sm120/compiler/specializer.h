@@ -60,7 +60,7 @@ class Specializer final {
                           compiler::ArenaKind::device, bytes.value(),
                           std::max(options.target.required_alignment, tensor.alignment),
                           {0, std::max<std::uint64_t>(1, lowered.kernel_requirements().size())},
-                          compiler::AllocationClass::activation});
+                          allocation_class(tensor.role)});
     }
     const auto memory = planner.plan(requests);
     if (!memory.has_value()) {
@@ -126,6 +126,17 @@ class Specializer final {
   }
 
  private:
+  static compiler::AllocationClass allocation_class(ir::semantic::TensorRole role) noexcept {
+    switch (role) {
+      case ir::semantic::TensorRole::weight: return compiler::AllocationClass::persistent_weight;
+      case ir::semantic::TensorRole::kv_cache: return compiler::AllocationClass::kv_state;
+      case ir::semantic::TensorRole::decode_state: return compiler::AllocationClass::decode_state;
+      case ir::semantic::TensorRole::activation:
+      case ir::semantic::TensorRole::logits: return compiler::AllocationClass::activation;
+    }
+    return compiler::AllocationClass::activation;
+  }
+
   static base::Result<std::uint64_t> tensor_bytes(const ir::lowered::Tensor& tensor) {
     std::uint64_t elements = 1;
     for (const std::uint64_t dimension : tensor.physical_shape) {

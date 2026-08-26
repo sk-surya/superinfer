@@ -45,6 +45,14 @@ int main() {
   assert(lowered.value().kernel_requirements().size() == module.value().operations().size());
   assert(lowered.value().kernel_requirements()[1].operation == "rms_norm");
   assert(lowered.value().kernel_requirements()[2].operation == "gated_delta_attention");
+  std::size_t lowered_kv = 0;
+  std::size_t lowered_decode_state = 0;
+  for (const auto& tensor : lowered.value().tensors()) {
+    lowered_kv += tensor.role == ir::semantic::TensorRole::kv_cache;
+    lowered_decode_state += tensor.role == ir::semantic::TensorRole::decode_state;
+  }
+  assert(lowered_kv == 160);
+  assert(lowered_decode_state == 96);
 
   const auto rejected_inventory = frontend.validate({std::string{frontends::qwen38::kSourceIdentity}, 1,
                                                      std::string{frontends::qwen38::kTensorInventorySha256}});

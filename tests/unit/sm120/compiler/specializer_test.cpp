@@ -62,5 +62,19 @@ int main() {
       make_fixture(), {compiler::TargetProfile::offline_sm120a(8, "baseline-v1"), 256, 64});
   assert(!low_budget.has_value());
   assert(low_budget.error().code() == base::StatusCode::resource_exhausted);
+
+  ir::lowered::ModuleBuilder role_builder;
+  const auto kv_tensor = role_builder.add_tensor(
+      ir::semantic::TensorId{0}, {2, 4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f16, ir::semantic::DType::f32,
+      ir::semantic::TensorRole::kv_cache);
+  assert(kv_tensor.has_value());
+  assert(role_builder.add_kernel_requirement("rms_norm", 120, {kv_tensor.value()}).ok());
+  const auto role_module = std::move(role_builder).build();
+  assert(role_module.has_value());
+  const auto role_result = specializer.compile(role_module.value(), {target, 256, 64});
+  assert(role_result.has_value());
+  assert(role_result.value().memory.allocations.front().allocation_class ==
+         compiler::AllocationClass::kv_state);
   return 0;
 }

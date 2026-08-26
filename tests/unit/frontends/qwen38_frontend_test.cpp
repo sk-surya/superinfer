@@ -36,6 +36,11 @@ int main() {
       assert(operation.inputs.size() == 3);
       assert(operation.outputs.size() == 3);
     }
+    if (operation.kind == ir::semantic::OperationKind::gated_delta_attention) {
+      assert(operation.attributes.num_heads == 16);
+      assert(operation.attributes.num_kv_heads == 16);
+      assert(operation.attributes.value_head_count == 48);
+    }
   }
 
   const auto lowered = compiler::SemanticLowering{}.lower(module.value(), {120, 16});

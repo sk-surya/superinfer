@@ -75,6 +75,7 @@ struct OperationAttributes final {
   std::uint32_t key_head_dimension{0};
   std::uint32_t value_head_dimension{0};
   std::uint32_t convolution_kernel_dimension{0};
+  std::uint32_t value_head_count{0};
 };
 
 struct Tensor final {
@@ -192,7 +193,7 @@ class Module final {
       }
       if (operation.kind == OperationKind::gated_delta_attention &&
           (attributes.key_head_dimension == 0 || attributes.value_head_dimension == 0 ||
-           attributes.convolution_kernel_dimension == 0)) {
+           attributes.convolution_kernel_dimension == 0 || attributes.value_head_count == 0)) {
         return base::Status::invalid_argument(
             "gated delta attention requires key/value head and convolution dimensions");
       }

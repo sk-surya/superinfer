@@ -81,11 +81,11 @@ class Frontend final : public compiler::ModelFrontend {
       const auto ffn = builder.add_tensor("layer_" + index(layer) + "_ffn", hidden_spec);
       const auto output = builder.add_tensor("layer_" + index(layer) + "_output", hidden_spec);
       const bool full_attention = (layer % 4U) == 3U;
-      const TensorSpec linear_state_spec{{Dimension::static_value(16), Dimension::static_value(128),
+      const TensorSpec linear_state_spec{{Dimension::static_value(48), Dimension::static_value(128),
                                           Dimension::static_value(128)},
                                          DType::bf16, QuantizationIntent::none,
                                          TensorRole::kv_cache};
-      const TensorSpec convolution_state_spec{{Dimension::static_value(4), Dimension::static_value(5120)},
+      const TensorSpec convolution_state_spec{{Dimension::static_value(4), Dimension::static_value(10240)},
                                               DType::bf16, QuantizationIntent::none,
                                               TensorRole::decode_state};
       const TensorSpec full_key_state_spec{{Dimension::static_value(4), Dimension::static_value(256)},
@@ -114,7 +114,7 @@ class Frontend final : public compiler::ModelFrontend {
         return base::Status::invalid_argument("Qwen3.8 input norm operation could not be emitted");
       }
       OperationAttributes attention_attributes;
-      attention_attributes.num_heads = full_attention ? 24 : 48;
+      attention_attributes.num_heads = full_attention ? 24 : 16;
       attention_attributes.num_kv_heads = full_attention ? 4 : 16;
       attention_attributes.head_dimension = full_attention ? 256 : 128;
       attention_attributes.rope_dimension = full_attention ? 64 : 0;
@@ -122,6 +122,7 @@ class Frontend final : public compiler::ModelFrontend {
         attention_attributes.key_head_dimension = 128;
         attention_attributes.value_head_dimension = 128;
         attention_attributes.convolution_kernel_dimension = 4;
+        attention_attributes.value_head_count = 48;
       }
       const OperationKind attention_kind = full_attention
                                                ? OperationKind::grouped_query_attention

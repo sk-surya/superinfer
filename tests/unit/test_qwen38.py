@@ -30,6 +30,8 @@ def _config() -> dict[str, object]:
             "linear_key_head_dim": 128,
             "linear_value_head_dim": 128,
             "linear_conv_kernel_dim": 4,
+            "linear_num_key_heads": 16,
+            "linear_num_value_heads": 48,
             "rms_norm_eps": 1e-6,
             "bos_token_id": 1,
             "eos_token_id": 2,
@@ -70,7 +72,7 @@ def _write_source(root: Path, *, indexed_name: str = "weight") -> None:
 
 
 class Qwen38SourceTests(unittest.TestCase):
-    def test_inventory_is_deterministic_and_header_only(self) -> None:
+    def test_inventory_is_deterministic_and_authenticates_payload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _write_source(root)

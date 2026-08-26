@@ -177,6 +177,8 @@ def _validate_config(config: Mapping[str, Any]) -> dict[str, Any]:
         "linear_key_head_dim": 128,
         "linear_value_head_dim": 128,
         "linear_conv_kernel_dim": 4,
+        "linear_num_key_heads": 16,
+        "linear_num_value_heads": 48,
     }.items():
         if text.get(field) != expected_value:
             raise Qwen38ValidationError("config_mismatch", f"text_config.{field}", f"expected {expected_value}")
@@ -425,8 +427,8 @@ def write_qwen38_metadata_artifact(
     full_attention_layers = 16
     linear_attention_layers = 48
     kv_bytes = full_attention_layers * context * 4 * 256 * 2
-    delta_state_bytes = linear_attention_layers * 16 * 128 * 128 * 2
-    convolution_state_bytes = linear_attention_layers * 4 * 5120 * 2
+    delta_state_bytes = linear_attention_layers * 48 * 128 * 128 * 2
+    convolution_state_bytes = linear_attention_layers * 4 * 10240 * 2
     activation_bytes = 8 * 5120 * 2
     workspace_bytes = 256 * 1024 * 1024
     device_budget_bytes = 32 * 1024**3

@@ -17,6 +17,9 @@ architecture: 64 layers, 48 linear-attention layers, 16 full-attention layers, h
 24 query heads, 4 KV heads, head dimension 256, rotary dimension 64, intermediate size 17408,
 vocabulary 248320, and native context 262144.
 
+The linear path uses 16 key heads and 48 value heads, both with 128-wide heads, plus a four-token
+convolution state. Its recurrent state is therefore distinct from the full-attention KV cache.
+
 The derivative uses ModelOpt NVFP4 W4A4 weights with group size 16 and FP8 KV storage. The checked-in
 [source manifest](../../frontends/qwen38/manifest.json) records metadata, tensor-inventory hash,
 and complete local input hashes without checking model weights into the repository.

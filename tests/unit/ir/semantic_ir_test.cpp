@@ -96,7 +96,7 @@ int main() {
                            QuantizationIntent::none, TensorRole::activation});
   assert(family_input.has_value());
   OperationAttributes attention_attributes{4, 2, 2, 2, 0, 0, 0};
-  OperationAttributes gated_delta_attributes{48, 16, 128, 0, 0, 0, 0, 128, 128, 4};
+  OperationAttributes gated_delta_attributes{16, 16, 128, 0, 0, 0, 0, 128, 128, 4, 48};
   OperationAttributes moe_attributes{0, 0, 0, 0, 8, 2, 0};
   const std::vector<OperationKind> kinds{
       OperationKind::embedding, OperationKind::rms_norm, OperationKind::layer_norm,

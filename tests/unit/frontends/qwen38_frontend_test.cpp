@@ -115,6 +115,10 @@ int main() {
       assert(operation.attributes.num_kv_heads == 16);
       assert(operation.attributes.value_head_count == 48);
     }
+    if (operation.kind == ir::semantic::OperationKind::grouped_query_attention) {
+      assert(operation.attributes.attention_output_gate ==
+             ir::semantic::AttentionOutputGate::sigmoid);
+    }
     if (operation.kind == ir::semantic::OperationKind::gated_dense_ffn) {
       assert(operation.inputs.size() == 4);
     }

@@ -16,12 +16,14 @@ namespace superinfer::kernels {
 struct KernelQuery final {
   KernelQuery(std::string_view operation_value, std::uint32_t target_capability_value,
               std::string_view storage_dtype_value = "f32", std::size_t operand_count_value = 0,
-              std::vector<std::string_view> operand_dtypes_value = {})
+              std::vector<std::string_view> operand_dtypes_value = {},
+              bool attention_output_gate_value = false)
       : operation(operation_value),
         target_capability(target_capability_value),
         storage_dtype(storage_dtype_value),
         operand_count(operand_count_value),
-        operand_dtypes(std::move(operand_dtypes_value)) {}
+        operand_dtypes(std::move(operand_dtypes_value)),
+        attention_output_gate(attention_output_gate_value) {}
 
   std::string_view operation;
   std::uint32_t target_capability;
@@ -31,6 +33,8 @@ struct KernelQuery final {
   std::size_t operand_count{0};
   /** Storage dtypes in semantic operand order; an empty vector preserves legacy query callers. */
   std::vector<std::string_view> operand_dtypes;
+  /** Minimal semantic compatibility bit; richer operation attributes remain an S04 concern. */
+  bool attention_output_gate{false};
 };
 
 /** Describes a candidate's correctness and resource envelope before selection. */

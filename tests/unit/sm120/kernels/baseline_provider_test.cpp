@@ -60,6 +60,10 @@ int main() {
       {"residual", 120, "f32", bf16_residual_operands.size(), bf16_residual_operands});
   assert(!wrong_residual_dtype.has_value());
   assert(wrong_residual_dtype.error().code() == superinfer::base::StatusCode::unsupported);
+  const auto unsupported_attention_gate = provider.enumerate(
+      {"attention", 120, "f32", 4, {}, true});
+  assert(!unsupported_attention_gate.has_value());
+  assert(unsupported_attention_gate.error().code() == superinfer::base::StatusCode::unsupported);
   for (const std::string_view operation : {"cast", "elementwise", "rope", "matmul", "moe_route",
                                             "activation", "sampling"}) {
     const auto candidates = provider.enumerate({operation, 120});

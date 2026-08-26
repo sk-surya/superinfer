@@ -35,6 +35,7 @@ enum class DType { f32, f16, bf16, int8, int32, int4 };
 enum class QuantizationIntent { none, symmetric, asymmetric };
 enum class TensorRole { activation, weight, kv_cache, decode_state, logits };
 enum class NormScaleConvention { direct_weight, one_plus_weight };
+enum class AttentionOutputGate { none, sigmoid };
 
 /** Meaning-level tensor type; storage encoding is deliberately absent. */
 struct TensorSpec final {
@@ -80,6 +81,7 @@ struct OperationAttributes final {
   std::uint32_t value_head_count{0};
   float epsilon{1.0e-5F};
   NormScaleConvention norm_scale_convention{NormScaleConvention::direct_weight};
+  AttentionOutputGate attention_output_gate{AttentionOutputGate::none};
 };
 
 struct Tensor final {
@@ -225,6 +227,9 @@ class Module final {
                              operation.kind == OperationKind::multi_head_attention ||
                              operation.kind == OperationKind::grouped_query_attention ||
                              operation.kind == OperationKind::local_attention;
+      if (!attention && attributes.attention_output_gate != AttentionOutputGate::none) {
+        return base::Status::invalid_argument("attention output gate is only valid for attention");
+      }
       if (attention && (attributes.num_heads == 0 || attributes.num_kv_heads == 0 ||
                         attributes.head_dimension == 0)) {
         return base::Status::invalid_argument("attention requires positive heads and head dimension");
@@ -297,6 +302,10 @@ class Module final {
            operation->attributes.norm_scale_convention != NormScaleConvention::direct_weight)) {
         output << " epsilon=" << operation->attributes.epsilon
                << " scale=" << norm_scale_convention_name(operation->attributes.norm_scale_convention);
+      }
+      if (operation->attributes.attention_output_gate != AttentionOutputGate::none) {
+        output << " output_gate="
+               << attention_output_gate_name(operation->attributes.attention_output_gate);
       }
       output << "\n";
     }
@@ -402,6 +411,13 @@ class Module final {
     switch (convention) {
       case NormScaleConvention::direct_weight: return "direct_weight";
       case NormScaleConvention::one_plus_weight: return "one_plus_weight";
+    }
+    return "unknown";
+  }
+  static std::string_view attention_output_gate_name(AttentionOutputGate gate) {
+    switch (gate) {
+      case AttentionOutputGate::none: return "none";
+      case AttentionOutputGate::sigmoid: return "sigmoid";
     }
     return "unknown";
   }

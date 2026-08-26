@@ -94,6 +94,9 @@ class BaselineProvider final : public kernels::KernelProvider {
       return std::vector<kernels::KernelCandidate>{{base::KernelId{13}, "sm120.baseline", true, 0}};
     }
     if (query.operation == "attention") {
+      if (query.attention_output_gate) {
+        return base::Status::unsupported("baseline attention does not implement an output gate");
+      }
       if (query.operand_count != 0 && query.operand_count != 4) {
         return base::Status::unsupported("baseline attention requires four physical operands");
       }

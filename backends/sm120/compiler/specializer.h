@@ -261,7 +261,9 @@ class Specializer final {
     }
     const auto candidates = provider.enumerate(
         {requirement.operation, requirement.target_capability, storage_dtype,
-         requirement.operands.size(), std::move(operand_dtypes)});
+         requirement.operands.size(), std::move(operand_dtypes),
+         requirement.attributes.attention_output_gate !=
+             ir::semantic::AttentionOutputGate::none});
     if (!candidates.has_value()) return candidates.error();
     if (candidates.value().empty()) {
       return base::Status::unsupported("kernel provider returned no candidates");

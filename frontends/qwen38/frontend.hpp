@@ -166,6 +166,9 @@ class Frontend final : public compiler::ModelFrontend {
       attention_attributes.num_kv_heads = full_attention ? 4 : 16;
       attention_attributes.head_dimension = full_attention ? 256 : 128;
       attention_attributes.rope_dimension = full_attention ? 64 : 0;
+      if (full_attention) {
+        attention_attributes.attention_output_gate = AttentionOutputGate::sigmoid;
+      }
       if (!full_attention) {
         attention_attributes.key_head_dimension = 128;
         attention_attributes.value_head_dimension = 128;

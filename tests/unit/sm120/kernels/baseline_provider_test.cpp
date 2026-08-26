@@ -48,6 +48,12 @@ int main() {
   assert(bf16_norm.has_value());
   assert(bf16_norm.value().size() == 1);
   assert(bf16_norm.value().front().id.value() == 12);
+  const auto wrong_attention_arity = provider.enumerate({"attention", 120, "f32", 5});
+  assert(!wrong_attention_arity.has_value());
+  assert(wrong_attention_arity.error().code() == superinfer::base::StatusCode::unsupported);
+  const auto wrong_delta_arity = provider.enumerate({"gated_delta_attention", 120, "f32", 6});
+  assert(!wrong_delta_arity.has_value());
+  assert(wrong_delta_arity.error().code() == superinfer::base::StatusCode::unsupported);
   for (const std::string_view operation : {"cast", "elementwise", "rope", "matmul", "moe_route",
                                             "activation", "sampling"}) {
     const auto candidates = provider.enumerate({operation, 120});

@@ -215,6 +215,7 @@ int main() {
   assert(attention_dimensions.key_value_heads == 1);
   assert(attention_dimensions.head_dimension == 2);
   assert(attention_dimensions.positions == 2);
+  assert(attention_result.value().plan.dump().find("attention=2x1x2@2") != std::string::npos);
 
   const auto second = specializer.compile(make_fixture(), {target, 256, 64}, provider);
   assert(second.has_value());

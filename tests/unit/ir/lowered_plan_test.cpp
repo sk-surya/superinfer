@@ -85,5 +85,22 @@ int main() {
   const auto cycle = std::move(cycle_builder).finalize({120, "fixture-catalog"});
   assert(!cycle.has_value());
   assert(cycle.error().message().find("cycle") != std::string::npos);
+
+  ir::physical::PlanBuilder typed_builder;
+  typed_builder.set_resource_bounds({64, 0, 1});
+  ir::physical::PhysicalTensorDescriptor typed_tensor;
+  typed_tensor.dtype = ir::physical::PhysicalDType::bf16;
+  typed_tensor.shape = {2, 4};
+  typed_tensor.layout = ir::physical::PhysicalLayout::row_major;
+  const auto typed_buffer = typed_builder.add_buffer(0, 16, 16, typed_tensor);
+  assert(typed_buffer.has_value());
+  assert(typed_builder
+             .add_command(base::KernelId{1}, {typed_buffer.value()}, {}, 0, 0, 0)
+             .has_value());
+  const auto typed_plan = std::move(typed_builder).finalize({120, "fixture-catalog"});
+  assert(typed_plan.has_value());
+  assert(typed_plan.value().commands().front().operands.front().dtype ==
+         ir::physical::PhysicalDType::bf16);
+  assert(typed_plan.value().commands().front().operands.front().shape == std::vector<std::uint64_t>({2, 4}));
   return 0;
 }

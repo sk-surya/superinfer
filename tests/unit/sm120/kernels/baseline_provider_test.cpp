@@ -3,6 +3,7 @@
 #include <array>
 #include <cassert>
 #include <string_view>
+#include <vector>
 
 int main() {
   superinfer::sm120::BaselineProvider provider;
@@ -54,6 +55,11 @@ int main() {
   const auto wrong_delta_arity = provider.enumerate({"gated_delta_attention", 120, "f32", 6});
   assert(!wrong_delta_arity.has_value());
   assert(wrong_delta_arity.error().code() == superinfer::base::StatusCode::unsupported);
+  const std::vector<std::string_view> bf16_residual_operands{"bf16", "bf16", "bf16"};
+  const auto wrong_residual_dtype = provider.enumerate(
+      {"residual", 120, "f32", bf16_residual_operands.size(), bf16_residual_operands});
+  assert(!wrong_residual_dtype.has_value());
+  assert(wrong_residual_dtype.error().code() == superinfer::base::StatusCode::unsupported);
   for (const std::string_view operation : {"cast", "elementwise", "rope", "matmul", "moe_route",
                                             "activation", "sampling"}) {
     const auto candidates = provider.enumerate({operation, 120});

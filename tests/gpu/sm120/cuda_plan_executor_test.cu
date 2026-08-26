@@ -8,8 +8,17 @@
 #include <cstddef>
 #include <cstdlib>
 #include <utility>
+#include <vector>
 
 namespace {
+
+superinfer::ir::physical::PhysicalTensorDescriptor typed_tensor(
+    superinfer::ir::physical::PhysicalDType dtype, std::vector<std::uint64_t> shape,
+    superinfer::ir::physical::StorageEncoding encoding =
+        superinfer::ir::physical::StorageEncoding::none) {
+  return {dtype, std::move(shape), superinfer::ir::physical::PhysicalLayout::row_major, 0,
+          encoding};
+}
 
 __global__ void injected_async_fault() {
   if (threadIdx.x == 0) *static_cast<volatile std::uint32_t*>(nullptr) = 1U;
@@ -64,9 +73,9 @@ superinfer::ir::physical::Plan make_embedding_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
   builder.set_resource_bounds({48, 0, 1});
-  assert(builder.add_buffer(0, 4, 4).has_value());
-  assert(builder.add_buffer(8, 24, 8).has_value());
-  assert(builder.add_buffer(40, 8, 8).has_value());
+  assert(builder.add_buffer(0, 4, 4, typed_tensor(ir::physical::PhysicalDType::int32, {1})).has_value());
+  assert(builder.add_buffer(8, 24, 8, typed_tensor(ir::physical::PhysicalDType::f32, {3, 2})).has_value());
+  assert(builder.add_buffer(40, 8, 8, typed_tensor(ir::physical::PhysicalDType::f32, {1, 2})).has_value());
   assert(builder
              .add_command(base::KernelId{7},
                           {ir::physical::BufferId{0}, ir::physical::BufferId{1},
@@ -82,9 +91,9 @@ superinfer::ir::physical::Plan make_bf16_embedding_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
   builder.set_resource_bounds({32, 0, 1});
-  assert(builder.add_buffer(0, 4, 4).has_value());
-  assert(builder.add_buffer(8, 12, 8).has_value());
-  assert(builder.add_buffer(24, 8, 8).has_value());
+  assert(builder.add_buffer(0, 4, 4, typed_tensor(ir::physical::PhysicalDType::int32, {1})).has_value());
+  assert(builder.add_buffer(8, 12, 8, typed_tensor(ir::physical::PhysicalDType::bf16, {3, 2})).has_value());
+  assert(builder.add_buffer(24, 8, 8, typed_tensor(ir::physical::PhysicalDType::f32, {1, 2})).has_value());
   assert(builder
              .add_command(base::KernelId{8},
                           {ir::physical::BufferId{0}, ir::physical::BufferId{1},
@@ -100,9 +109,12 @@ superinfer::ir::physical::Plan make_nvfp4_dequantize_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
   builder.set_resource_bounds({80, 0, 1});
-  assert(builder.add_buffer(0, 8, 8).has_value());
-  assert(builder.add_buffer(8, 1, 1).has_value());
-  assert(builder.add_buffer(16, 64, 8).has_value());
+  assert(builder.add_buffer(0, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::u8, {16},
+                                         ir::physical::StorageEncoding::nvfp4_packed))
+             .has_value());
+  assert(builder.add_buffer(8, 1, 1, typed_tensor(ir::physical::PhysicalDType::u8, {1})).has_value());
+  assert(builder.add_buffer(16, 64, 8, typed_tensor(ir::physical::PhysicalDType::f32, {16})).has_value());
   assert(builder
              .add_command(base::KernelId{9},
                           {ir::physical::BufferId{0}, ir::physical::BufferId{1},
@@ -157,9 +169,9 @@ superinfer::ir::physical::Plan make_bf16_rms_norm_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
   builder.set_resource_bounds({40, 0, 1});
-  assert(builder.add_buffer(0, 16, 8).has_value());
-  assert(builder.add_buffer(16, 16, 8).has_value());
-  assert(builder.add_buffer(32, 8, 8).has_value());
+  assert(builder.add_buffer(0, 16, 8, typed_tensor(ir::physical::PhysicalDType::f32, {4})).has_value());
+  assert(builder.add_buffer(16, 16, 8, typed_tensor(ir::physical::PhysicalDType::f32, {4})).has_value());
+  assert(builder.add_buffer(32, 8, 8, typed_tensor(ir::physical::PhysicalDType::bf16, {4})).has_value());
   assert(builder
              .add_command(base::KernelId{12},
                           {ir::physical::BufferId{0}, ir::physical::BufferId{1},
@@ -175,10 +187,13 @@ superinfer::ir::physical::Plan make_nvfp4_linear_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
   builder.set_resource_bounds({88, 0, 1});
-  assert(builder.add_buffer(0, 64, 8).has_value());
-  assert(builder.add_buffer(64, 8, 8).has_value());
-  assert(builder.add_buffer(72, 1, 1).has_value());
-  assert(builder.add_buffer(80, 4, 4).has_value());
+  assert(builder.add_buffer(0, 64, 8, typed_tensor(ir::physical::PhysicalDType::f32, {16})).has_value());
+  assert(builder.add_buffer(64, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::u8, {4, 8},
+                                         ir::physical::StorageEncoding::nvfp4_packed))
+             .has_value());
+  assert(builder.add_buffer(72, 1, 1, typed_tensor(ir::physical::PhysicalDType::u8, {4, 1})).has_value());
+  assert(builder.add_buffer(80, 4, 4, typed_tensor(ir::physical::PhysicalDType::f32, {4})).has_value());
   assert(builder
              .add_command(base::KernelId{13},
                           {ir::physical::BufferId{0}, ir::physical::BufferId{1},

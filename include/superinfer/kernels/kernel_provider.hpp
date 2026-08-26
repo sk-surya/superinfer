@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <superinfer/base/ids.hpp>
@@ -13,12 +14,23 @@ namespace superinfer::kernels {
 
 /** Capability query expressed in operation/layout/storage facts, never model-family identity. */
 struct KernelQuery final {
+  KernelQuery(std::string_view operation_value, std::uint32_t target_capability_value,
+              std::string_view storage_dtype_value = "f32", std::size_t operand_count_value = 0,
+              std::vector<std::string_view> operand_dtypes_value = {})
+      : operation(operation_value),
+        target_capability(target_capability_value),
+        storage_dtype(storage_dtype_value),
+        operand_count(operand_count_value),
+        operand_dtypes(std::move(operand_dtypes_value)) {}
+
   std::string_view operation;
   std::uint32_t target_capability;
   /** Storage dtype of the operation's weight operand when a provider needs it. */
   std::string_view storage_dtype{"f32"};
   /** Number of lowered operands, when the compiler has an explicit operation contract. */
   std::size_t operand_count{0};
+  /** Storage dtypes in semantic operand order; an empty vector preserves legacy query callers. */
+  std::vector<std::string_view> operand_dtypes;
 };
 
 /** Describes a candidate's correctness and resource envelope before selection. */

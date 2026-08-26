@@ -21,10 +21,10 @@ superinfer::ir::lowered::Module make_fixture() {
   ir::lowered::ModuleBuilder builder;
   const auto hidden = builder.add_tensor(
       ir::semantic::TensorId{0}, {2, 4}, ir::lowered::LayoutKind::row_major,
-      base::MemorySpace::device, 16, ir::semantic::DType::f16, ir::semantic::DType::f32);
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
   const auto output = builder.add_tensor(
       ir::semantic::TensorId{1}, {2, 4}, ir::lowered::LayoutKind::row_major,
-      base::MemorySpace::device, 16, ir::semantic::DType::f16, ir::semantic::DType::f32);
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
   const auto scale = builder.add_tensor(
       ir::semantic::TensorId{2}, {2, 4}, ir::lowered::LayoutKind::row_major,
       base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
@@ -140,6 +140,27 @@ superinfer::ir::lowered::Module make_bf16_rms_norm_fixture() {
   return std::move(module).value();
 }
 
+superinfer::ir::lowered::Module make_bf16_residual_fixture() {
+  using namespace superinfer;
+  ir::lowered::ModuleBuilder builder;
+  const auto left = builder.add_tensor(
+      ir::semantic::TensorId{0}, {4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::bf16, ir::semantic::DType::f32);
+  const auto right = builder.add_tensor(
+      ir::semantic::TensorId{1}, {4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::bf16, ir::semantic::DType::f32);
+  const auto output = builder.add_tensor(
+      ir::semantic::TensorId{2}, {4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::bf16, ir::semantic::DType::f32);
+  assert(left.has_value() && right.has_value() && output.has_value());
+  assert(builder.add_kernel_requirement("residual", 120,
+                                        {left.value(), right.value(), output.value()})
+             .ok());
+  const auto module = std::move(builder).build();
+  assert(module.has_value());
+  return std::move(module).value();
+}
+
 superinfer::ir::lowered::Module make_attention_fixture() {
   using namespace superinfer;
   ir::lowered::ModuleBuilder builder;
@@ -184,7 +205,7 @@ int main() {
   assert(result.value().plan.verify().ok());
   assert(result.value().plan.capability().target_capability == 120);
   assert(result.value().plan.capability().kernel_catalog == "baseline-v1");
-  assert(result.value().memory.device_arena_bytes == 64);
+  assert(result.value().memory.device_arena_bytes == 96);
   assert(result.value().memory.allocations.size() == 3);
   assert(result.value().memory.allocations.front().offset == 0);
   assert(result.value().plan.commands().size() == 1);
@@ -195,6 +216,13 @@ int main() {
       make_bf16_embedding_fixture(), {target, 256, 64}, provider);
   assert(bf16_result.has_value());
   assert(bf16_result.value().plan.commands().front().kernel.value() == 8);
+  bool saw_bf16_table = false;
+  for (const auto& buffer : bf16_result.value().plan.buffers()) {
+    saw_bf16_table = saw_bf16_table ||
+                     (buffer.tensor.dtype == ir::physical::PhysicalDType::bf16 &&
+                      buffer.tensor.shape == std::vector<std::uint64_t>({4, 2}));
+  }
+  assert(saw_bf16_table);
 
   const auto lm_result = specializer.compile(
       make_f32_lm_head_fixture(), {target, 256, 64}, provider);
@@ -210,6 +238,11 @@ int main() {
       make_bf16_rms_norm_fixture(), {target, 256, 64}, provider);
   assert(bf16_norm_result.has_value());
   assert(bf16_norm_result.value().plan.commands().front().kernel.value() == 12);
+
+  const auto bf16_residual_result = specializer.compile(
+      make_bf16_residual_fixture(), {target, 256, 64}, provider);
+  assert(!bf16_residual_result.has_value());
+  assert(bf16_residual_result.error().code() == base::StatusCode::unsupported);
 
   const auto attention_result = specializer.compile(
       make_attention_fixture(), {target, 256, 128}, provider);
@@ -241,10 +274,20 @@ int main() {
   ir::lowered::ModuleBuilder role_builder;
   const auto kv_tensor = role_builder.add_tensor(
       ir::semantic::TensorId{0}, {2, 4}, ir::lowered::LayoutKind::row_major,
-      base::MemorySpace::device, 16, ir::semantic::DType::f16, ir::semantic::DType::f32,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32,
       ir::semantic::TensorRole::kv_cache);
-  assert(kv_tensor.has_value());
-  assert(role_builder.add_kernel_requirement("rms_norm", 120, {kv_tensor.value()}).ok());
+  const auto kv_output = role_builder.add_tensor(
+      ir::semantic::TensorId{1}, {2, 4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  const auto kv_scale = role_builder.add_tensor(
+      ir::semantic::TensorId{2}, {2, 4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32,
+      ir::semantic::TensorRole::weight);
+  assert(kv_tensor.has_value() && kv_output.has_value() && kv_scale.has_value());
+  assert(role_builder
+             .add_kernel_requirement("rms_norm", 120,
+                                     {kv_tensor.value(), kv_scale.value(), kv_output.value()})
+             .ok());
   const auto role_module = std::move(role_builder).build();
   assert(role_module.has_value());
   const auto role_result = specializer.compile(role_module.value(), {target, 256, 64}, provider);

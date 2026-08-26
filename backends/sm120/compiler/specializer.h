@@ -76,13 +76,16 @@ class Specializer final {
     std::vector<ir::physical::BufferId> buffer_for_tensor(lowered.tensors().size(),
                                                            ir::physical::BufferId{std::numeric_limits<std::uint64_t>::max()});
     for (const compiler::Allocation& allocation : memory.value().allocations) {
-      const auto buffer = plan_builder.add_buffer(allocation.offset, allocation.bytes, allocation.alignment);
+      if (allocation.id >= lowered.tensors().size()) {
+        return base::Status::out_of_range("memory plan allocation is not a lowered tensor");
+      }
+      const ir::lowered::Tensor& tensor = lowered.tensors()[allocation.id];
+      const auto buffer = plan_builder.add_buffer(
+          allocation.offset, allocation.bytes, allocation.alignment,
+          physical_tensor_descriptor(tensor, allocation.alignment));
       if (!buffer.has_value()) {
         base::Status error = buffer.error();
         return error.with_context("physical buffer");
-      }
-      if (allocation.id >= buffer_for_tensor.size()) {
-        return base::Status::out_of_range("memory plan allocation is not a lowered tensor");
       }
       buffer_for_tensor[allocation.id] = buffer.value();
     }
@@ -162,6 +165,40 @@ class Specializer final {
   }
 
  private:
+  static ir::physical::PhysicalTensorDescriptor physical_tensor_descriptor(
+      const ir::lowered::Tensor& tensor, std::uint64_t alignment) {
+    ir::physical::PhysicalTensorDescriptor descriptor;
+    descriptor.dtype = physical_dtype(tensor.storage_dtype);
+    descriptor.shape = tensor.physical_shape;
+    descriptor.layout = physical_layout(tensor.layout);
+    descriptor.alignment = alignment;
+    descriptor.encoding = tensor.storage_dtype == ir::semantic::DType::int4
+                              ? ir::physical::StorageEncoding::nvfp4_packed
+                              : ir::physical::StorageEncoding::none;
+    return descriptor;
+  }
+
+  static ir::physical::PhysicalDType physical_dtype(ir::semantic::DType dtype) noexcept {
+    switch (dtype) {
+      case ir::semantic::DType::f32: return ir::physical::PhysicalDType::f32;
+      case ir::semantic::DType::f16: return ir::physical::PhysicalDType::f16;
+      case ir::semantic::DType::bf16: return ir::physical::PhysicalDType::bf16;
+      case ir::semantic::DType::int8: return ir::physical::PhysicalDType::int8;
+      case ir::semantic::DType::int32: return ir::physical::PhysicalDType::int32;
+      case ir::semantic::DType::int4: return ir::physical::PhysicalDType::u8;
+    }
+    return ir::physical::PhysicalDType::unknown;
+  }
+
+  static ir::physical::PhysicalLayout physical_layout(ir::lowered::LayoutKind layout) noexcept {
+    switch (layout) {
+      case ir::lowered::LayoutKind::row_major: return ir::physical::PhysicalLayout::row_major;
+      case ir::lowered::LayoutKind::column_major: return ir::physical::PhysicalLayout::column_major;
+      case ir::lowered::LayoutKind::blocked: return ir::physical::PhysicalLayout::blocked;
+    }
+    return ir::physical::PhysicalLayout::row_major;
+  }
+
   static compiler::AllocationClass allocation_class(ir::semantic::TensorRole role) noexcept {
     switch (role) {
       case ir::semantic::TensorRole::weight: return compiler::AllocationClass::persistent_weight;
@@ -214,9 +251,17 @@ class Specializer final {
          requirement.operation == "layer_norm") && requirement.operands.size() >= 2) {
       storage_dtype = dtype_name(lowered.tensors()[requirement.operands[1].value()].storage_dtype);
     }
+    std::vector<std::string_view> operand_dtypes;
+    operand_dtypes.reserve(requirement.operands.size());
+    for (const ir::lowered::LoweredTensorId operand : requirement.operands) {
+      if (operand.value() >= lowered.tensors().size()) {
+        return base::Status::out_of_range("kernel operand dtype is undefined");
+      }
+      operand_dtypes.push_back(dtype_name(lowered.tensors()[operand.value()].storage_dtype));
+    }
     const auto candidates = provider.enumerate(
         {requirement.operation, requirement.target_capability, storage_dtype,
-         requirement.operands.size()});
+         requirement.operands.size(), std::move(operand_dtypes)});
     if (!candidates.has_value()) return candidates.error();
     if (candidates.value().empty()) {
       return base::Status::unsupported("kernel provider returned no candidates");

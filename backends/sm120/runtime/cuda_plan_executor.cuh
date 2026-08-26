@@ -536,16 +536,33 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
     }
     return expected != 0 && expected % sizeof(float) == 0;
   };
+  const auto has_dtype = [&](std::size_t index, ir::physical::PhysicalDType dtype) {
+    return index < command.buffers.size() &&
+           plan.buffers()[command.buffers[index].value()].tensor.dtype == dtype;
+  };
+  const auto all_dtype = [&](ir::physical::PhysicalDType dtype) {
+    for (std::size_t index = 0; index < command.buffers.size(); ++index) {
+      if (!has_dtype(index, dtype)) return false;
+    }
+    return true;
+  };
   switch (command.kernel.value()) {
     case 1:
       if (!exact_buffers(2) ||
           plan.buffers()[command.buffers[0].value()].size !=
-              plan.buffers()[command.buffers[1].value()].size) {
-        return base::Status::invalid_argument("CUDA copy requires two equal-sized buffers");
+              plan.buffers()[command.buffers[1].value()].size ||
+          plan.buffers()[command.buffers[0].value()].tensor.dtype !=
+              plan.buffers()[command.buffers[1].value()].tensor.dtype ||
+          plan.buffers()[command.buffers[0].value()].tensor.encoding !=
+              plan.buffers()[command.buffers[1].value()].tensor.encoding) {
+        return base::Status::invalid_argument("CUDA copy requires equal-sized, identically typed buffers");
       }
       return {};
     case 7:
       if (!exact_buffers(3) || plan.buffers()[command.buffers[0].value()].size != sizeof(std::uint32_t) ||
+          !has_dtype(0, ir::physical::PhysicalDType::int32) ||
+          !has_dtype(1, ir::physical::PhysicalDType::f32) ||
+          !has_dtype(2, ir::physical::PhysicalDType::f32) ||
           plan.buffers()[command.buffers[2].value()].size == 0 ||
           plan.buffers()[command.buffers[2].value()].size % sizeof(float) != 0 ||
           plan.buffers()[command.buffers[1].value()].size == 0 ||
@@ -556,6 +573,9 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       return {};
     case 8:
       if (!exact_buffers(3) || plan.buffers()[command.buffers[0].value()].size != sizeof(std::uint32_t) ||
+          !has_dtype(0, ir::physical::PhysicalDType::int32) ||
+          !has_dtype(1, ir::physical::PhysicalDType::bf16) ||
+          !has_dtype(2, ir::physical::PhysicalDType::f32) ||
           plan.buffers()[command.buffers[2].value()].size == 0 ||
           plan.buffers()[command.buffers[2].value()].size % sizeof(float) != 0 ||
           plan.buffers()[command.buffers[1].value()].size == 0 ||
@@ -568,6 +588,9 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       return {};
     case 9:
       if (!exact_buffers(3) || plan.buffers()[command.buffers[2].value()].size == 0 ||
+          !has_dtype(0, ir::physical::PhysicalDType::u8) ||
+          !has_dtype(1, ir::physical::PhysicalDType::u8) ||
+          !has_dtype(2, ir::physical::PhysicalDType::f32) ||
           plan.buffers()[command.buffers[2].value()].size % sizeof(float) != 0 ||
           plan.buffers()[command.buffers[2].value()].size / sizeof(float) % 16 != 0 ||
           plan.buffers()[command.buffers[0].value()].size !=
@@ -580,6 +603,7 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       return {};
     case 10: {
       if (!exact_buffers(3) || plan.buffers()[command.buffers[0].value()].size == 0 ||
+          !all_dtype(ir::physical::PhysicalDType::f32) ||
           plan.buffers()[command.buffers[1].value()].size == 0 ||
           plan.buffers()[command.buffers[2].value()].size == 0 ||
           plan.buffers()[command.buffers[0].value()].size % sizeof(float) != 0 ||
@@ -611,7 +635,8 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       const auto& up = plan.buffers()[command.buffers[2].value()];
       const auto& down = plan.buffers()[command.buffers[3].value()];
       const auto& output = plan.buffers()[command.buffers[4].value()];
-      if (input.size == 0 || output.size != input.size || input.size % sizeof(float) != 0 ||
+      if (!all_dtype(ir::physical::PhysicalDType::f32) || input.size == 0 || output.size != input.size ||
+          input.size % sizeof(float) != 0 ||
           gate.size == 0 || up.size != gate.size || down.size == 0 ||
           gate.size % input.size != 0 || down.size != output.size / sizeof(float) *
               (gate.size / input.size) * sizeof(float) ||
@@ -631,7 +656,11 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       const auto& packed = plan.buffers()[command.buffers[1].value()];
       const auto& scales = plan.buffers()[command.buffers[2].value()];
       const auto& output = plan.buffers()[command.buffers[3].value()];
-      if (input.size == 0 || output.size == 0 || input.size % sizeof(float) != 0 ||
+      if (input.tensor.dtype != ir::physical::PhysicalDType::f32 ||
+          packed.tensor.dtype != ir::physical::PhysicalDType::u8 ||
+          scales.tensor.dtype != ir::physical::PhysicalDType::u8 ||
+          output.tensor.dtype != ir::physical::PhysicalDType::f32 ||
+          input.size == 0 || output.size == 0 || input.size % sizeof(float) != 0 ||
           output.size % sizeof(float) != 0 || input.size / sizeof(float) % 16 != 0) {
         return base::Status::invalid_argument(
             "CUDA NVFP4 linear requires non-empty aligned f32 input/output buffers");
@@ -658,7 +687,8 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       const auto& values = plan.buffers()[command.buffers[2].value()];
       const auto& output = plan.buffers()[command.buffers[3].value()];
       const auto dimensions = command.attention;
-      if (dimensions.query_heads == 0 || dimensions.key_value_heads == 0 ||
+      if (!all_dtype(ir::physical::PhysicalDType::f32) ||
+          dimensions.query_heads == 0 || dimensions.key_value_heads == 0 ||
           dimensions.head_dimension == 0 || dimensions.positions == 0 ||
           dimensions.query_heads % dimensions.key_value_heads != 0) {
         return base::Status::invalid_argument("CUDA attention dimensions are invalid");
@@ -722,7 +752,8 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       const auto& beta = plan.buffers()[command.buffers[4].value()];
       const auto& state = plan.buffers()[command.buffers[5].value()];
       const auto& output = plan.buffers()[command.buffers[6].value()];
-      if (qk_elements == 0 || value_elements == 0 || state_elements == 0 ||
+      if (!all_dtype(ir::physical::PhysicalDType::f32) ||
+          qk_elements == 0 || value_elements == 0 || state_elements == 0 ||
           query.size != bytes(qk_elements) || keys.size != bytes(qk_elements) ||
           values.size != bytes(value_elements) ||
           log_decay.size != bytes(static_cast<std::uint64_t>(dimensions.positions) *
@@ -736,13 +767,20 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       return {};
     }
     case 4:
-      if (!same_sizes(3)) return base::Status::invalid_argument("CUDA residual requires three equal-sized f32 buffers");
+      if (!same_sizes(3) || !all_dtype(ir::physical::PhysicalDType::f32)) {
+        return base::Status::invalid_argument("CUDA residual requires three equal-sized f32 buffers");
+      }
       return {};
     case 5:
-      if (!same_sizes(3)) return base::Status::invalid_argument("CUDA RMSNorm requires input, output, and scale buffers");
+      if (!same_sizes(3) || !all_dtype(ir::physical::PhysicalDType::f32)) {
+        return base::Status::invalid_argument("CUDA RMSNorm requires input, output, and scale buffers");
+      }
       return {};
     case 12:
       if (!exact_buffers(3) || plan.buffers()[command.buffers[0].value()].size == 0 ||
+          !has_dtype(0, ir::physical::PhysicalDType::f32) ||
+          !has_dtype(1, ir::physical::PhysicalDType::f32) ||
+          !has_dtype(2, ir::physical::PhysicalDType::bf16) ||
           plan.buffers()[command.buffers[0].value()].size % sizeof(float) != 0 ||
           plan.buffers()[command.buffers[1].value()].size !=
               plan.buffers()[command.buffers[0].value()].size ||
@@ -754,7 +792,9 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       }
       return {};
     case 6:
-      if (!same_sizes(4)) return base::Status::invalid_argument("CUDA LayerNorm requires input, output, scale, and bias buffers");
+      if (!same_sizes(4) || !all_dtype(ir::physical::PhysicalDType::f32)) {
+        return base::Status::invalid_argument("CUDA LayerNorm requires input, output, scale, and bias buffers");
+      }
       return {};
     default:
       return base::Status::unsupported("CUDA kernel ID is not registered");

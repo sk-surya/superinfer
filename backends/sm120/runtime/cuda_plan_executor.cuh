@@ -92,6 +92,27 @@ __global__ inline void linear_f32(const float* input, const float* weights, floa
   }
 }
 
+__global__ inline void gated_dense_ffn_f32(const float* input, const float* gate,
+                                           const float* up, const float* down, float* output,
+                                           std::size_t hidden, std::size_t intermediate) {
+  for (std::size_t row = blockIdx.x * blockDim.x + threadIdx.x; row < hidden;
+       row += blockDim.x * gridDim.x) {
+    float sum = 0.0F;
+    for (std::size_t intermediate_index = 0; intermediate_index < intermediate;
+         ++intermediate_index) {
+      float gate_value = 0.0F;
+      float up_value = 0.0F;
+      for (std::size_t column = 0; column < hidden; ++column) {
+        gate_value += gate[intermediate_index * hidden + column] * input[column];
+        up_value += up[intermediate_index * hidden + column] * input[column];
+      }
+      const float gated = gate_value / (1.0F + expf(-gate_value)) * up_value;
+      sum += down[row * intermediate + intermediate_index] * gated;
+    }
+    output[row] = sum;
+  }
+}
+
 __global__ inline void rms_norm_f32(const float* input, const float* scale, float* output,
                                     std::size_t elements, float epsilon) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
@@ -215,6 +236,26 @@ inline cudaError_t launch_lm_head(const ir::physical::CommandDescriptor& command
       static_cast<const float*>(buffer_pointer(plan, arena, weights.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,
       output_elements);
+  return cudaGetLastError();
+}
+
+inline cudaError_t launch_gated_dense_ffn(const ir::physical::CommandDescriptor& command,
+                                          const ir::physical::Plan& plan, void* arena, void*,
+                                          cudaStream_t stream) {
+  if (command.buffers.size() != 5) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& gate = plan.buffers()[command.buffers[1].value()];
+  const auto& up = plan.buffers()[command.buffers[2].value()];
+  const auto& down = plan.buffers()[command.buffers[3].value()];
+  const auto& output = plan.buffers()[command.buffers[4].value()];
+  const std::size_t hidden = static_cast<std::size_t>(input.size / sizeof(float));
+  const std::size_t intermediate = static_cast<std::size_t>(gate.size / sizeof(float) / hidden);
+  gated_dense_ffn_f32<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, gate.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, up.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, down.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), hidden, intermediate);
   return cudaGetLastError();
 }
 
@@ -349,6 +390,27 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       }
       return {};
     }
+    case 11: {
+      if (!exact_buffers(5)) {
+        return base::Status::invalid_argument(
+            "CUDA gated FFN requires input, gate, up, down, and output buffers");
+      }
+      const auto& input = plan.buffers()[command.buffers[0].value()];
+      const auto& gate = plan.buffers()[command.buffers[1].value()];
+      const auto& up = plan.buffers()[command.buffers[2].value()];
+      const auto& down = plan.buffers()[command.buffers[3].value()];
+      const auto& output = plan.buffers()[command.buffers[4].value()];
+      if (input.size == 0 || output.size != input.size || input.size % sizeof(float) != 0 ||
+          gate.size == 0 || up.size != gate.size || down.size == 0 ||
+          gate.size % input.size != 0 || down.size != output.size / sizeof(float) *
+              (gate.size / input.size) * sizeof(float) ||
+          gate.size % sizeof(float) != 0 || up.size % sizeof(float) != 0 ||
+          down.size % sizeof(float) != 0) {
+        return base::Status::invalid_argument(
+            "CUDA gated FFN weight shapes do not match hidden and intermediate dimensions");
+      }
+      return {};
+    }
     case 4:
       if (!same_sizes(3)) return base::Status::invalid_argument("CUDA residual requires three equal-sized f32 buffers");
       return {};
@@ -370,6 +432,7 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 8: return &launch_embedding_bf16;
     case 9: return &launch_nvfp4_dequantize;
     case 10: return &launch_lm_head;
+    case 11: return &launch_gated_dense_ffn;
     case 4: return &launch_residual;
     case 5: return &launch_rms_norm;
     case 6: return &launch_layer_norm;

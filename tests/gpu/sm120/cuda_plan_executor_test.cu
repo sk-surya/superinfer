@@ -132,6 +132,27 @@ superinfer::ir::physical::Plan make_lm_head_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_ffn_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({80, 0, 1});
+  assert(builder.add_buffer(0, 8, 8).has_value());
+  assert(builder.add_buffer(8, 16, 8).has_value());
+  assert(builder.add_buffer(24, 16, 8).has_value());
+  assert(builder.add_buffer(40, 16, 8).has_value());
+  assert(builder.add_buffer(56, 8, 8).has_value());
+  assert(builder
+             .add_command(base::KernelId{11},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}, ir::physical::BufferId{3},
+                           ir::physical::BufferId{4}},
+                          {}, 0, 0, 0)
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 }  // namespace
 
 int main() {
@@ -353,6 +374,30 @@ int main() {
       ir::physical::BufferId{2},
       base::ByteView(reinterpret_cast<std::byte*>(lm_output.data()), sizeof(lm_output))).ok());
   assert((lm_output == std::array<float, 3>{2.0F, 3.0F, 5.0F}));
+
+  const auto ffn_plan = make_ffn_plan();
+  auto ffn = sm120::cuda_runtime::CudaPlanSession::create(ffn_plan, 120, "baseline-v1");
+  assert(ffn.has_value());
+  const std::array<float, 2> ffn_input{2.0F, 3.0F};
+  const std::array<float, 4> identity_weights{1.0F, 0.0F, 0.0F, 1.0F};
+  for (const auto& upload : std::array<std::pair<ir::physical::BufferId, const float*>, 4>{
+           {{ir::physical::BufferId{0}, ffn_input.data()},
+            {ir::physical::BufferId{1}, identity_weights.data()},
+            {ir::physical::BufferId{2}, identity_weights.data()},
+            {ir::physical::BufferId{3}, identity_weights.data()}}}) {
+    const std::size_t bytes = upload.first.value() == 0 ? sizeof(ffn_input) : sizeof(identity_weights);
+    assert(ffn.value().copy_to_device(
+        upload.first, base::ConstByteView(reinterpret_cast<const std::byte*>(upload.second), bytes))
+               .ok());
+  }
+  assert(ffn.value().execute().ok());
+  assert(ffn.value().synchronize_for_test().ok());
+  std::array<float, 2> ffn_output{};
+  assert(ffn.value().copy_from_device(
+      ir::physical::BufferId{4},
+      base::ByteView(reinterpret_cast<std::byte*>(ffn_output.data()), sizeof(ffn_output))).ok());
+  assert(std::abs(ffn_output[0] - 2.0F / (1.0F + std::exp(-2.0F)) * 2.0F) < 1.0e-5F);
+  assert(std::abs(ffn_output[1] - 3.0F / (1.0F + std::exp(-3.0F)) * 3.0F) < 1.0e-5F);
 
   ir::physical::PlanBuilder norm_builder;
   norm_builder.set_resource_bounds({48, 0, 1});

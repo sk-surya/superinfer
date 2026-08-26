@@ -54,6 +54,12 @@ class BaselineProvider final : public kernels::KernelProvider {
       }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{10}, "sm120.baseline", true, 0}};
     }
+    if (query.operation == "gated_dense_ffn") {
+      if (query.storage_dtype != "f32") {
+        return base::Status::unsupported("baseline gated FFN does not support the requested storage dtype");
+      }
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{11}, "sm120.baseline", true, 0}};
+    }
     return base::Status::unsupported("no executable baseline candidate for operation");
   }
 };

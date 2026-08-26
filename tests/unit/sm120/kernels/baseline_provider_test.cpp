@@ -20,9 +20,9 @@ int main() {
   assert(!unsupported_operation.has_value());
   assert(unsupported_operation.error().code() == superinfer::base::StatusCode::unsupported);
 
-  constexpr std::array<std::pair<std::string_view, std::uint64_t>, 6> operations{{
+  constexpr std::array<std::pair<std::string_view, std::uint64_t>, 7> operations{{
       {"copy", 1}, {"residual", 4}, {"rms_norm", 5}, {"layer_norm", 6}, {"embedding", 7},
-      {"nvfp4_dequantize", 9}}};
+      {"nvfp4_dequantize", 9}, {"lm_head", 10}}};
   for (const auto& operation : operations) {
     const auto candidates = provider.enumerate({operation.first, 120});
     assert(candidates.has_value());
@@ -40,6 +40,9 @@ int main() {
   const auto unsupported_embedding_dtype = provider.enumerate({"embedding", 120, "int4"});
   assert(!unsupported_embedding_dtype.has_value());
   assert(unsupported_embedding_dtype.error().code() == superinfer::base::StatusCode::unsupported);
+  const auto unsupported_lm_dtype = provider.enumerate({"lm_head", 120, "int4"});
+  assert(!unsupported_lm_dtype.has_value());
+  assert(unsupported_lm_dtype.error().code() == superinfer::base::StatusCode::unsupported);
   for (const std::string_view operation : {"cast", "elementwise", "rope", "matmul", "attention",
                                             "moe_route", "activation", "sampling"}) {
     const auto candidates = provider.enumerate({operation, 120});

@@ -180,7 +180,8 @@ class Specializer final {
       const kernels::KernelProvider& provider, const ir::lowered::KernelRequirement& requirement,
       const ir::lowered::Module& lowered) {
     std::string_view storage_dtype = "f32";
-    if (requirement.operation == "embedding" && requirement.operands.size() >= 2) {
+    if ((requirement.operation == "embedding" || requirement.operation == "lm_head") &&
+        requirement.operands.size() >= 2) {
       storage_dtype = dtype_name(lowered.tensors()[requirement.operands[1].value()].storage_dtype);
     }
     const auto candidates = provider.enumerate(

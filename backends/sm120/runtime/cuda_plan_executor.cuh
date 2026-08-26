@@ -80,6 +80,18 @@ __global__ inline void nvfp4_dequantize(const std::uint8_t* packed, const std::u
   }
 }
 
+__global__ inline void linear_f32(const float* input, const float* weights, float* output,
+                                  std::size_t input_elements, std::size_t output_elements) {
+  for (std::size_t row = blockIdx.x * blockDim.x + threadIdx.x; row < output_elements;
+       row += blockDim.x * gridDim.x) {
+    float sum = 0.0F;
+    for (std::size_t column = 0; column < input_elements; ++column) {
+      sum += weights[row * input_elements + column] * input[column];
+    }
+    output[row] = sum;
+  }
+}
+
 __global__ inline void rms_norm_f32(const float* input, const float* scale, float* output,
                                     std::size_t elements, float epsilon) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
@@ -186,6 +198,23 @@ inline cudaError_t launch_nvfp4_dequantize(const ir::physical::CommandDescriptor
       static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)),
       static_cast<std::size_t>(output.size / sizeof(float)), command.scalar);
+  return cudaGetLastError();
+}
+
+inline cudaError_t launch_lm_head(const ir::physical::CommandDescriptor& command,
+                                  const ir::physical::Plan& plan, void* arena, void*,
+                                  cudaStream_t stream) {
+  if (command.buffers.size() != 3) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& weights = plan.buffers()[command.buffers[1].value()];
+  const auto& output = plan.buffers()[command.buffers[2].value()];
+  const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
+  const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
+  linear_f32<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, weights.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,
+      output_elements);
   return cudaGetLastError();
 }
 
@@ -297,6 +326,29 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
             "CUDA NVFP4 dequantization requires packed, scale, and aligned f32 buffers");
       }
       return {};
+    case 10: {
+      if (!exact_buffers(3) || plan.buffers()[command.buffers[0].value()].size == 0 ||
+          plan.buffers()[command.buffers[1].value()].size == 0 ||
+          plan.buffers()[command.buffers[2].value()].size == 0 ||
+          plan.buffers()[command.buffers[0].value()].size % sizeof(float) != 0 ||
+          plan.buffers()[command.buffers[1].value()].size % sizeof(float) != 0 ||
+          plan.buffers()[command.buffers[2].value()].size % sizeof(float) != 0) {
+        return base::Status::invalid_argument(
+            "CUDA LM head requires non-empty f32 input, weight, and output buffers");
+      }
+      const std::uint64_t input_elements =
+          plan.buffers()[command.buffers[0].value()].size / sizeof(float);
+      const std::uint64_t output_elements =
+          plan.buffers()[command.buffers[2].value()].size / sizeof(float);
+      const std::uint64_t weight_elements =
+          plan.buffers()[command.buffers[1].value()].size / sizeof(float);
+      if (input_elements == 0 || weight_elements % input_elements != 0 ||
+          weight_elements / input_elements != output_elements) {
+        return base::Status::invalid_argument(
+            "CUDA LM head weight shape does not match input and output");
+      }
+      return {};
+    }
     case 4:
       if (!same_sizes(3)) return base::Status::invalid_argument("CUDA residual requires three equal-sized f32 buffers");
       return {};
@@ -317,6 +369,7 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 7: return &launch_embedding;
     case 8: return &launch_embedding_bf16;
     case 9: return &launch_nvfp4_dequantize;
+    case 10: return &launch_lm_head;
     case 4: return &launch_residual;
     case 5: return &launch_rms_norm;
     case 6: return &launch_layer_norm;

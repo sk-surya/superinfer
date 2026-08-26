@@ -60,6 +60,29 @@ superinfer::ir::lowered::Module make_bf16_embedding_fixture() {
   return std::move(module).value();
 }
 
+superinfer::ir::lowered::Module make_f32_lm_head_fixture() {
+  using namespace superinfer;
+  ir::lowered::ModuleBuilder builder;
+  const auto input = builder.add_tensor(
+      ir::semantic::TensorId{0}, {1, 2}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  const auto weights = builder.add_tensor(
+      ir::semantic::TensorId{1}, {3, 2}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32,
+      ir::semantic::TensorRole::weight);
+  const auto output = builder.add_tensor(
+      ir::semantic::TensorId{2}, {1, 3}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32,
+      ir::semantic::TensorRole::logits);
+  assert(input.has_value() && weights.has_value() && output.has_value());
+  assert(builder.add_kernel_requirement(
+                         "lm_head", 120, {input.value(), weights.value(), output.value()})
+             .ok());
+  const auto module = std::move(builder).build();
+  assert(module.has_value());
+  return std::move(module).value();
+}
+
 }  // namespace
 
 int main() {
@@ -83,6 +106,11 @@ int main() {
       make_bf16_embedding_fixture(), {target, 256, 64}, provider);
   assert(bf16_result.has_value());
   assert(bf16_result.value().plan.commands().front().kernel.value() == 8);
+
+  const auto lm_result = specializer.compile(
+      make_f32_lm_head_fixture(), {target, 256, 64}, provider);
+  assert(lm_result.has_value());
+  assert(lm_result.value().plan.commands().front().kernel.value() == 10);
 
   const auto second = specializer.compile(make_fixture(), {target, 256, 64}, provider);
   assert(second.has_value());

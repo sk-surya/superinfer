@@ -12,7 +12,7 @@ ID. The payload artifact records the same status in its manifest.
 | grouped full attention | `attention` | unavailable | Pinned q/k/v/o and q/k norm weights now bind in Semantic IR; KV/RoPE provider path absent |
 | residual | `residual` | executable baseline | Kernel ID 4; CUDA and CPU fixture coverage exists |
 | gated dense FFN | `gated_dense_ffn` | unavailable | Pinned gate/up/down weights now bind and the independent CPU graph oracle composes the primitive; generic NVFP4 dequantization ID 9 exists, but quantized matmul/provider path is absent |
-| LM head | `lm_head` | unavailable | Weight-connected independent CPU graph oracle now exists; generic NVFP4 materialization exists, but no quantized linear/artifact binding path |
+| LM head | `lm_head` | unavailable | Weight-connected CPU oracle and generic FP32 projection ID 10 pass; generic NVFP4 materialization exists, but no quantized linear/artifact binding path |
 
 The current `Physical Plan` status is `pending-baseline-provider-coverage`. `Specializer` queries
 the injected `KernelProvider` for every lowered requirement and fails closed at the first missing

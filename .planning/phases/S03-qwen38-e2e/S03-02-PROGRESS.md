@@ -98,6 +98,10 @@ updated: 2026-08-26
   and passes an RTX 5090 differential fixture against the CPU oracle's known vector. It remains a
   materialization primitive, not yet a Qwen linear/FFN provider; source-scale validation and
   artifact binding still precede promotion.
+- A generic FP32 LM-head projection is now provider ID 10. Lowered storage dtype participates in
+  selection, the CUDA command validates input/weight/output matrix compatibility, and a known
+  matrix fixture passes on RTX 5090. The pinned NVFP4 LM head remains unavailable until the
+  materialization and projection commands are composed from artifact records.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

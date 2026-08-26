@@ -114,6 +114,24 @@ superinfer::ir::physical::Plan make_nvfp4_dequantize_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_lm_head_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({48, 0, 1});
+  assert(builder.add_buffer(0, 8, 8).has_value());
+  assert(builder.add_buffer(8, 24, 8).has_value());
+  assert(builder.add_buffer(32, 12, 4).has_value());
+  assert(builder
+             .add_command(base::KernelId{10},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}},
+                          {}, 0, 0, 0)
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 }  // namespace
 
 int main() {
@@ -314,6 +332,27 @@ int main() {
   for (std::size_t index = 0; index < expected_nvfp4.size(); ++index) {
     assert(std::abs(dequantized_nvfp4[index] - expected_nvfp4[index]) < 1.0e-5F);
   }
+
+  const auto lm_head_plan = make_lm_head_plan();
+  auto lm_head = sm120::cuda_runtime::CudaPlanSession::create(lm_head_plan, 120, "baseline-v1");
+  assert(lm_head.has_value());
+  const std::array<float, 2> lm_input{2.0F, 3.0F};
+  const std::array<float, 6> lm_weights{1.0F, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F};
+  assert(lm_head.value().copy_to_device(
+      ir::physical::BufferId{0},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(lm_input.data()),
+                          sizeof(lm_input))).ok());
+  assert(lm_head.value().copy_to_device(
+      ir::physical::BufferId{1},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(lm_weights.data()),
+                          sizeof(lm_weights))).ok());
+  assert(lm_head.value().execute().ok());
+  assert(lm_head.value().synchronize_for_test().ok());
+  std::array<float, 3> lm_output{};
+  assert(lm_head.value().copy_from_device(
+      ir::physical::BufferId{2},
+      base::ByteView(reinterpret_cast<std::byte*>(lm_output.data()), sizeof(lm_output))).ok());
+  assert((lm_output == std::array<float, 3>{2.0F, 3.0F, 5.0F}));
 
   ir::physical::PlanBuilder norm_builder;
   norm_builder.set_resource_bounds({48, 0, 1});

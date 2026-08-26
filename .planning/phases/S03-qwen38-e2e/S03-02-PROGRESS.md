@@ -38,11 +38,12 @@ updated: 2026-08-26
   `9f80231a9dc59c214ddf4aafd52d27dfbc10def2ce7dcceaaad9e44c2cfa414e`; its ledger requires
   27,778,892,088 bytes and leaves 6,580,846,280 bytes against the declared 32-GiB budget. This is
   provenance evidence, not a payload-bearing execution artifact.
-- Real pinned payload conversion completed in 13m24s using 802.56s CPU time and produced
-  `build/evidence/qwen38-payload-v1.sinf` at 18,766,681,312 bytes with SHA-256
-  `2cddcc2195c36cebd062ea340cc33c9aaf03d1e6627ce2b9301fe13231f5ebf6`. Header inspection confirms
-  five aligned sections, a 18,765,513,016-byte payload section, 2,402 tensor records, and the
-  pinned derivative revision. This is a payload/provenance artifact, not yet an executable plan.
+- Real pinned payload conversion completed in 13m12.57s using 791.80s CPU time and produced the
+  current-recipe `build/evidence/qwen38-payload-v1-second.sinf` at 18,766,682,312 bytes with
+  SHA-256 `2c228c1f0a4083ac82a8b89a928cc1f620152661cc721ad06c27bab410fc2b69`. A third clean
+  conversion is byte-identical. Header inspection confirms five aligned sections, an
+  18,765,513,016-byte payload section, 2,402 tensor records, and the pinned derivative revision.
+  This is a payload/provenance artifact, not yet an executable plan.
 - Independent streaming inspection validates the full payload checksum and integrity table with
   approximately 18 MiB resident memory. `Specializer` now receives a `KernelProvider`, selects a
   deterministic candidate through that extension surface, and propagates candidate workspace into

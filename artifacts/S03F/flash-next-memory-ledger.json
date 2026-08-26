@@ -1,0 +1,19 @@
+{
+  "categories": {
+    "embedding_lm_head": null,
+    "mtp": null,
+    "non_expert_text": null,
+    "ple": null,
+    "recurrent_kv_state": null,
+    "router_indexer": null,
+    "routed_experts": null,
+    "shared_experts": null,
+    "vision": null,
+    "workspace": null
+  },
+  "reason": "Exact Flash-Next safetensors headers and model configuration are unavailable; no byte estimate is substituted.",
+  "source_evidence": "flash-next-source-evidence.json",
+  "status": "blocked",
+  "total_bytes": null,
+  "schema": "superinfer.s03f.flash-next-memory-ledger.v1"
+}

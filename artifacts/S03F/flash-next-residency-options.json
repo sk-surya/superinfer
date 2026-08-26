@@ -1,0 +1,8 @@
+{
+  "candidates": [],
+  "full_expert_residency_feasible": null,
+  "reason": "Residency cannot be evaluated without exact packed tensor bytes and quality measurements for the pinned source.",
+  "status": "blocked",
+  "schema": "superinfer.s03f.flash-next-residency-options.v1",
+  "quality_evidence": "not_available"
+}

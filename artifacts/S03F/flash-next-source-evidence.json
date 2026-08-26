@@ -1,0 +1,27 @@
+{
+  "checked_workspace": "/srv/repos/superinfer",
+  "claims_withheld": [
+    "pinned revisions",
+    "tensor counts",
+    "packed byte totals",
+    "quality equivalence",
+    "residency feasibility"
+  ],
+  "excluded_near_matches": [
+    "/srv/models/hf/Qwen3.8-27B-DFlash2",
+    "/srv/ai/models/gguf/qwen3-coder-next"
+  ],
+  "observed": [
+    ".planning/FLASH-NEXT-DESIGN.md",
+    "S03F-01-PLAN.md"
+  ],
+  "reason": "No exact Flash-Next model artifact or reference checkout is available in this workspace.",
+  "required": [
+    "config.json",
+    "model.safetensors.index.json",
+    "safetensors shards",
+    "reference revision"
+  ],
+  "schema": "superinfer.s03f.flash-next-source-evidence.v1",
+  "status": "blocked"
+}

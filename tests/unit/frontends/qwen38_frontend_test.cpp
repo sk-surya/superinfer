@@ -1,6 +1,7 @@
 #include <superinfer/compiler/model_frontend.hpp>
 #include <superinfer/compiler/semantic_lowering.hpp>
 #include <frontends/qwen38/frontend.hpp>
+#include <sm120/compiler/specializer.h>
 
 #include <cassert>
 
@@ -58,6 +59,14 @@ int main() {
   }
   assert(lowered_kv == 160);
   assert(lowered_decode_state == 96);
+  const auto physical = sm120::Specializer{}.compile(
+      lowered.value(),
+      {compiler::TargetProfile::offline_sm120a(32ULL << 30U, "baseline-v1"), 0, 512});
+  assert(!physical.has_value());
+  assert(physical.error().code() == base::StatusCode::unsupported);
+  assert(!physical.error().context().empty());
+  assert(physical.error().context().back() == "embedding");
+  assert(physical.error().message().find("Qwen") == std::string::npos);
 
   const auto rejected_inventory = frontend.validate({std::string{frontends::qwen38::kSourceIdentity}, 1,
                                                      std::string{frontends::qwen38::kTensorInventorySha256}});

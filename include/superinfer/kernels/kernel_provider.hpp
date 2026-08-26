@@ -10,10 +10,12 @@
 
 namespace superinfer::kernels {
 
-/** Capability query expressed in operation/layout facts, never model-family identity. */
+/** Capability query expressed in operation/layout/storage facts, never model-family identity. */
 struct KernelQuery final {
   std::string_view operation;
   std::uint32_t target_capability;
+  /** Storage dtype of the operation's weight operand when a provider needs it. */
+  std::string_view storage_dtype{"f32"};
 };
 
 /** Describes a candidate's correctness and resource envelope before selection. */
@@ -35,4 +37,3 @@ template <typename T>
 inline constexpr bool is_kernel_provider = std::is_base_of_v<KernelProvider, T>;
 
 }  // namespace superinfer::kernels
-

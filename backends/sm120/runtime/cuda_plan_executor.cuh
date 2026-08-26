@@ -38,6 +38,22 @@ __global__ inline void embedding_f32(const std::uint32_t* token, const float* ta
   }
 }
 
+__global__ inline void embedding_bf16(const std::uint32_t* token, const std::uint16_t* table,
+                                      float* output, std::size_t vocabulary, std::size_t hidden) {
+  const std::uint32_t row = *token;
+  for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < hidden;
+       index += blockDim.x * gridDim.x) {
+    if (row >= vocabulary) {
+      output[index] = 0.0F;
+      continue;
+    }
+    const std::uint32_t bits = static_cast<std::uint32_t>(
+        table[static_cast<std::size_t>(row) * hidden + index])
+                               << 16U;
+    output[index] = __uint_as_float(bits);
+  }
+}
+
 __global__ inline void rms_norm_f32(const float* input, const float* scale, float* output,
                                     std::size_t elements, float epsilon) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
@@ -102,6 +118,27 @@ inline cudaError_t launch_embedding(const ir::physical::CommandDescriptor& comma
   embedding_f32<<<1, 256, 0, stream>>>(
       static_cast<const std::uint32_t*>(buffer_pointer(plan, arena, token.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, table.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), vocabulary, hidden);
+  return cudaGetLastError();
+}
+
+inline cudaError_t launch_embedding_bf16(const ir::physical::CommandDescriptor& command,
+                                         const ir::physical::Plan& plan, void* arena, void*,
+                                         cudaStream_t stream) {
+  if (command.buffers.size() != 3) return cudaErrorInvalidValue;
+  const auto& token = plan.buffers()[command.buffers[0].value()];
+  const auto& table = plan.buffers()[command.buffers[1].value()];
+  const auto& output = plan.buffers()[command.buffers[2].value()];
+  if (token.size != sizeof(std::uint32_t) || output.size == 0 || output.size % sizeof(float) != 0 ||
+      table.size == 0 || table.size % sizeof(std::uint16_t) != 0 ||
+      (table.size / sizeof(std::uint16_t)) % (output.size / sizeof(float)) != 0) {
+    return cudaErrorInvalidValue;
+  }
+  const std::size_t hidden = static_cast<std::size_t>(output.size / sizeof(float));
+  const std::size_t vocabulary = static_cast<std::size_t>(table.size / (hidden * sizeof(std::uint16_t)));
+  embedding_bf16<<<1, 256, 0, stream>>>(
+      static_cast<const std::uint32_t*>(buffer_pointer(plan, arena, token.id)),
+      static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, table.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)), vocabulary, hidden);
   return cudaGetLastError();
 }
@@ -190,6 +227,18 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
         return base::Status::invalid_argument("CUDA embedding requires token, table, and f32 output buffers");
       }
       return {};
+    case 8:
+      if (!exact_buffers(3) || plan.buffers()[command.buffers[0].value()].size != sizeof(std::uint32_t) ||
+          plan.buffers()[command.buffers[2].value()].size == 0 ||
+          plan.buffers()[command.buffers[2].value()].size % sizeof(float) != 0 ||
+          plan.buffers()[command.buffers[1].value()].size == 0 ||
+          plan.buffers()[command.buffers[1].value()].size % sizeof(std::uint16_t) != 0 ||
+          (plan.buffers()[command.buffers[1].value()].size / sizeof(std::uint16_t)) %
+              (plan.buffers()[command.buffers[2].value()].size / sizeof(float)) != 0) {
+        return base::Status::invalid_argument(
+            "CUDA BF16 embedding requires token, BF16 table, and f32 output buffers");
+      }
+      return {};
     case 4:
       if (!same_sizes(3)) return base::Status::invalid_argument("CUDA residual requires three equal-sized f32 buffers");
       return {};
@@ -208,6 +257,7 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
   switch (kernel_id) {
     case 1: return &launch_copy;
     case 7: return &launch_embedding;
+    case 8: return &launch_embedding_bf16;
     case 4: return &launch_residual;
     case 5: return &launch_rms_norm;
     case 6: return &launch_layer_norm;

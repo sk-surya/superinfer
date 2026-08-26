@@ -93,7 +93,7 @@ class Specializer final {
       if (requirement.target_capability != options.target.compute_capability) {
         return base::Status::unsupported("lowered kernel requirement targets an incompatible capability");
       }
-      const auto candidate = select_candidate(provider, requirement);
+      const auto candidate = select_candidate(provider, requirement, lowered);
       if (!candidate.has_value()) {
         base::Status error = candidate.error();
         return error.with_context(requirement.operation);
@@ -177,8 +177,14 @@ class Specializer final {
   };
 
   static base::Result<SelectedKernel> select_candidate(
-      const kernels::KernelProvider& provider, const ir::lowered::KernelRequirement& requirement) {
-    const auto candidates = provider.enumerate({requirement.operation, requirement.target_capability});
+      const kernels::KernelProvider& provider, const ir::lowered::KernelRequirement& requirement,
+      const ir::lowered::Module& lowered) {
+    std::string_view storage_dtype = "f32";
+    if (requirement.operation == "embedding" && requirement.operands.size() >= 2) {
+      storage_dtype = dtype_name(lowered.tensors()[requirement.operands[1].value()].storage_dtype);
+    }
+    const auto candidates = provider.enumerate(
+        {requirement.operation, requirement.target_capability, storage_dtype});
     if (!candidates.has_value()) return candidates.error();
     if (candidates.value().empty()) {
       return base::Status::unsupported("kernel provider returned no candidates");
@@ -196,6 +202,18 @@ class Specializer final {
       return base::Status::failed_precondition("kernel provider has no deterministic usable candidate");
     }
     return SelectedKernel{selected->id, selected->workspace_bytes};
+  }
+
+  static std::string_view dtype_name(ir::semantic::DType dtype) noexcept {
+    switch (dtype) {
+      case ir::semantic::DType::f32: return "f32";
+      case ir::semantic::DType::f16: return "f16";
+      case ir::semantic::DType::bf16: return "bf16";
+      case ir::semantic::DType::int8: return "int8";
+      case ir::semantic::DType::int32: return "int32";
+      case ir::semantic::DType::int4: return "int4";
+    }
+    return "unknown";
   }
 };
 

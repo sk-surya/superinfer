@@ -37,6 +37,12 @@ class BaselineProvider final : public kernels::KernelProvider {
       return std::vector<kernels::KernelCandidate>{{base::KernelId{6}, "sm120.baseline", true, 0}};
     }
     if (query.operation == "embedding") {
+      if (query.storage_dtype == "bf16") {
+        return std::vector<kernels::KernelCandidate>{{base::KernelId{8}, "sm120.baseline", true, 0}};
+      }
+      if (query.storage_dtype != "f32") {
+        return base::Status::unsupported("baseline embedding does not support the requested storage dtype");
+      }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{7}, "sm120.baseline", true, 0}};
     }
     return base::Status::unsupported("no executable baseline candidate for operation");

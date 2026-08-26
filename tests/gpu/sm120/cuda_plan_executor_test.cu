@@ -78,6 +78,24 @@ superinfer::ir::physical::Plan make_embedding_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_bf16_embedding_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({32, 0, 1});
+  assert(builder.add_buffer(0, 4, 4).has_value());
+  assert(builder.add_buffer(8, 12, 8).has_value());
+  assert(builder.add_buffer(24, 8, 8).has_value());
+  assert(builder
+             .add_command(base::KernelId{8},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}},
+                          {}, 0, 0, 0)
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 }  // namespace
 
 int main() {
@@ -228,6 +246,28 @@ int main() {
       ir::physical::BufferId{2},
       base::ByteView(reinterpret_cast<std::byte*>(embedded.data()), sizeof(embedded))).ok());
   assert((embedded == std::array<float, 2>{5.0F, 6.0F}));
+
+  const auto bf16_embedding_plan = make_bf16_embedding_plan();
+  auto bf16_embedding = sm120::cuda_runtime::CudaPlanSession::create(
+      bf16_embedding_plan, 120, "baseline-v1");
+  assert(bf16_embedding.has_value());
+  const std::array<std::uint16_t, 6> bf16_table{0x3f80, 0x4000, 0x4040,
+                                                 0x4080, 0x40a0, 0x40c0};
+  assert(bf16_embedding.value().copy_to_device(
+      ir::physical::BufferId{0},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(&token), sizeof(token))).ok());
+  assert(bf16_embedding.value().copy_to_device(
+      ir::physical::BufferId{1},
+      base::ConstByteView(reinterpret_cast<const std::byte*>(bf16_table.data()),
+                          sizeof(bf16_table))).ok());
+  assert(bf16_embedding.value().execute().ok());
+  assert(bf16_embedding.value().synchronize_for_test().ok());
+  std::array<float, 2> bf16_embedded{};
+  assert(bf16_embedding.value().copy_from_device(
+      ir::physical::BufferId{2},
+      base::ByteView(reinterpret_cast<std::byte*>(bf16_embedded.data()),
+                     sizeof(bf16_embedded))).ok());
+  assert((bf16_embedded == std::array<float, 2>{5.0F, 6.0F}));
 
   ir::physical::PlanBuilder norm_builder;
   norm_builder.set_resource_bounds({48, 0, 1});

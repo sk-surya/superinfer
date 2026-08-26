@@ -30,6 +30,15 @@ int main() {
     assert(candidates.value().front().deterministic);
     assert(candidates.value().front().workspace_bytes == 0);
   }
+  const auto bf16_embedding = provider.enumerate({"embedding", 120, "bf16"});
+  assert(bf16_embedding.has_value());
+  assert(bf16_embedding.value().size() == 1);
+  assert(bf16_embedding.value().front().id.value() == 8);
+  assert(bf16_embedding.value().front().deterministic);
+  assert(bf16_embedding.value().front().workspace_bytes == 0);
+  const auto unsupported_embedding_dtype = provider.enumerate({"embedding", 120, "int4"});
+  assert(!unsupported_embedding_dtype.has_value());
+  assert(unsupported_embedding_dtype.error().code() == superinfer::base::StatusCode::unsupported);
   for (const std::string_view operation : {"cast", "elementwise", "rope", "matmul", "attention",
                                             "moe_route", "activation", "sampling"}) {
     const auto candidates = provider.enumerate({operation, 120});

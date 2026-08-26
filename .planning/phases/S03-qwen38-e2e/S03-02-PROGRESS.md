@@ -81,6 +81,10 @@ updated: 2026-08-26
   handling for invalid shapes, scale counts, NaN encodings, and non-positive tensor scales. This
   is reference evidence only; no NVFP4 provider is advertised until it is differentially checked
   against source tensors and a target implementation.
+- The generic embedding capability now carries a compile-time storage-dtype fact in `KernelQuery`:
+  FP32 gathers remain kernel ID 7 and BF16-to-FP32 gathers use kernel ID 8. The BF16 path has
+  explicit buffer validation and an RTX 5090 test using known IEEE BF16 encodings; Qwen execution
+  is still blocked later by attention/DeltaNet and quantized projection coverage.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

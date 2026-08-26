@@ -38,6 +38,28 @@ superinfer::ir::lowered::Module make_fixture() {
   return std::move(module).value();
 }
 
+superinfer::ir::lowered::Module make_bf16_embedding_fixture() {
+  using namespace superinfer;
+  ir::lowered::ModuleBuilder builder;
+  const auto token = builder.add_tensor(
+      ir::semantic::TensorId{0}, {1}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::int32, ir::semantic::DType::f32);
+  const auto table = builder.add_tensor(
+      ir::semantic::TensorId{1}, {4, 2}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::bf16, ir::semantic::DType::f32,
+      ir::semantic::TensorRole::weight);
+  const auto output = builder.add_tensor(
+      ir::semantic::TensorId{2}, {1, 2}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  assert(token.has_value() && table.has_value() && output.has_value());
+  assert(builder.add_kernel_requirement(
+                         "embedding", 120, {token.value(), table.value(), output.value()})
+             .ok());
+  const auto module = std::move(builder).build();
+  assert(module.has_value());
+  return std::move(module).value();
+}
+
 }  // namespace
 
 int main() {
@@ -56,6 +78,11 @@ int main() {
   assert(result.value().plan.commands().size() == 1);
   assert(result.value().plan.commands().front().kernel.value() == 5);
   assert(result.value().plan.commands().front().buffers.size() == 3);
+
+  const auto bf16_result = specializer.compile(
+      make_bf16_embedding_fixture(), {target, 256, 64}, provider);
+  assert(bf16_result.has_value());
+  assert(bf16_result.value().plan.commands().front().kernel.value() == 8);
 
   const auto second = specializer.compile(make_fixture(), {target, 256, 64}, provider);
   assert(second.has_value());

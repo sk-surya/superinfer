@@ -76,6 +76,11 @@ updated: 2026-08-26
   the SM120 CUDA executor, and checked on RTX 5090. It is not promoted into the Qwen artifact
   matrix because the pinned embedding is BF16 and needs a matching materialization/differential
   contract.
+- An independent CPU NVFP4 dequantization oracle now pins the ModelOpt layout: E2M1 low/high
+  nibble order, FP8 E4M3FN per-16-element scales, positive `weight_scale_2`, and fail-closed
+  handling for invalid shapes, scale counts, NaN encodings, and non-positive tensor scales. This
+  is reference evidence only; no NVFP4 provider is advertised until it is differentially checked
+  against source tensors and a target implementation.
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.

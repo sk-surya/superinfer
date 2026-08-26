@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 int main() {
@@ -40,5 +41,45 @@ int main() {
   const std::vector<float> short_input{1.0F};
   const auto bad_projection = ReferencePrimitives::linear(weights, 2, 2, short_input, nullptr);
   assert(!bad_projection.has_value());
+
+  const std::vector<std::uint8_t> packed_nvfp4 = {
+      0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe,
+  };
+  const std::vector<std::uint8_t> block_scales = {0x38};  // E4M3 1.0.
+  const auto dequantized = ReferencePrimitives::dequantize_nvfp4(
+      packed_nvfp4, 1, 16, block_scales, 2.0F);
+  assert(dequantized.has_value());
+  const std::vector<float> expected_nvfp4 = {
+      0.0F, 1.0F, 2.0F, 3.0F, 4.0F, 6.0F, 8.0F, 12.0F,
+      -0.0F, -1.0F, -2.0F, -3.0F, -4.0F, -6.0F, -8.0F, -12.0F,
+  };
+  assert(dequantized.value().size() == expected_nvfp4.size());
+  for (std::size_t index = 0; index < expected_nvfp4.size(); ++index) {
+    assert(std::fabs(dequantized.value()[index] - expected_nvfp4[index]) < 1.0e-6F);
+  }
+
+  const std::vector<std::uint8_t> two_block_packed(16, 0x11);
+  const std::vector<std::uint8_t> two_block_scales = {0x38, 0x40};  // 1.0, 2.0.
+  const auto two_blocks = ReferencePrimitives::dequantize_nvfp4(
+      two_block_packed, 1, 32, two_block_scales, 1.0F);
+  assert(two_blocks.has_value());
+  assert(two_blocks.value()[0] == 0.5F);
+  assert(two_blocks.value()[15] == 0.5F);
+  assert(two_blocks.value()[16] == 1.0F);
+  assert(two_blocks.value()[31] == 1.0F);
+
+  assert(!ReferencePrimitives::dequantize_nvfp4(
+                   packed_nvfp4, 1, 8, block_scales, 1.0F)
+              .has_value());
+  assert(!ReferencePrimitives::dequantize_nvfp4(
+                   packed_nvfp4, 1, 16, {}, 1.0F)
+              .has_value());
+  const std::vector<std::uint8_t> invalid_block_scale = {0x7f};
+  assert(!ReferencePrimitives::dequantize_nvfp4(
+                   packed_nvfp4, 1, 16, invalid_block_scale, 1.0F)
+              .has_value());
+  assert(!ReferencePrimitives::dequantize_nvfp4(
+                   packed_nvfp4, 1, 16, block_scales, 0.0F)
+              .has_value());
   return 0;
 }

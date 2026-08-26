@@ -91,9 +91,23 @@ class ReferenceExecutor final {
         }
       } else if (operation.kind == ir::semantic::OperationKind::rms_norm ||
                  operation.kind == ir::semantic::OperationKind::layer_norm) {
-        if (operation.inputs.size() != 1) return base::Status::invalid_argument("reference norm requires one input");
+        const bool layer_norm = operation.kind == ir::semantic::OperationKind::layer_norm;
+        const std::size_t expected_inputs = layer_norm ? 3 : 2;
+        if (operation.inputs.size() != 1 && operation.inputs.size() != expected_inputs) {
+          return base::Status::invalid_argument("reference norm requires input and optional affine tensors");
+        }
         const auto& input = result.tensors[operation.inputs.front().value()].values;
         if (input.size() != elements.value()) return base::Status::invalid_argument("reference norm shape mismatch");
+        const std::vector<float>* scale = nullptr;
+        const std::vector<float>* bias = nullptr;
+        if (operation.inputs.size() == expected_inputs) {
+          scale = &result.tensors[operation.inputs[1].value()].values;
+          if (scale->size() != input.size()) return base::Status::invalid_argument("reference norm scale shape mismatch");
+          if (layer_norm) {
+            bias = &result.tensors[operation.inputs[2].value()].values;
+            if (bias->size() != input.size()) return base::Status::invalid_argument("reference norm bias shape mismatch");
+          }
+        }
         float mean = 0.0F;
         for (const float value : input) mean += value;
         mean /= static_cast<float>(input.size());
@@ -107,8 +121,10 @@ class ReferenceExecutor final {
         result.tensors[output.value()] = {module.tensors()[output.value()].name, shape,
                                           std::vector<float>(elements.value())};
         for (std::size_t index = 0; index < input.size(); ++index) {
-          const float centered = operation.kind == ir::semantic::OperationKind::layer_norm ? input[index] - mean : input[index];
-          result.tensors[output.value()].values[index] = centered / denominator;
+          const float centered = layer_norm ? input[index] - mean : input[index];
+          const float affine_scale = scale == nullptr ? 1.0F : (*scale)[index];
+          const float affine_bias = bias == nullptr ? 0.0F : (*bias)[index];
+          result.tensors[output.value()].values[index] = centered / denominator * affine_scale + affine_bias;
         }
       } else {
         return base::Status::unsupported("reference operation is not implemented");

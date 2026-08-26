@@ -15,7 +15,9 @@ inline base::Status cuda_status(cudaError_t error, std::string_view context) {
   if (error == cudaSuccess) return {};
   base::Status status = error == cudaErrorMemoryAllocation
                             ? base::Status::resource_exhausted(cudaGetErrorString(error))
-                            : base::Status::internal(cudaGetErrorString(error));
+                            : (error == cudaErrorNoDevice || error == cudaErrorInsufficientDriver
+                                   ? base::Status::unavailable(cudaGetErrorString(error))
+                                   : base::Status::internal(cudaGetErrorString(error)));
   status.with_context(context);
   return status;
 }

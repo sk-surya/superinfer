@@ -57,7 +57,8 @@ if(SUPERINFER_CUDA_AVAILABLE)
   set_target_properties(superinfer_cuda PROPERTIES CUDA_ARCHITECTURES "120a")
 
   add_library(superinfer_sm120_cuda_runtime STATIC
-    backends/sm120/runtime/cuda_ownership.cu)
+    backends/sm120/runtime/cuda_ownership.cu
+    backends/sm120/runtime/cuda_plan_executor.cu)
   target_compile_features(superinfer_sm120_cuda_runtime PUBLIC cuda_std_20)
   target_include_directories(superinfer_sm120_cuda_runtime PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"

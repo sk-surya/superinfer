@@ -13,8 +13,17 @@ superinfer::ir::lowered::Module make_fixture() {
   const auto hidden = builder.add_tensor(
       ir::semantic::TensorId{0}, {2, 4}, ir::lowered::LayoutKind::row_major,
       base::MemorySpace::device, 16, ir::semantic::DType::f16, ir::semantic::DType::f32);
-  assert(hidden.has_value());
-  assert(builder.add_kernel_requirement("rms_norm", 120).ok());
+  const auto output = builder.add_tensor(
+      ir::semantic::TensorId{1}, {2, 4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f16, ir::semantic::DType::f32);
+  const auto scale = builder.add_tensor(
+      ir::semantic::TensorId{2}, {2, 4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f16, ir::semantic::DType::f32);
+  assert(hidden.has_value() && output.has_value() && scale.has_value());
+  assert(builder
+             .add_kernel_requirement("rms_norm", 120,
+                                     {hidden.value(), output.value(), scale.value()})
+             .ok());
   const auto module = std::move(builder).build();
   assert(module.has_value());
   return std::move(module).value();
@@ -31,11 +40,12 @@ int main() {
   assert(result.value().plan.verify().ok());
   assert(result.value().plan.capability().target_capability == 120);
   assert(result.value().plan.capability().kernel_catalog == "baseline-v1");
-  assert(result.value().memory.device_arena_bytes == 16);
-  assert(result.value().memory.allocations.size() == 1);
+  assert(result.value().memory.device_arena_bytes == 48);
+  assert(result.value().memory.allocations.size() == 3);
   assert(result.value().memory.allocations.front().offset == 0);
   assert(result.value().plan.commands().size() == 1);
   assert(result.value().plan.commands().front().kernel.value() == 5);
+  assert(result.value().plan.commands().front().buffers.size() == 3);
 
   const auto second = specializer.compile(make_fixture(), {target, 256, 64});
   assert(second.has_value());

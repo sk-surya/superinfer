@@ -1,9 +1,11 @@
 #include <sm120/runtime/cuda_plan_executor.cuh>
+#include <sm120/compiler/specializer.h>
 
 #include <cassert>
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <utility>
 
 namespace {
 
@@ -56,9 +58,18 @@ superinfer::ir::physical::Plan make_numeric_plan() {
 
 int main() {
   int device_count = 0;
-  assert(cudaGetDeviceCount(&device_count) == cudaSuccess);
+  const cudaError_t count_error = cudaGetDeviceCount(&device_count);
+  if (count_error == cudaErrorNoDevice || count_error == cudaErrorInsufficientDriver) return 77;
+  assert(count_error == cudaSuccess);
   if (device_count == 0) return 77;
-  assert(cudaSetDevice(0) == cudaSuccess);
+  const cudaError_t set_error = cudaSetDevice(0);
+  if (set_error == cudaErrorNoDevice || set_error == cudaErrorInsufficientDriver) return 77;
+  assert(set_error == cudaSuccess);
+  cudaDeviceProp properties{};
+  const cudaError_t property_error = cudaGetDeviceProperties(&properties, 0);
+  if (property_error == cudaErrorNoDevice || property_error == cudaErrorInsufficientDriver) return 77;
+  assert(property_error == cudaSuccess);
+  if (properties.major != 12 || properties.minor != 0) return 77;
 
   using namespace superinfer;
   const auto plan = make_plan();
@@ -75,6 +86,15 @@ int main() {
   const auto rejected_target = sm120::cuda_runtime::CudaPlanSession::create(plan, 89, "baseline-v1");
   assert(!rejected_target.has_value());
   assert(rejected_target.error().code() == base::StatusCode::unsupported);
+
+  ir::physical::PlanBuilder future_catalog_builder;
+  future_catalog_builder.set_resource_bounds({0, 0, 1});
+  const auto future_catalog_plan = std::move(future_catalog_builder).finalize({120, "future-v2"});
+  assert(future_catalog_plan.has_value());
+  const auto rejected_catalog = sm120::cuda_runtime::CudaPlanSession::create(
+      future_catalog_plan.value(), 120, "future-v2");
+  assert(!rejected_catalog.has_value());
+  assert(rejected_catalog.error().code() == base::StatusCode::unsupported);
 
   ir::physical::PlanBuilder zero_builder;
   zero_builder.set_resource_bounds({0, 0, 1});
@@ -95,6 +115,21 @@ int main() {
       unknown_plan.value(), 120, "baseline-v1");
   assert(!rejected_unknown.has_value());
   assert(rejected_unknown.error().code() == base::StatusCode::unsupported);
+
+  ir::physical::PlanBuilder mismatch_builder;
+  mismatch_builder.set_resource_bounds({32, 0, 1});
+  assert(mismatch_builder.add_buffer(0, 16, 16).has_value());
+  assert(mismatch_builder.add_buffer(16, 8, 8).has_value());
+  assert(mismatch_builder
+             .add_command(base::KernelId{1},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1}}, {}, 0, 0, 0)
+             .has_value());
+  const auto mismatch_plan = std::move(mismatch_builder).finalize({120, "baseline-v1"});
+  assert(mismatch_plan.has_value());
+  const auto rejected_mismatch = sm120::cuda_runtime::CudaPlanSession::create(
+      mismatch_plan.value(), 120, "baseline-v1");
+  assert(!rejected_mismatch.has_value());
+  assert(rejected_mismatch.error().code() == base::StatusCode::invalid_argument);
 
   const auto numeric_plan = make_numeric_plan();
   auto numeric = sm120::cuda_runtime::CudaPlanSession::create(numeric_plan, 120, "baseline-v1");
@@ -128,11 +163,13 @@ int main() {
   assert(copied == sum);
 
   ir::physical::PlanBuilder norm_builder;
-  norm_builder.set_resource_bounds({32, 0, 1});
+  norm_builder.set_resource_bounds({48, 0, 1});
   assert(norm_builder.add_buffer(0, 16, 16).has_value());
   assert(norm_builder.add_buffer(16, 16, 16).has_value());
+  assert(norm_builder.add_buffer(32, 16, 16).has_value());
   assert(norm_builder
-             .add_command(base::KernelId{5}, {ir::physical::BufferId{0}, ir::physical::BufferId{1}},
+             .add_command(base::KernelId{5}, {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                                               ir::physical::BufferId{2}},
                           {}, 0, 0, 0)
              .has_value());
   const auto norm_plan = std::move(norm_builder).finalize({120, "baseline-v1"});
@@ -144,6 +181,12 @@ int main() {
                               base::ConstByteView(reinterpret_cast<const std::byte*>(left.data()),
                                                   sizeof(left)))
              .ok());
+  const std::array<float, 4> scale{1.0F, 1.5F, 2.0F, 2.5F};
+  assert(norm.value()
+             .copy_to_device(ir::physical::BufferId{2},
+                             base::ConstByteView(reinterpret_cast<const std::byte*>(scale.data()),
+                                                 sizeof(scale)))
+             .ok());
   assert(norm.value().execute().ok());
   assert(norm.value().synchronize_for_test().ok());
   std::array<float, 4> normalized{};
@@ -154,7 +197,96 @@ int main() {
              .ok());
   const float denominator = std::sqrt((1.0F + 4.0F + 9.0F + 16.0F) / 4.0F + 1.0e-5F);
   for (std::size_t index = 0; index < normalized.size(); ++index) {
-    assert(std::abs(normalized[index] - left[index] / denominator) < 1.0e-5F);
+    assert(std::abs(normalized[index] - left[index] / denominator * scale[index]) < 1.0e-5F);
+  }
+
+  ir::physical::PlanBuilder layer_builder;
+  layer_builder.set_resource_bounds({64, 0, 1});
+  for (std::uint64_t offset = 0; offset < 64; offset += 16) {
+    assert(layer_builder.add_buffer(offset, 16, 16).has_value());
+  }
+  assert(layer_builder
+             .add_command(base::KernelId{6},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}, ir::physical::BufferId{3}},
+                          {}, 0, 0, 0)
+             .has_value());
+  const auto layer_plan = std::move(layer_builder).finalize({120, "baseline-v1"});
+  assert(layer_plan.has_value());
+  auto layer = sm120::cuda_runtime::CudaPlanSession::create(layer_plan.value(), 120, "baseline-v1");
+  assert(layer.has_value());
+  const std::array<float, 4> bias{0.1F, 0.2F, 0.3F, 0.4F};
+  for (const auto& upload : std::array<std::pair<ir::physical::BufferId, const std::array<float, 4>*>, 3>{
+           {{ir::physical::BufferId{0}, &left}, {ir::physical::BufferId{2}, &scale},
+            {ir::physical::BufferId{3}, &bias}}}) {
+    assert(layer.value()
+               .copy_to_device(upload.first,
+                               base::ConstByteView(reinterpret_cast<const std::byte*>(upload.second->data()),
+                                                   sizeof(float) * upload.second->size()))
+               .ok());
+  }
+  assert(layer.value().execute().ok());
+  assert(layer.value().synchronize_for_test().ok());
+  std::array<float, 4> layered{};
+  assert(layer.value()
+             .copy_from_device(ir::physical::BufferId{1},
+                               base::ByteView(reinterpret_cast<std::byte*>(layered.data()),
+                                              sizeof(layered)))
+             .ok());
+  const float layer_mean = 2.5F;
+  const float layer_denominator = std::sqrt((2.25F + 0.25F + 0.25F + 2.25F) / 4.0F + 1.0e-5F);
+  for (std::size_t index = 0; index < layered.size(); ++index) {
+    const float expected = (left[index] - layer_mean) / layer_denominator * scale[index] + bias[index];
+    assert(std::abs(layered[index] - expected) < 1.0e-5F);
+  }
+
+  // Exercise the compiler-produced operand binding, not only the hand-authored fixture above.
+  ir::lowered::ModuleBuilder lowered_builder;
+  const auto lowered_input = lowered_builder.add_tensor(
+      ir::semantic::TensorId{0}, {4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  const auto lowered_output = lowered_builder.add_tensor(
+      ir::semantic::TensorId{1}, {4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  const auto lowered_scale = lowered_builder.add_tensor(
+      ir::semantic::TensorId{2}, {4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  assert(lowered_input.has_value() && lowered_output.has_value() && lowered_scale.has_value());
+  assert(lowered_builder
+             .add_kernel_requirement("rms_norm", 120,
+                                     {lowered_input.value(), lowered_output.value(),
+                                      lowered_scale.value()})
+             .ok());
+  const auto lowered = std::move(lowered_builder).build();
+  assert(lowered.has_value());
+  const auto specialized = sm120::Specializer{}.compile(
+      lowered.value(), {compiler::TargetProfile::offline_sm120a(1ULL << 30U, "baseline-v1"),
+                        256, 8});
+  assert(specialized.has_value());
+  auto compiled_session = sm120::cuda_runtime::CudaPlanSession::create(
+      specialized.value().plan, 120, "baseline-v1");
+  assert(compiled_session.has_value());
+  assert(specialized.value().plan.commands().front().buffers.size() == 3);
+  assert(compiled_session.value()
+             .copy_to_device(ir::physical::BufferId{0},
+                             base::ConstByteView(reinterpret_cast<const std::byte*>(left.data()),
+                                                 sizeof(left)))
+             .ok());
+  assert(compiled_session.value()
+             .copy_to_device(ir::physical::BufferId{2},
+                             base::ConstByteView(reinterpret_cast<const std::byte*>(scale.data()),
+                                                 sizeof(scale)))
+             .ok());
+  assert(compiled_session.value().execute().ok());
+  assert(compiled_session.value().synchronize_for_test().ok());
+  std::array<float, 4> compiled_output{};
+  assert(compiled_session.value()
+             .copy_from_device(ir::physical::BufferId{1},
+                               base::ByteView(reinterpret_cast<std::byte*>(compiled_output.data()),
+                                              sizeof(compiled_output)))
+             .ok());
+  for (std::size_t index = 0; index < compiled_output.size(); ++index) {
+    assert(std::abs(compiled_output[index] - left[index] / denominator * scale[index]) < 1.0e-5F);
   }
   return 0;
 }

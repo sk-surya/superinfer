@@ -19,7 +19,7 @@ int main() {
   assert(lowered_builder
              .add_fusion("norm_residual", std::vector<LoweredTensorId>{lowered_tensor.value()})
              .ok());
-  assert(lowered_builder.add_kernel_requirement("rms_norm", 120).ok());
+  assert(lowered_builder.add_kernel_requirement("rms_norm", 120, {lowered_tensor.value()}).ok());
   const auto lowered = std::move(lowered_builder).build();
   assert(lowered.has_value());
   assert(lowered.value().verify().ok());

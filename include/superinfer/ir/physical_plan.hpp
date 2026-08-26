@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <sstream>
@@ -44,6 +45,7 @@ struct CommandDescriptor final {
   std::uint32_t stream;
   std::uint64_t workspace_offset;
   std::uint64_t workspace_size;
+  float epsilon{1.0e-5F};
 };
 
 class PlanBuilder;
@@ -95,7 +97,8 @@ class Plan final {
     for (std::size_t index = 0; index < commands_.size(); ++index) {
       const CommandDescriptor& command = commands_[index];
       if (command.id.value() != index || command.workspace_size > resources_.workspace_bytes ||
-          command.workspace_offset > resources_.workspace_bytes - command.workspace_size) {
+          command.workspace_offset > resources_.workspace_bytes - command.workspace_size ||
+          !std::isfinite(command.epsilon) || command.epsilon <= 0.0F) {
         return base::Status::out_of_range("physical command workspace exceeds bounds");
       }
       for (BufferId buffer : command.buffers) {
@@ -174,9 +177,10 @@ class PlanBuilder final {
   base::Result<CommandId> add_command(base::KernelId kernel, std::vector<BufferId> buffers,
                                       std::vector<CommandId> dependencies,
                                       std::uint32_t stream, std::uint64_t workspace_offset,
-                                      std::uint64_t workspace_size) {
+                                      std::uint64_t workspace_size, float epsilon = 1.0e-5F) {
     commands_.push_back({CommandId{commands_.size()}, kernel, std::move(buffers),
-                         std::move(dependencies), stream, workspace_offset, workspace_size});
+                         std::move(dependencies), stream, workspace_offset, workspace_size,
+                         epsilon});
     return commands_.back().id;
   }
 

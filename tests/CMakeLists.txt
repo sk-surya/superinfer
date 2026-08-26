@@ -105,7 +105,7 @@ if(SUPERINFER_CUDA_AVAILABLE)
   target_include_directories(superinfer_sm120_cuda_plan_executor PRIVATE
     "${CMAKE_SOURCE_DIR}/backends")
   target_link_libraries(superinfer_sm120_cuda_plan_executor PRIVATE
-    superinfer_sm120_cuda_runtime CUDA::cudart)
+    superinfer_sm120_cuda_runtime superinfer_compiler CUDA::cudart)
   set_target_properties(superinfer_sm120_cuda_plan_executor PROPERTIES CUDA_ARCHITECTURES "120a")
   add_test(NAME superinfer.sm120.cuda_plan_executor COMMAND superinfer_sm120_cuda_plan_executor)
   set_tests_properties(superinfer.sm120.cuda_plan_executor PROPERTIES SKIP_RETURN_CODE 77)

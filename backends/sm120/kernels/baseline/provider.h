@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -22,16 +21,22 @@ class BaselineProvider final : public kernels::KernelProvider {
     if (query.target_capability != 120) {
       return base::Status::unsupported("baseline provider requires sm_120a");
     }
-    constexpr std::array<std::string_view, 13> operations{
-        "copy", "cast", "elementwise", "residual", "rms_norm", "layer_norm", "rope",
-        "matmul", "embedding", "attention", "moe_route", "activation", "sampling"};
-    for (std::size_t index = 0; index < operations.size(); ++index) {
-      if (query.operation == operations[index]) {
-        return std::vector<kernels::KernelCandidate>{{base::KernelId{index + 1},
-                                                       "sm120.baseline", true, 0}};
-      }
+    // Keep this registry synchronized with the CUDA resolver. An advertised candidate must be
+    // executable; operations without a physical baseline remain explicit selector misses until
+    // their command contract and differential fixture exist.
+    if (query.operation == "copy") {
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{1}, "sm120.baseline", true, 0}};
     }
-    return base::Status::unsupported("no baseline candidate for operation");
+    if (query.operation == "residual") {
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{4}, "sm120.baseline", true, 0}};
+    }
+    if (query.operation == "rms_norm") {
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{5}, "sm120.baseline", true, 0}};
+    }
+    if (query.operation == "layer_norm") {
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{6}, "sm120.baseline", true, 0}};
+    }
+    return base::Status::unsupported("no executable baseline candidate for operation");
   }
 };
 

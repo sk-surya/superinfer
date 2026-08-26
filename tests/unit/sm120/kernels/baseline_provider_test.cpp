@@ -1,7 +1,7 @@
 #include <sm120/kernels/baseline/provider.h>
 
-#include <cassert>
 #include <array>
+#include <cassert>
 #include <string_view>
 
 int main() {
@@ -20,16 +20,21 @@ int main() {
   assert(!unsupported_operation.has_value());
   assert(unsupported_operation.error().code() == superinfer::base::StatusCode::unsupported);
 
-  constexpr std::array<std::string_view, 13> operations{
-      "copy", "cast", "elementwise", "residual", "rms_norm", "layer_norm", "rope",
-      "matmul", "embedding", "attention", "moe_route", "activation", "sampling"};
-  for (std::size_t index = 0; index < operations.size(); ++index) {
-    const auto candidates = provider.enumerate({operations[index], 120});
+  constexpr std::array<std::pair<std::string_view, std::uint64_t>, 4> operations{{
+      {"copy", 1}, {"residual", 4}, {"rms_norm", 5}, {"layer_norm", 6}}};
+  for (const auto& operation : operations) {
+    const auto candidates = provider.enumerate({operation.first, 120});
     assert(candidates.has_value());
     assert(candidates.value().size() == 1);
-    assert(candidates.value().front().id.value() == index + 1);
+    assert(candidates.value().front().id.value() == operation.second);
     assert(candidates.value().front().deterministic);
     assert(candidates.value().front().workspace_bytes == 0);
+  }
+  for (const std::string_view operation : {"cast", "elementwise", "rope", "matmul", "embedding",
+                                            "attention", "moe_route", "activation", "sampling"}) {
+    const auto candidates = provider.enumerate({operation, 120});
+    assert(!candidates.has_value());
+    assert(candidates.error().code() == superinfer::base::StatusCode::unsupported);
   }
   return 0;
 }

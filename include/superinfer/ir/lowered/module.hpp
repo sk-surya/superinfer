@@ -39,6 +39,7 @@ struct FusedRegion final {
 struct KernelRequirement final {
   std::string operation;
   std::uint32_t target_capability;
+  std::vector<LoweredTensorId> operands;
 };
 
 /** Immutable target-aware module used as input to physical planning. */
@@ -76,6 +77,11 @@ class Module final {
     for (const KernelRequirement& requirement : kernel_requirements_) {
       if (requirement.operation.empty() || requirement.target_capability == 0) {
         return base::Status::invalid_argument("kernel requirement is incomplete");
+      }
+      for (const LoweredTensorId operand : requirement.operands) {
+        if (operand.value() >= tensors_.size()) {
+          return base::Status::out_of_range("kernel requirement operand is undefined");
+        }
       }
     }
     return {};
@@ -147,8 +153,10 @@ class ModuleBuilder final {
     return {};
   }
 
-  base::Status add_kernel_requirement(std::string operation, std::uint32_t target_capability) {
-    kernel_requirements_.push_back({std::move(operation), target_capability});
+  base::Status add_kernel_requirement(std::string operation, std::uint32_t target_capability,
+                                      std::vector<LoweredTensorId> operands = {}) {
+    kernel_requirements_.push_back(
+        {std::move(operation), target_capability, std::move(operands)});
     return {};
   }
 
@@ -166,4 +174,3 @@ class ModuleBuilder final {
 };
 
 }  // namespace superinfer::ir::lowered
-

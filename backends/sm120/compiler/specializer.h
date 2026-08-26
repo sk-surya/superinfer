@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 #include <vector>
 
@@ -70,19 +71,20 @@ class Specializer final {
     ir::physical::PlanBuilder plan_builder;
     plan_builder.set_resource_bounds(
         {memory.value().device_arena_bytes, memory.value().workspace_bytes, options.max_commands});
+    std::vector<ir::physical::BufferId> buffer_for_tensor(lowered.tensors().size(),
+                                                           ir::physical::BufferId{std::numeric_limits<std::uint64_t>::max()});
     for (const compiler::Allocation& allocation : memory.value().allocations) {
       const auto buffer = plan_builder.add_buffer(allocation.offset, allocation.bytes, allocation.alignment);
       if (!buffer.has_value()) {
         base::Status error = buffer.error();
         return error.with_context("physical buffer");
       }
+      if (allocation.id >= buffer_for_tensor.size()) {
+        return base::Status::out_of_range("memory plan allocation is not a lowered tensor");
+      }
+      buffer_for_tensor[allocation.id] = buffer.value();
     }
 
-    std::vector<ir::physical::BufferId> buffers;
-    buffers.reserve(memory.value().allocations.size());
-    for (std::size_t index = 0; index < memory.value().allocations.size(); ++index) {
-      buffers.emplace_back(ir::physical::BufferId{index});
-    }
     std::vector<ir::physical::CommandId> dependencies;
     for (const ir::lowered::KernelRequirement& requirement : lowered.kernel_requirements()) {
       if (requirement.target_capability != options.target.compute_capability) {
@@ -93,7 +95,21 @@ class Specializer final {
         base::Status error = kernel.error();
         return error.with_context(requirement.operation);
       }
-      const auto command = plan_builder.add_command(kernel.value(), buffers, dependencies, 0, 0, 0);
+      if (requirement.operands.empty()) {
+        return base::Status::failed_precondition(
+            "kernel requirement must declare explicit tensor operands");
+      }
+      std::vector<ir::physical::BufferId> operands;
+      operands.reserve(requirement.operands.size());
+      for (const ir::lowered::LoweredTensorId operand : requirement.operands) {
+        if (operand.value() >= buffer_for_tensor.size() ||
+            buffer_for_tensor[operand.value()].value() == std::numeric_limits<std::uint64_t>::max()) {
+          return base::Status::failed_precondition("kernel operand has no physical allocation");
+        }
+        operands.push_back(buffer_for_tensor[operand.value()]);
+      }
+      const auto command = plan_builder.add_command(kernel.value(), std::move(operands), dependencies,
+                                                    0, 0, 0);
       if (!command.has_value()) {
         base::Status error = command.error();
         return error.with_context("physical command");
@@ -136,12 +152,10 @@ class Specializer final {
   }
 
   static base::Result<base::KernelId> kernel_id(std::string_view operation) {
-    constexpr std::string_view names[] = {"copy",       "cast",      "elementwise", "residual",
-                                          "rms_norm",   "layer_norm", "rope",        "matmul",
-                                          "embedding",  "attention",  "moe_route",   "activation",
-                                          "sampling"};
+    constexpr std::string_view names[] = {"copy", "residual", "rms_norm", "layer_norm"};
+    constexpr std::uint64_t ids[] = {1, 4, 5, 6};
     for (std::size_t index = 0; index < std::size(names); ++index) {
-      if (operation == names[index]) return base::KernelId{index + 1};
+      if (operation == names[index]) return base::KernelId{ids[index]};
     }
     return base::Status::unsupported("baseline kernel operation is not registered");
   }

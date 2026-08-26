@@ -13,13 +13,19 @@ __global__ void write_canary(std::uint32_t* output) {
 
 int main() {
   int device_count = 0;
-  assert(cudaGetDeviceCount(&device_count) == cudaSuccess);
+  const cudaError_t count_error = cudaGetDeviceCount(&device_count);
+  if (count_error == cudaErrorNoDevice || count_error == cudaErrorInsufficientDriver) return 77;
+  assert(count_error == cudaSuccess);
   if (device_count == 0) return 77;
-  assert(cudaSetDevice(0) == cudaSuccess);
+  const cudaError_t set_error = cudaSetDevice(0);
+  if (set_error == cudaErrorNoDevice || set_error == cudaErrorInsufficientDriver) return 77;
+  assert(set_error == cudaSuccess);
 
   cudaDeviceProp properties{};
-  assert(cudaGetDeviceProperties(&properties, 0) == cudaSuccess);
-  assert(properties.major == 12);
+  const cudaError_t property_error = cudaGetDeviceProperties(&properties, 0);
+  if (property_error == cudaErrorNoDevice || property_error == cudaErrorInsufficientDriver) return 77;
+  assert(property_error == cudaSuccess);
+  if (properties.major != 12 || properties.minor != 0) return 77;
 
   using namespace superinfer::sm120::cuda_runtime;
   auto buffer = DeviceBuffer::allocate(sizeof(std::uint32_t));

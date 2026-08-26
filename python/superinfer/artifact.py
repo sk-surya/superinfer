@@ -407,10 +407,13 @@ def _typed_tensor_from_record(path: Path, tensor_name: str, tensor: Mapping[str,
     encoding = "none"
     expected_bytes = elements * bytes_per_element
     if source_dtype == "U8" and tensor_name.endswith(".weight"):
-        if len(shape) != 2 or shape[1] == 0 or shape[1] % 8 != 0:
+        if len(logical_shape) != 2 or logical_shape[1] == 0 or logical_shape[1] % 8 != 0:
             raise ArtifactError("packed NVFP4 weight shape is invalid")
         encoding = "nvfp4_packed"
-        expected_bytes = elements // 2
+        if logical_shape[1] > ((1 << 64) - 1) // 2:
+            raise ArtifactError("packed NVFP4 logical shape overflows")
+        shape = (logical_shape[0], logical_shape[1] * 2)
+        expected_bytes = elements
     elif source_dtype == "F8_E4M3":
         encoding = "fp8_e4m3_group_scale"
     payload = _read_located_tensor(path, tensor, payload_record)
@@ -422,6 +425,7 @@ def _typed_tensor_from_record(path: Path, tensor_name: str, tensor: Mapping[str,
         "alignment": 256,
         "storage_encoding": encoding,
         "storage_bytes": len(payload),
+        "logical_shape": list(shape),
     }
     for field, expected in declared_contract.items():
         if field in tensor and tensor[field] != expected:

@@ -211,6 +211,12 @@ class Qwen38SourceTests(unittest.TestCase):
                     "layout": "nvfp4-row-major-packed-low-high",
                 }],
             )
+            mapping = next(item for item in inventory.normalized_tensor_mapping()
+                           if item["name"] == "layer.weight")
+            self.assertEqual(mapping["logical_shape"], [2, 16])
+            self.assertEqual(mapping["physical_dtype"], "u8")
+            self.assertEqual(mapping["storage_encoding"], "nvfp4_packed")
+            self.assertEqual(mapping["storage_bytes"], 8)
 
     def test_quantized_weight_without_tensor_scale_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

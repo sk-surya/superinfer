@@ -448,12 +448,19 @@ def _physical_tensor_mapping(tensor: TensorRecord) -> dict[str, Any]:
             "unsupported_tensor_dtype", tensor.name, tensor.dtype
         ) from error
     encoding = "none"
+    logical_shape = list(tensor.shape) if tensor.shape else [1]
     if tensor.dtype == "U8" and tensor.name.endswith(".weight"):
+        if len(tensor.shape) != 2 or tensor.shape[1] == 0 or tensor.shape[1] > (2**63 - 1):
+            raise Qwen38ValidationError(
+                "quantization_shape_mismatch", tensor.name, "packed NVFP4 weight shape is invalid"
+            )
         encoding = "nvfp4_packed"
+        logical_shape = [tensor.shape[0], tensor.shape[1] * 2]
     elif tensor.dtype == "F8_E4M3":
         encoding = "fp8_e4m3_group_scale"
     return {
         "physical_dtype": physical_dtype,
+        "logical_shape": logical_shape,
         "layout": "row_major",
         "alignment": 256,
         "storage_encoding": encoding,

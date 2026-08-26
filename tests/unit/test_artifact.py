@@ -69,18 +69,18 @@ class PythonArtifactTests(unittest.TestCase):
                     "dtype": "U8",
                     "shape": [2, 8],
                     "artifact_payload_offset": 8,
-                    "artifact_payload_end": 16,
+                    "artifact_payload_end": 24,
                 },
                 {
                     "name": "layer.weight_scale",
                     "dtype": "F8_E4M3",
                     "shape": [2, 1],
-                    "artifact_payload_offset": 16,
-                    "artifact_payload_end": 18,
+                    "artifact_payload_offset": 24,
+                    "artifact_payload_end": 26,
                 },
             ],
             "physical_plan": "plan",
-            "payload_hex": "0001020304050607" "1011121314151617" "1819",
+            "payload_hex": "0001020304050607" "101112131415161718191a1b1c1d1e1f" "1819",
         }
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "typed.sinf"
@@ -94,8 +94,9 @@ class PythonArtifactTests(unittest.TestCase):
 
             weight = read_typed_tensor(path, "layer.weight")
             self.assertEqual(weight.descriptor.dtype, "u8")
+            self.assertEqual(weight.descriptor.shape, (2, 16))
             self.assertEqual(weight.descriptor.encoding, "nvfp4_packed")
-            self.assertEqual(weight.descriptor.storage_bytes, 8)
+            self.assertEqual(weight.descriptor.storage_bytes, 16)
 
             scale = read_typed_tensor(path, "layer.weight_scale")
             self.assertEqual(scale.descriptor.dtype, "u8")

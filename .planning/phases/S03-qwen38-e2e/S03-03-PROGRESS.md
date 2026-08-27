@@ -21,6 +21,8 @@ repeatability, failure behavior, and the final machine-readable acceptance repor
 - Full FP32 logits and per-step max/mean/RMSE are recorded in
   `artifacts/S03/qwen38-e2e-two-token-differential.json`. Two fresh GPU sessions produced byte-identical
   step captures.
+- A three-token shared-state chain `49276, 2349, 1074` also matches the external reference; its
+  per-step vector metrics are recorded in `artifacts/S03/qwen38-e2e-three-token-differential.json`.
 - Failure matrix passes artifact corruption/truncation, target mismatch, injected CUDA fault poisoning,
   and over-capacity continuation rejection; see `artifacts/S03/qwen38-e2e-failure-matrix.json`.
 

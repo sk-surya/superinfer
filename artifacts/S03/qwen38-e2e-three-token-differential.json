@@ -1,0 +1,49 @@
+{
+  "kind": "qwen38_artifact_full_graph_three_token_differential",
+  "status": "pass_token_alignment_with_quantized_logit_drift",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "workload": {
+    "tokens": [0, 49276, 2349],
+    "layers": 64,
+    "commands_per_segment": 2424,
+    "commands_total": 7272,
+    "state_buffers": 128,
+    "arena_bytes": 19190769152
+  },
+  "target": {
+    "gpu": 0,
+    "name": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a",
+    "cuda_visible_devices": "0",
+    "cuda_launch_blocking": true
+  },
+  "reference": {
+    "implementation": "streamed Qwen3_5DecoderLayer with shared DynamicCache",
+    "transformers_version": "5.14.1",
+    "planned_transformers_version": "5.12.1",
+    "capture": "build/evidence/qwen38-reference-three.logits.f32",
+    "capture_sha256": "eb8c5c062afafaa45e5b6c5f210a792c1b93aa4a428ccd01e440b15b6b9fe34e",
+    "greedy_sequence": [49276, 2349, 1074]
+  },
+  "superinfer": {
+    "capture_step0": "build/evidence/qwen38-e2e-three.step0.f32",
+    "capture_steps1_2": "build/evidence/qwen38-e2e-three.step1-2.f32",
+    "capture_sha256": {
+      "step0": "5ec2da93324f9eae293b469aab61b86048f5082824ca0c4e688a8743d0a90952",
+      "steps1_2": "ab9e5a5716fddf84bc1682460302affb1b1588ee3cd5036ea42d34044f0192da"
+    },
+    "greedy_sequence": [49276, 2349, 1074]
+  },
+  "comparison": {
+    "greedy_token_match": true,
+    "steps": [
+      {"step": 0, "max_abs": 0.17594313621520996, "mean_abs": 0.02742159980656483, "rmse": 0.03465115864337397},
+      {"step": 1, "max_abs": 0.17780008912086487, "mean_abs": 0.027897859724787887, "rmse": 0.03540159111608695},
+      {"step": 2, "max_abs": 0.25989532470703125, "mean_abs": 0.03650248286250325, "rmse": 0.04631588377538584}
+    ],
+    "quality_claim": "three-token greedy state continuation alignment; quantized-logit drift is recorded and not treated as bitwise equality"
+  }
+}

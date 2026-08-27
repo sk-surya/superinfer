@@ -227,6 +227,33 @@ superinfer::ir::lowered::Module make_nvfp4_linear_fixture(bool valid) {
   return std::move(module).value();
 }
 
+superinfer::ir::lowered::Module make_sequential_activation_fixture() {
+  using namespace superinfer;
+  ir::lowered::ModuleBuilder builder;
+  const auto input = builder.add_tensor(
+      ir::semantic::TensorId{0}, {1, 4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  const auto middle = builder.add_tensor(
+      ir::semantic::TensorId{1}, {1, 4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  const auto output = builder.add_tensor(
+      ir::semantic::TensorId{2}, {1, 4}, ir::lowered::LayoutKind::row_major,
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+  assert(input.has_value() && middle.has_value() && output.has_value());
+  assert(builder.add_kernel_requirement(
+                         "residual", 120,
+                         {input.value(), input.value(), middle.value()})
+             .ok());
+  assert(builder.add_kernel_requirement(
+                         "residual", 120,
+                         {middle.value(), middle.value(), output.value()})
+             .ok());
+  assert(builder.add_entry_point("decode", {input.value()}, {output.value()}).ok());
+  const auto module = std::move(builder).build();
+  assert(module.has_value());
+  return std::move(module).value();
+}
+
 }  // namespace
 
 int main() {
@@ -359,6 +386,14 @@ int main() {
   assert(role_result.value().plan.buffers().size() == 2);
   assert(role_result.value().plan.commands().front().buffers[0] ==
          role_result.value().plan.commands().front().buffers[1]);
+
+  const auto sequential_result = specializer.compile(
+      make_sequential_activation_fixture(), {target, 256, 64}, provider);
+  assert(sequential_result.has_value());
+  assert(sequential_result.value().memory.allocations.size() == 3);
+  assert(sequential_result.value().memory.allocations[0].offset ==
+         sequential_result.value().memory.allocations[2].offset);
+  assert(sequential_result.value().memory.device_arena_bytes == 32);
 
   RejectingProvider rejecting_provider;
   const auto provider_rejection = specializer.compile(make_fixture(), {target, 256, 64}, rejecting_provider);

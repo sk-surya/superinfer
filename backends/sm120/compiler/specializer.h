@@ -83,7 +83,7 @@ class Specializer final {
       requests.push_back({tensor.id.value(), "tensor_" + std::to_string(tensor.id.value()),
                           compiler::ArenaKind::device, bytes.value(),
                           std::max(options.target.required_alignment, tensor.alignment),
-                          {0, std::max<std::uint64_t>(1, lowered.kernel_requirements().size())},
+                          lifetime_for(tensor, lowered),
                           allocation_class(tensor.role)});
     }
     const auto memory = planner.plan(requests);
@@ -104,7 +104,8 @@ class Specializer final {
       const ir::lowered::Tensor& tensor = lowered.tensors()[allocation.id];
       const auto buffer = plan_builder.add_buffer(
           allocation.offset, allocation.bytes, allocation.alignment,
-          physical_tensor_descriptor(tensor, allocation.alignment));
+          physical_tensor_descriptor(tensor, allocation.alignment),
+          {allocation.lifetime.first, allocation.lifetime.last});
       if (!buffer.has_value()) {
         base::Status error = buffer.error();
         return error.with_context("physical buffer");
@@ -357,6 +358,42 @@ class Specializer final {
       case ir::semantic::TensorRole::logits: return compiler::AllocationClass::activation;
     }
     return compiler::AllocationClass::activation;
+  }
+
+  static compiler::Lifetime lifetime_for(const ir::lowered::Tensor& tensor,
+                                         const ir::lowered::Module& lowered) noexcept {
+    const std::uint64_t command_count =
+        std::max<std::uint64_t>(1, lowered.kernel_requirements().size());
+    const compiler::AllocationClass kind = allocation_class(tensor.role);
+    if (kind == compiler::AllocationClass::persistent_weight ||
+        kind == compiler::AllocationClass::kv_state ||
+        kind == compiler::AllocationClass::decode_state) {
+      return {0, command_count};
+    }
+
+    // Lowered kernel operands contain both inputs and outputs.  Therefore the first
+    // occurrence is the definition/use boundary and the last occurrence is the final
+    // consumer boundary for the lowered value.  The physical planner uses half-open
+    // lifetimes, so a value produced by command N and consumed by command N+1 remains
+    // live through boundary N+1, while a value used only by command N can be reused by
+    // command N+1.
+    std::uint64_t first = command_count;
+    std::uint64_t last = 0;
+    for (std::uint64_t command = 0; command < lowered.kernel_requirements().size(); ++command) {
+      const auto& requirement = lowered.kernel_requirements()[command];
+      const bool present = std::any_of(
+          requirement.operands.begin(), requirement.operands.end(),
+          [&](const ir::lowered::LoweredTensorId operand) { return operand == tensor.id; });
+      if (!present) continue;
+      first = std::min(first, command);
+      last = command + 1;
+    }
+    if (first == command_count) {
+      // Entry-bound tensors that are not consumed by a command still need a valid
+      // allocation for plan binding.  Keep their minimal lifetime deterministic.
+      return {0, 1};
+    }
+    return {first, last};
   }
 
   static base::Result<std::uint64_t> tensor_bytes(const ir::lowered::Tensor& tensor) {

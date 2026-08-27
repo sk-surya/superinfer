@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -57,6 +58,12 @@ struct ResourceBounds final {
   std::uint32_t max_commands;
 };
 
+/** Half-open command interval [first, last) during which a physical view is live. */
+struct PhysicalLifetime final {
+  std::uint64_t first{0};
+  std::uint64_t last{std::numeric_limits<std::uint64_t>::max()};
+};
+
 struct CapabilityFingerprint final {
   std::uint32_t target_capability;
   std::string kernel_catalog;
@@ -68,6 +75,7 @@ struct BufferDescriptor final {
   std::uint64_t size;
   std::uint64_t alignment;
   PhysicalTensorDescriptor tensor;
+  PhysicalLifetime lifetime{};
 };
 
 /** Compile-time dimensions required by physical attention commands. Zero means not applicable. */
@@ -157,8 +165,9 @@ class Plan final {
     }
     for (std::size_t index = 0; index < buffers_.size(); ++index) {
       const BufferDescriptor& buffer = buffers_[index];
-      if (buffer.id.value() != index || buffer.alignment == 0 || buffer.offset % buffer.alignment != 0) {
-        return base::Status::invalid_argument("physical buffer has invalid identity or alignment");
+      if (buffer.id.value() != index || buffer.alignment == 0 || buffer.offset % buffer.alignment != 0 ||
+          buffer.lifetime.first >= buffer.lifetime.last) {
+        return base::Status::invalid_argument("physical buffer has invalid identity, alignment, or lifetime");
       }
       if (buffer.offset > resources_.arena_bytes ||
           buffer.size > resources_.arena_bytes - buffer.offset) {
@@ -178,7 +187,11 @@ class Plan final {
         const bool overlap = buffer.size != 0 && other.size != 0 &&
                              buffer.offset < other.offset + other.size &&
                              other.offset < buffer.offset + buffer.size;
-        if (overlap) return base::Status::failed_precondition("physical buffers overlap");
+        const bool live_overlap = buffer.lifetime.first < other.lifetime.last &&
+                                  other.lifetime.first < buffer.lifetime.last;
+        if (overlap && live_overlap) {
+          return base::Status::failed_precondition("live physical buffers overlap");
+        }
       }
     }
     for (std::size_t index = 0; index < commands_.size(); ++index) {
@@ -299,14 +312,16 @@ class PlanBuilder final {
 
   base::Result<BufferId> add_buffer(std::uint64_t offset, std::uint64_t size,
                                     std::uint64_t alignment,
-                                    PhysicalTensorDescriptor tensor = {}) {
+                                    PhysicalTensorDescriptor tensor = {},
+                                    PhysicalLifetime lifetime = {}) {
     if (tensor.dtype == PhysicalDType::unknown) {
       tensor.dtype = size % 4 == 0 ? PhysicalDType::f32 : PhysicalDType::u8;
       tensor.shape = {size / (tensor.dtype == PhysicalDType::f32 ? 4U : 1U)};
     }
     if (tensor.shape.empty()) tensor.shape = {size};
     if (tensor.alignment == 0) tensor.alignment = alignment;
-    buffers_.push_back({BufferId{buffers_.size()}, offset, size, alignment, std::move(tensor)});
+    buffers_.push_back(
+        {BufferId{buffers_.size()}, offset, size, alignment, std::move(tensor), lifetime});
     return buffers_.back().id;
   }
 

@@ -17,6 +17,8 @@ namespace superinfer::compiler {
 struct SemanticLoweringOptions final {
   std::uint32_t target_capability{0};
   std::uint64_t required_alignment{1};
+  /** Optional deployment capacity for static KV-state tensors; zero preserves authored capacity. */
+  std::uint64_t max_state_capacity{0};
 };
 
 /**
@@ -48,6 +50,10 @@ class SemanticLowering final {
         }
         shape.push_back(dimension.value);
       }
+      if (options.max_state_capacity != 0 &&
+          tensor.spec.role == ir::semantic::TensorRole::kv_cache && shape.size() == 3) {
+        shape[0] = std::min(shape[0], options.max_state_capacity);
+      }
       const auto lowered = builder.add_tensor(
           tensor.id, std::move(shape), ir::lowered::LayoutKind::row_major,
           base::MemorySpace::device, options.required_alignment, tensor.spec.dtype,
@@ -73,7 +79,7 @@ class SemanticLowering final {
       return builder.add_tensor(origin, std::move(shape), ir::lowered::LayoutKind::row_major,
                                 base::MemorySpace::device, options.required_alignment,
                                 ir::semantic::DType::f32, ir::semantic::DType::f32,
-                                source.spec.role, source.name + "$fp32");
+                                ir::semantic::TensorRole::activation, source.name + "$fp32");
     };
 
     const auto emit_cast = [&](ir::semantic::DType source_dtype,

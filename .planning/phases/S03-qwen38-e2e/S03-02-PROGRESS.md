@@ -229,12 +229,28 @@ updated: 2026-08-27
   boundary maxima are `0.000766158` and `0.00482035`; evidence is recorded in
   `artifacts/S03/qwen38-gdn-layer0-artifact-differential.json`.
 
-## Remaining S03-02 work
+- Lowered conversion materializations for BF16 auxiliary weights are now activation-owned
+  buffers, so only the source weight is artifact-bound; generated `$fp32` names can never be
+  mistaken for payload records.
+- Activation liveness is now derived from lowered operand intervals. Weights and state remain
+  persistent, while dead activations may reuse physical ranges. Physical BufferDescriptors carry
+  the same half-open lifetime and validate overlap only when two views are simultaneously live.
+- A complete real-artifact Qwen graph now compiles and resolves through the typed binder at
+  `sm_120a`: 4,823 lowered tensors, 2,421 physical commands, 4,695 physical buffers, and 2,001
+  artifact-bound payload views. The bounded deployment specialization uses 4,096 KV positions and
+  requires 19,190,769,152 device-arena bytes against a 34,359,738,368-byte budget. Evidence is
+  recorded in `artifacts/S03/qwen38-artifact-plan-compile.json`.
 
-- Carry the validated NVFP4 sidecar bindings through target lowering into reusable artifact-backed
-  physical buffers for LM/FFN and GDN numerical differential fixtures. The full-attention fixture
-  proves the manual binding path; generic lowering still needs to consume the same materialization
-  contract end to end.
-- Promote the artifact-bound projection/materialization path into reusable lowering/runtime bindings
-  for LM/FFN and retain the layer fixtures as differential gates.
-- Complete conversion/runtime staged differential evidence before S03-03 acceptance.
+## S03-02 acceptance
+
+The plan-level acceptance boundary is complete: the authenticated payload, full lowered graph,
+provider-selected Physical Plan, state aliases, liveness-aware allocations, and typed artifact
+payload ranges agree offline. This does not claim token execution or model-level logits; those are
+the explicit S03-03 boundary.
+
+## Next boundary: S03-03
+
+- Bind token input and embedding/LM-head payloads into a CUDA session without hot-path allocation.
+- Execute one real prefill/decode token through all 64 layers and retain selected layer boundaries.
+- Compare logits and greedy continuation against the pinned Transformers reference before any
+  Flash-Next runtime work.

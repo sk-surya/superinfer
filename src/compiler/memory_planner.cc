@@ -141,7 +141,15 @@ base::Result<MemoryPlan> MemoryPlanner::plan(const std::vector<AllocationRequest
       }
       if (!conflict) {
         if (end.value() > budget_for(request.arena, device_budget_bytes_, workspace_budget_bytes_)) {
-          return base::Status::resource_exhausted(std::string("memory budget exceeded for ") + request.name);
+          return base::Status::resource_exhausted(
+              std::string("memory budget exceeded for ") + request.name +
+              " bytes=" + std::to_string(request.bytes) +
+              " chosen=" + std::to_string(chosen) +
+              " end=" + std::to_string(end.value()) +
+              " budget=" + std::to_string(budget_for(request.arena, device_budget_bytes_,
+                                                       workspace_budget_bytes_)) +
+              " lifetime=" + std::to_string(request.lifetime.first) + ".." +
+              std::to_string(request.lifetime.last));
         }
         result.allocations.push_back({request.id, request.name, request.arena, request.allocation_class,
                                       chosen, request.bytes, request.alignment, request.lifetime});

@@ -210,6 +210,11 @@ int main() {
   assert(saw_lm_head_block_scale && saw_lm_head_tensor_scale);
   assert(lowered.value().state_slots().size() == 128);
   assert(lowered.value().state_transitions().size() == 384);
+  for (const auto& tensor : lowered.value().tensors()) {
+    if (tensor.name.ends_with("$fp32")) {
+      assert(tensor.role == ir::semantic::TensorRole::activation);
+    }
+  }
   assert(lowered.value().entry_points().size() == 1);
   assert(lowered.value().entry_points().front().inputs.size() == 1);
   assert(lowered.value().entry_points().front().outputs.size() == 1);
@@ -221,6 +226,13 @@ int main() {
   }
   assert(lowered_kv == 160);
   assert(lowered_decode_state == 96);
+  const auto capped_lowered = compiler::SemanticLowering{}.lower(module.value(), {120, 16, 4096});
+  assert(capped_lowered.has_value());
+  for (const auto& tensor : capped_lowered.value().tensors()) {
+    if (tensor.role == ir::semantic::TensorRole::kv_cache && tensor.physical_shape.size() == 3) {
+      assert(tensor.physical_shape[0] <= 4096);
+    }
+  }
   bool saw_f32_delta_state = false;
   for (const auto& tensor : module.value().tensors()) {
     if (tensor.name == "layer_00_delta_state_in") {

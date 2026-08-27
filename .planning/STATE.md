@@ -9,7 +9,7 @@ progress:
   total_phases: 10
   completed_phases: 3
   total_plans: 31
-  completed_plans: 9
+completed_plans: 10
 current_phase_name: qwen38-e2e
 parallel_research_phase: S03F-01
 s03f_01_status: blocked_missing_pinned_flash_next_source_and_reference_evidence
@@ -31,7 +31,7 @@ s03f_01_status: blocked_missing_pinned_flash_next_source_and_reference_evidence
 | S00 | Complete | 2 | [S00-01](phases/S00-foundation/S00-01-SUMMARY.md), [S00-02](phases/S00-foundation/S00-02-SUMMARY.md) |
 | S01 | Complete — Gate A reached | 3 | [S01-01](phases/S01-artifact-ir/S01-01-SUMMARY.md), [S01-02](phases/S01-artifact-ir/S01-02-SUMMARY.md), [S01-03](phases/S01-artifact-ir/S01-03-SUMMARY.md) |
 | S02 | Complete — Gate B reached | 3 | [S02-03](phases/S02-sm120-baseline/S02-03-SUMMARY.md) |
-| S03 | In progress | 3 | S03-01 complete; S03-02 artifact-bound Qwen layer execution/differential in progress; S03-03 intentionally unopened |
+| S03 | In progress | 3 | S03-01 and S03-02 complete; S03-03 full token execution is next |
 | S03F | Planned; S03F-01 may run research-only in parallel | 6 | [design](FLASH-NEXT-DESIGN.md); capacity/model-contract evidence pending |
 | S04 | Planned; blocked on S03F correctness | 3 | Pending |
 | S05 | Planned | 3 | Pending |
@@ -41,7 +41,7 @@ s03f_01_status: blocked_missing_pinned_flash_next_source_and_reference_evidence
 
 ## Current Focus
 
-S03 remains the primary implementation lane. Quantized LM/FFN/attention/GDN projection lowering, explicit tensor-scale bindings, state-buffer aliasing, per-head RMSNorm, sigmoid gating, partial RoPE, BF16 KV append, cached GQA, Gated Delta parameter derivation, and causal convolution are covered by focused CPU/CUDA evidence. Real `.sinf` artifacts now drive a complete layer-3 full-attention path and a complete layer-0 Gated-DeltaNet path across two execution segments on GPU 0, both matching independent Transformers-based references within recorded contracts. The immediate engineering boundary is reusable artifact-to-plan materialization for the full lowered graph, then close full Qwen generation through S03-03.
+S03 remains the primary implementation lane. Quantized LM/FFN/attention/GDN projection lowering, explicit tensor-scale bindings, state-buffer aliasing, per-head RMSNorm, sigmoid gating, partial RoPE, BF16 KV append, cached GQA, Gated Delta parameter derivation, and causal convolution are covered by focused CPU/CUDA evidence. Real `.sinf` artifacts now drive a complete layer-3 full-attention path and a complete layer-0 Gated-DeltaNet path across two execution segments on GPU 0, both matching independent Transformers-based references within recorded contracts. S03-02 now also compiles and binds the complete 64-layer graph with liveness-aware physical ranges; the immediate boundary is S03-03 full token execution and logits differential.
 
 The approved S03F amendment adds Flash-Next after S03 and before S04. **Only S03F-01 may begin before S03 closes**, and it is research-only: pin reference/model revisions, inventory exact packed tensors, produce a capacity ledger, and evaluate quantization/residency recipes. S03F-01 must not modify Physical Plan, MemoryPlanner, runtime or kernels.
 
@@ -66,13 +66,15 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
 
 ## Next Commands
 
-**Primary lane:** continue `.planning/phases/S03-qwen38-e2e/S03-02-PLAN.md`, then S03-03 when its existing entry criteria are met.
+**Primary lane:** execute `.planning/phases/S03-qwen38-e2e/S03-03-PLAN.md` for real prefill/decode/logits differential.
 
 **Parallel research lane:** execute `.planning/phases/S03F-flash-next/S03F-01-PLAN.md` only. Do not begin S03F-02 runtime changes until S03 is complete.
 
 ## Known Blockers / Decision Boundaries
 
 - S03 requires real RTX 5090 model-level differential and end-to-end evidence; primitive-only tests are insufficient.
+- The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
+  capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
 - S03F-01 must pin immutable Flash-Next model/reference revisions and compute exact packed-byte residency from accessible artifacts before implementation assumes expert fit.
 - If acceptable full expert residency across two 5090s is not feasible, S03F-04 may not invent silent expert paging. Record a capacity/residency ADR first.
 - Dual-GPU runtime work must validate actual peer-access topology and retain a pinned-host staged fallback; peer access is not assumed from GPU model alone.

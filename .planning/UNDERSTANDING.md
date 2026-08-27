@@ -6,7 +6,7 @@ This is the durable record of what the user understands, what evidence supports 
 
 | Field | Value |
 |---|---|
-| Implementation phase | S03 — Qwen3.8 end-to-end, S03-02 lowering/conversion |
+| Implementation phase | S03 — Qwen3.8 end-to-end, S03-03 token execution |
 | Current user gate | Gate B — one-token transformer execution — L2 |
 | User status | Packet presented |
 | Highest passed L2 gate | None |
@@ -157,14 +157,28 @@ study checkpoint under D-014.
 | Field | Value |
 |---|---|
 | Level | L1 implementation checkpoint with an L2-style packet retained for the physical artifact boundary |
-| Implementation status | Reached |
+| Implementation status | Reached; plan acceptance complete |
 | User status | Packet presented; not passed on the user's behalf |
-| Evidence | Layer-3 real `.sinf` differential on RTX 5090: max abs `1.98513e-4`, mean abs `3.61938e-5` |
+| Evidence | Layer-3 real `.sinf` differential on RTX 5090: max abs `1.98513e-4`, mean abs `3.61938e-5`; complete artifact plan binding: 4,823 lowered tensors, 2,421 commands, 2,001 payload views |
 | Packet | [understanding-packets/S03-02-artifact-layer.md](understanding-packets/S03-02-artifact-layer.md) |
 
 This checkpoint explains the typed tensor-table to Physical Plan path, explicit q/gate layout,
-BF16 KV storage, and the independent quantized reference. It does not certify full Qwen model
-correctness or close the S03-02 plan; Gated-Delta state continuation and S03-03 remain open.
+BF16 KV storage, liveness-aware physical range reuse, and the independent quantized reference. It
+does not certify full Qwen model correctness; S03-03 token/logits continuation remains open.
+
+## S03-02 artifact-plan capacity checkpoint
+
+| Field | Value |
+|---|---|
+| Level | L1 implementation checkpoint |
+| Implementation status | Reached |
+| User status | Packet presented; not passed on the user's behalf |
+| Evidence | [qwen38-artifact-plan-compile.json](../artifacts/S03/qwen38-artifact-plan-compile.json) |
+| Key result | 4,096 KV capacity, 19,190,769,152-byte arena, 15,168,969,216-byte budget headroom |
+
+This records the explicit deployment specialization required by the 32-GiB device envelope. The
+full model maximum context remains a model contract, while the first runnable artifact plan is a
+bounded-capacity deployment configuration.
 
 ## S03-02 Gated-DeltaNet checkpoint
 

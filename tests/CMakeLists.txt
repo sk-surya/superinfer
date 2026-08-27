@@ -115,6 +115,16 @@ add_executable(superinfer_artifact_test integration/artifact/artifact_test.cpp)
 target_link_libraries(superinfer_artifact_test PRIVATE superinfer_artifact)
 add_test(NAME superinfer.artifact.binary COMMAND superinfer_artifact_test)
 
+add_executable(superinfer_qwen38_artifact_plan_compile
+  integration/qwen38/plan_artifact_compile_test.cpp)
+target_link_libraries(superinfer_qwen38_artifact_plan_compile PRIVATE
+  superinfer_artifact superinfer_compiler)
+target_include_directories(superinfer_qwen38_artifact_plan_compile PRIVATE
+  "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/backends")
+add_test(NAME superinfer.qwen38.artifact_plan_compile
+  COMMAND superinfer_qwen38_artifact_plan_compile)
+set_tests_properties(superinfer.qwen38.artifact_plan_compile PROPERTIES SKIP_RETURN_CODE 77)
+
 if(SUPERINFER_CUDA_AVAILABLE)
   add_executable(superinfer_sm120_cuda_ownership gpu/sm120/cuda_ownership_test.cu)
   target_compile_features(superinfer_sm120_cuda_ownership PRIVATE cuda_std_20)

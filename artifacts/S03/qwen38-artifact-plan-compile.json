@@ -1,0 +1,40 @@
+{
+  "kind": "qwen38_full_artifact_physical_plan_compile",
+  "status": "pass",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+    "bytes": 18766674736,
+    "tensor_records": 2402
+  },
+  "source": {
+    "model": "Qwen3.8-27B-NVFP4-RTX5090",
+    "frontend": "frontends/qwen38/frontend.hpp",
+    "target": "sm_120a",
+    "kernel_catalog": "baseline-v1"
+  },
+  "compile": {
+    "lowered_tensors": 4823,
+    "physical_commands": 2421,
+    "physical_buffers": 4695,
+    "artifact_bound_buffers": 2001,
+    "kv_capacity": 4096,
+    "device_arena_bytes": 19190769152,
+    "device_budget_bytes": 34359738368,
+    "remaining_budget_bytes": 15168969216,
+    "activation_liveness": "first-operand-to-last-operand; weights-and-state-persistent",
+    "state_binding": "128 explicit state slots; input/output aliases preserved"
+  },
+  "execution_path": "mmap .sinf -> authenticated tensor table -> Qwen Semantic IR -> Lowered IR -> liveness-aware Physical Plan -> typed artifact binding",
+  "verification": {
+    "artifact_integrity": "pass",
+    "frontend_inventory_authentication": "pass",
+    "physical_plan_verify": "pass",
+    "artifact_descriptor_and_payload_ranges": "pass",
+    "gpu": "not used; compile and binding are CPU/offline"
+  },
+  "notes": [
+    "The authored 262144-token KV capacity does not fit alongside the complete model on a 32-GiB RTX 5090; 4096 is an explicit deployment specialization for the first decode proof.",
+    "This proves complete artifact-bound compilation and materialization, not prefill, logits, or greedy generation."
+  ]
+}

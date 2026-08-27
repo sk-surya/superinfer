@@ -1,0 +1,48 @@
+{
+  "schema": "superinfer.qwen38.e2e.prefill.differential.v1",
+  "status": "pass",
+  "mode": "static_unrolled_prefill",
+  "target": {
+    "gpu": 0,
+    "name": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a",
+    "gpu_1_used": false
+  },
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "corpus": {
+    "token_ids": [0, 49276, 2349],
+    "token_ids_sha256": "d04566568fe4a389cb8932f860b12080a16ef5e57d9750ca37212ff1f2dc6709"
+  },
+  "reference": {
+    "implementation": "Transformers Qwen3_5TextConfig/Qwen3_5DecoderLayer streamed one layer at a time",
+    "version": "5.12.1",
+    "greedy_sequence": [49276, 2349, 1074],
+    "logits_sha256": "eb8c5c062afafaa45e5b6c5f210a792c1b93aa4a428ccd01e440b15b6b9fe34",
+    "capture_sha256": "eb8c5c062afafaa45e5b6c5f210a792c1b93aa4a428ccd01e440b15b6b9fe34"
+  },
+  "superinfer": {
+    "entry_point": "prefill",
+    "commands": 7272,
+    "device_arena_bytes": 22392260096,
+    "state_buffers": 128,
+    "greedy_sequence": [49276, 2349, 1074],
+    "logits_sha256": "41fe73c947fc10c26c3689b16f0905a909da7151afb777c7692ed52d83782529"
+  },
+  "rows": [
+    {"position": 0, "max_abs": 0.1759431362, "mean_abs": 0.0274215998, "rmse": 0.0346511586},
+    {"position": 1, "max_abs": 0.1778000891, "mean_abs": 0.0278978597, "rmse": 0.0354015911},
+    {"position": 2, "max_abs": 0.2598953247, "mean_abs": 0.0365024829, "rmse": 0.0463158838}
+  ],
+  "determinism": {
+    "fresh_session_repeat": "pass",
+    "capture_sha256": "41fe73c947fc10c26c3689b16f0905a909da7151afb777c7692ed52d83782529",
+    "note": "Two fresh GPU sessions produced byte-identical disk-backed FP32 captures."
+  },
+  "limitations": [
+    "The prefill entry uses statically unrolled scalar token bindings rather than one contiguous token tensor.",
+    "This is correctness evidence for one static sequence length, not a performance claim."
+  ]
+}

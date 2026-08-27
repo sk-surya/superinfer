@@ -92,7 +92,11 @@ int main() {
     std::cerr << "frontend validation failed: " << frontend_status.message() << '\n';
     return 1;
   }
-  const auto semantic = frontend.emit(source);
+  std::uint32_t sequence_length = 1;
+  if (const char* encoded = std::getenv("SUPERINFER_QWEN38_PREFILL_LENGTH"); encoded != nullptr) {
+    sequence_length = static_cast<std::uint32_t>(std::strtoul(encoded, nullptr, 10));
+  }
+  const auto semantic = frontend.emit(source, sequence_length);
   if (!semantic.has_value()) {
     std::cerr << "frontend emission failed: " << semantic.error().message() << '\n';
     return 1;
@@ -123,6 +127,6 @@ int main() {
             << " commands=" << specialized.value().plan.commands().size()
             << " artifact_buffers=" << resolved.value().size()
             << " arena_bytes=" << specialized.value().memory.device_arena_bytes
-            << " kv_capacity=4096\n";
+            << " kv_capacity=4096 sequence_length=" << sequence_length << '\n';
   return 0;
 }

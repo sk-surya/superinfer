@@ -83,7 +83,8 @@ The current branch has real-artifact CUDA evidence for both mixed attention fami
   `artifacts/S03/qwen38-gdn-layer0-artifact-differential.json`.
 
 These are layer correctness checkpoints, not full-model or token-generation acceptance. The
-fixtures intentionally retain explicit command boundaries and use GPU 0 only; full Qwen prefill,
-logits, and greedy continuation are captured by the S03-03 two-token artifact evidence. The
-current frontend contract is still a one-token physical graph with a test-only continuation replay;
-full prompt prefill and broader corpus execution remain open work.
+fixtures intentionally retain explicit command boundaries and use GPU 0 only. S03-03 now also
+captures a statically unrolled three-token `prefill` entry from the real artifact, with all logits
+compared against the independent reference and byte-identical fresh-session captures. This is a
+correctness checkpoint, not a performance claim; broader prompt corpus and near-boundary execution
+remain open until the final S03 acceptance report is closed.

@@ -163,7 +163,9 @@ class Plan final {
     if (commands_.size() > resources_.max_commands && resources_.max_commands != 0) {
       return base::Status::resource_exhausted("physical command count exceeds resource bound");
     }
+    std::vector<std::size_t> buffers_by_offset(buffers_.size());
     for (std::size_t index = 0; index < buffers_.size(); ++index) {
+      buffers_by_offset[index] = index;
       const BufferDescriptor& buffer = buffers_[index];
       if (buffer.id.value() != index || buffer.alignment == 0 || buffer.offset % buffer.alignment != 0 ||
           buffer.lifetime.first >= buffer.lifetime.last) {
@@ -177,7 +179,25 @@ class Plan final {
           buffer.tensor.alignment == 0 || buffer.tensor.alignment != buffer.alignment) {
         return base::Status::invalid_argument("physical buffer tensor descriptor is incomplete");
       }
-      for (std::size_t prior = 0; prior < index; ++prior) {
+    }
+    std::sort(buffers_by_offset.begin(), buffers_by_offset.end(), [&](std::size_t left,
+                                                                       std::size_t right) {
+      if (buffers_[left].offset != buffers_[right].offset) {
+        return buffers_[left].offset < buffers_[right].offset;
+      }
+      return left < right;
+    });
+    std::vector<std::size_t> active_buffers;
+    active_buffers.reserve(buffers_.size());
+    for (const std::size_t index : buffers_by_offset) {
+      const BufferDescriptor& buffer = buffers_[index];
+      active_buffers.erase(std::remove_if(active_buffers.begin(), active_buffers.end(), [&](std::size_t prior) {
+                             return buffers_[prior].size == 0 ||
+                                    buffers_[prior].offset + buffers_[prior].size <= buffer.offset;
+                           }),
+                           active_buffers.end());
+      if (buffer.size == 0) continue;
+      for (const std::size_t prior : active_buffers) {
         const BufferDescriptor& other = buffers_[prior];
         const bool buffer_end_overflow = buffer.offset > UINT64_MAX - buffer.size;
         const bool other_end_overflow = other.offset > UINT64_MAX - other.size;
@@ -193,6 +213,7 @@ class Plan final {
           return base::Status::failed_precondition("live physical buffers overlap");
         }
       }
+      active_buffers.push_back(index);
     }
     for (std::size_t index = 0; index < commands_.size(); ++index) {
       const CommandDescriptor& command = commands_[index];

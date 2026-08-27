@@ -1505,11 +1505,14 @@ class CudaPlanSession final {
       if (!stream.has_value()) return detail::contextual(stream.error(), "CUDA stream creation");
       session.streams_.push_back(std::move(stream).value());
     }
-    session.events_.reserve(plan.commands().size());
-    for (std::size_t index = 0; index < plan.commands().size(); ++index) {
-      auto event = EventOwner::create(session.lifecycle_trace_.get());
-      if (!event.has_value()) return detail::contextual(event.error(), "CUDA event creation");
-      session.events_.push_back(std::move(event).value());
+    session.single_stream_ordered_ = stream_count <= 1;
+    if (!session.single_stream_ordered_) {
+      session.events_.reserve(plan.commands().size());
+      for (std::size_t index = 0; index < plan.commands().size(); ++index) {
+        auto event = EventOwner::create(session.lifecycle_trace_.get());
+        if (!event.has_value()) return detail::contextual(event.error(), "CUDA event creation");
+        session.events_.push_back(std::move(event).value());
+      }
     }
 
     std::vector<bool> emitted(plan.commands().size(), false);
@@ -1548,15 +1551,19 @@ class CudaPlanSession final {
     for (const std::size_t command_index : command_order_) {
       const ir::physical::CommandDescriptor& command = commands_plan_[command_index];
       cudaStream_t stream = streams_[command.stream].get();
-      for (const ir::physical::CommandId dependency : command.dependencies) {
-        const cudaError_t wait_error = cudaStreamWaitEvent(stream, events_[dependency.value()].get(), 0);
-        if (wait_error != cudaSuccess) return poison(wait_error, "cudaStreamWaitEvent");
+      if (!single_stream_ordered_) {
+        for (const ir::physical::CommandId dependency : command.dependencies) {
+          const cudaError_t wait_error = cudaStreamWaitEvent(stream, events_[dependency.value()].get(), 0);
+          if (wait_error != cudaSuccess) return poison(wait_error, "cudaStreamWaitEvent");
+        }
       }
       const cudaError_t launch_error = launchers_[command_index](
           command, plan_, device_arena_.data(), workspace_.data(), stream);
       if (launch_error != cudaSuccess) return poison(launch_error, "baseline command launch");
-      const cudaError_t record_error = cudaEventRecord(events_[command_index].get(), stream);
-      if (record_error != cudaSuccess) return poison(record_error, "cudaEventRecord");
+      if (!single_stream_ordered_) {
+        const cudaError_t record_error = cudaEventRecord(events_[command_index].get(), stream);
+        if (record_error != cudaSuccess) return poison(record_error, "cudaEventRecord");
+      }
       ++trace_.commands_executed;
       ++trace_.launches;
     }
@@ -1592,15 +1599,19 @@ class CudaPlanSession final {
         command.attention.positions = position + 1U;
       }
       cudaStream_t stream = streams_[command.stream].get();
-      for (const ir::physical::CommandId dependency : command.dependencies) {
-        const cudaError_t wait_error = cudaStreamWaitEvent(stream, events_[dependency.value()].get(), 0);
-        if (wait_error != cudaSuccess) return poison(wait_error, "cudaStreamWaitEvent");
+      if (!single_stream_ordered_) {
+        for (const ir::physical::CommandId dependency : command.dependencies) {
+          const cudaError_t wait_error = cudaStreamWaitEvent(stream, events_[dependency.value()].get(), 0);
+          if (wait_error != cudaSuccess) return poison(wait_error, "cudaStreamWaitEvent");
+        }
       }
       const cudaError_t launch_error = launchers_[command_index](
           command, plan_, device_arena_.data(), workspace_.data(), stream);
       if (launch_error != cudaSuccess) return poison(launch_error, "baseline continuation launch");
-      const cudaError_t record_error = cudaEventRecord(events_[command_index].get(), stream);
-      if (record_error != cudaSuccess) return poison(record_error, "cudaEventRecord");
+      if (!single_stream_ordered_) {
+        const cudaError_t record_error = cudaEventRecord(events_[command_index].get(), stream);
+        if (record_error != cudaSuccess) return poison(record_error, "cudaEventRecord");
+      }
       ++trace_.commands_executed;
       ++trace_.launches;
     }
@@ -1678,6 +1689,7 @@ class CudaPlanSession final {
   std::vector<detail::LaunchFunction> launchers_;
   CudaExecutionTrace trace_{};
   bool poisoned_{false};
+  bool single_stream_ordered_{false};
 };
 
 }  // namespace superinfer::sm120::cuda_runtime

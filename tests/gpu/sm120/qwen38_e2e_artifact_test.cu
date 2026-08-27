@@ -12,6 +12,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -152,12 +153,29 @@ int main() {
       std::string{superinfer::frontends::qwen38::kTensorInventorySha256},
       std::move(source_records)};
   superinfer::frontends::qwen38::Frontend frontend;
+  std::vector<std::uint32_t> prefill_tokens{0};
+  if (const char* encoded = std::getenv("SUPERINFER_QWEN38_PREFILL_TOKENS");
+      encoded != nullptr) {
+    prefill_tokens = parse_token_list(encoded);
+    if (prefill_tokens.empty()) {
+      std::cerr << "invalid SUPERINFER_QWEN38_PREFILL_TOKENS\n";
+      return 1;
+    }
+  } else if (const char* initial_token = std::getenv("SUPERINFER_QWEN38_INITIAL_TOKEN");
+             initial_token != nullptr) {
+    const auto parsed = std::from_chars(initial_token, initial_token + std::strlen(initial_token),
+                                        prefill_tokens.front());
+    if (parsed.ec != std::errc{} || parsed.ptr != initial_token + std::strlen(initial_token)) {
+      std::cerr << "invalid SUPERINFER_QWEN38_INITIAL_TOKEN\n";
+      return 1;
+    }
+  }
   const auto frontend_status = frontend.validate(source);
   if (!frontend_status.ok()) {
     std::cerr << "frontend validation failed: " << frontend_status.message() << '\n';
     return 1;
   }
-  const auto semantic = frontend.emit(source);
+  const auto semantic = frontend.emit(source, static_cast<std::uint32_t>(prefill_tokens.size()));
   if (!semantic.has_value()) {
     std::cerr << "frontend emission failed: " << semantic.error().message() << '\n';
     return 1;
@@ -227,18 +245,19 @@ int main() {
     ++state_buffers;
   }
   if (specialized.value().plan.entry_points().size() != 1 ||
-      specialized.value().plan.entry_points().front().inputs.size() != 1 ||
-      specialized.value().plan.entry_points().front().outputs.size() != 1) {
-    std::cerr << "Qwen decode entry point is not a single-token/single-logits contract\n";
+      specialized.value().plan.entry_points().front().inputs.size() != prefill_tokens.size() ||
+      specialized.value().plan.entry_points().front().outputs.size() != prefill_tokens.size()) {
+    std::cerr << "Qwen entry point does not match the requested token sequence contract\n";
     return 1;
   }
   const auto entry = specialized.value().plan.entry_points().front();
-  const std::uint32_t token = 0;
-  if (!session.copy_to_device(
-          entry.inputs.front(),
-          {reinterpret_cast<const std::byte*>(&token), sizeof(token)}).ok()) {
-    std::cerr << "token upload failed\n";
-    return 1;
+  for (std::size_t index = 0; index < prefill_tokens.size(); ++index) {
+    if (!session.copy_to_device(
+            entry.inputs[index],
+            {reinterpret_cast<const std::byte*>(&prefill_tokens[index]), sizeof(std::uint32_t)}).ok()) {
+      std::cerr << "token upload failed\n";
+      return 1;
+    }
   }
 
   const auto launch_status = session.execute();
@@ -251,6 +270,7 @@ int main() {
     std::cerr << "Qwen full graph synchronization failed: " << sync_status.message() << '\n';
     return 1;
   }
+  const std::uint32_t token = prefill_tokens.front();
   const auto& output = specialized.value().plan.buffers()[entry.outputs.front().value()];
   if (output.tensor.dtype != superinfer::ir::physical::PhysicalDType::bf16 ||
       output.size != 248320U * sizeof(std::uint16_t)) {
@@ -289,6 +309,65 @@ int main() {
       capture.write(reinterpret_cast<const char*>(&converted), sizeof(converted));
     }
     if (!capture.good()) return 1;
+  }
+  std::vector<std::size_t> prefill_greedy{best};
+  std::vector<float> prefill_best_values{best_value};
+  if (prefill_tokens.size() > 1) {
+    const char* prefill_capture_path = std::getenv("SUPERINFER_QWEN38_PREFILL_LOGITS_F32");
+    std::ofstream prefill_capture;
+    if (prefill_capture_path != nullptr) {
+      prefill_capture.open(prefill_capture_path, std::ios::binary | std::ios::trunc);
+      if (!prefill_capture.good()) {
+        std::cerr << "prefill capture open failed errno=" << errno << '\n';
+        return 1;
+      }
+    }
+    if (prefill_capture.is_open()) {
+      std::vector<float> prefill_row;
+      prefill_row.reserve(logits.size());
+      for (const std::uint16_t value : logits) {
+        prefill_row.push_back(bf16_to_float(value));
+      }
+      prefill_capture.write(reinterpret_cast<const char*>(prefill_row.data()),
+                            static_cast<std::streamsize>(prefill_row.size() * sizeof(float)));
+    }
+    for (std::size_t step = 1; step < entry.outputs.size(); ++step) {
+      const auto& prefill_output = specialized.value().plan.buffers()[entry.outputs[step].value()];
+      if (prefill_output.tensor.dtype != superinfer::ir::physical::PhysicalDType::bf16 ||
+          prefill_output.size != output.size) {
+        std::cerr << "Qwen prefill logits buffer contract mismatch\n";
+        return 1;
+      }
+      std::vector<std::uint16_t> prefill_logits(logits.size());
+      const auto prefill_copy = session.copy_from_device(
+          entry.outputs[step], {reinterpret_cast<std::byte*>(prefill_logits.data()), output.size});
+      if (!prefill_copy.ok()) {
+        std::cerr << "prefill logits download failed: " << prefill_copy.message() << '\n';
+        return 1;
+      }
+      std::size_t prefill_best = 0;
+      float prefill_best_value = bf16_to_float(prefill_logits.front());
+      std::vector<float> prefill_row(prefill_logits.size());
+      for (std::size_t index = 0; index < prefill_logits.size(); ++index) {
+        const float value = bf16_to_float(prefill_logits[index]);
+        if (!std::isfinite(value)) {
+          std::cerr << "prefill logits contain non-finite value at " << index << '\n';
+          return 1;
+        }
+        if (value > prefill_best_value) {
+          prefill_best = index;
+          prefill_best_value = value;
+        }
+        prefill_row[index] = value;
+      }
+      if (prefill_capture.is_open()) {
+        prefill_capture.write(reinterpret_cast<const char*>(prefill_row.data()),
+                              static_cast<std::streamsize>(prefill_row.size() * sizeof(float)));
+      }
+      prefill_greedy.push_back(prefill_best);
+      prefill_best_values.push_back(prefill_best_value);
+    }
+    if (prefill_capture.is_open() && !prefill_capture.good()) return 1;
   }
   std::vector<std::size_t> continuation_greedy;
   std::vector<float> continuation_best_values;
@@ -386,10 +465,17 @@ int main() {
                   static_cast<std::streamsize>(hidden_buffer.size));
     if (!capture.good()) return 1;
   }
-  std::cout << "qwen38 e2e token=0 greedy=" << best << " logit=" << best_value
+  std::cout << "qwen38 e2e token=" << token << " greedy=" << best << " logit=" << best_value
             << " checksum=" << checksum << " state_buffers=" << state_buffers
             << " commands=" << session.trace().commands_executed
             << " arena_bytes=" << session.device_arena_bytes();
+  if (prefill_tokens.size() > 1) {
+    std::cout << " prefill_steps=" << prefill_greedy.size();
+    for (std::size_t step = 1; step < prefill_greedy.size(); ++step) {
+      std::cout << " prefill_token=" << step << " greedy=" << prefill_greedy[step]
+                << " logit=" << prefill_best_values[step];
+    }
+  }
   if (std::getenv("SUPERINFER_QWEN38_CONTINUATION") != nullptr) {
     std::cout << " continuation_steps=" << continuation_greedy.size();
     for (std::size_t step = 0; step < continuation_greedy.size(); ++step) {

@@ -73,6 +73,7 @@ class Specializer final {
     }
     std::vector<compiler::AllocationRequest> requests;
     requests.reserve(lowered.tensors().size());
+    const std::vector<compiler::Lifetime> lifetimes = compute_lifetimes(lowered);
     for (const ir::lowered::Tensor& tensor : lowered.tensors()) {
       if (state_alias[tensor.id.value()] != no_alias) continue;
       const auto bytes = tensor_bytes(tensor);
@@ -83,7 +84,7 @@ class Specializer final {
       requests.push_back({tensor.id.value(), "tensor_" + std::to_string(tensor.id.value()),
                           compiler::ArenaKind::device, bytes.value(),
                           std::max(options.target.required_alignment, tensor.alignment),
-                          lifetime_for(tensor, lowered),
+                          lifetimes[tensor.id.value()],
                           allocation_class(tensor.role)});
     }
     const auto memory = planner.plan(requests);
@@ -377,40 +378,47 @@ class Specializer final {
     return compiler::AllocationClass::activation;
   }
 
-  static compiler::Lifetime lifetime_for(const ir::lowered::Tensor& tensor,
-                                         const ir::lowered::Module& lowered) noexcept {
+  static std::vector<compiler::Lifetime> compute_lifetimes(
+      const ir::lowered::Module& lowered) {
     const std::uint64_t command_count =
         std::max<std::uint64_t>(1, lowered.kernel_requirements().size());
-    const compiler::AllocationClass kind = allocation_class(tensor.role);
-    if (kind == compiler::AllocationClass::persistent_weight ||
-        kind == compiler::AllocationClass::kv_state ||
-        kind == compiler::AllocationClass::decode_state) {
-      return {0, command_count};
-    }
-
-    // Lowered kernel operands contain both inputs and outputs.  Therefore the first
-    // occurrence is the definition/use boundary and the last occurrence is the final
-    // consumer boundary for the lowered value.  The physical planner uses half-open
-    // lifetimes, so a value produced by command N and consumed by command N+1 remains
-    // live through boundary N+1, while a value used only by command N can be reused by
-    // command N+1.
-    std::uint64_t first = command_count;
-    std::uint64_t last = 0;
+    std::vector<compiler::Lifetime> lifetimes(lowered.tensors().size(), {command_count, 0});
+    // Lowered kernel operands contain both inputs and outputs. One pass over command operands
+    // establishes the definition/use interval for every activation.
     for (std::uint64_t command = 0; command < lowered.kernel_requirements().size(); ++command) {
       const auto& requirement = lowered.kernel_requirements()[command];
-      const bool present = std::any_of(
-          requirement.operands.begin(), requirement.operands.end(),
-          [&](const ir::lowered::LoweredTensorId operand) { return operand == tensor.id; });
-      if (!present) continue;
-      first = std::min(first, command);
-      last = command + 1;
+      for (const ir::lowered::LoweredTensorId operand : requirement.operands) {
+        if (operand.value() >= lifetimes.size()) continue;
+        lifetimes[operand.value()].first = std::min(lifetimes[operand.value()].first, command);
+        lifetimes[operand.value()].last = command + 1;
+      }
     }
-    if (first == command_count) {
-      // Entry-bound tensors that are not consumed by a command still need a valid
-      // allocation for plan binding.  Keep their minimal lifetime deterministic.
-      return {0, 1};
+    for (const ir::lowered::Tensor& tensor : lowered.tensors()) {
+      const compiler::AllocationClass kind = allocation_class(tensor.role);
+      if (kind == compiler::AllocationClass::persistent_weight ||
+          kind == compiler::AllocationClass::kv_state ||
+          kind == compiler::AllocationClass::decode_state) {
+        lifetimes[tensor.id.value()] = {0, command_count};
+      } else if (lifetimes[tensor.id.value()].first == command_count) {
+        // Entry-bound tensors that are not consumed by a command still need a valid allocation.
+        lifetimes[tensor.id.value()] = {0, 1};
+      }
     }
-    return {first, last};
+    // Entry bindings are populated before execution and observed after execution. Their
+    // physical views therefore cannot reuse one another's short command-local activation slots,
+    // even when their graph uses do not overlap.
+    for (const ir::lowered::EntryPoint& entry : lowered.entry_points()) {
+      const auto keep_bound = [&](ir::lowered::LoweredTensorId tensor) {
+        if (tensor.value() < lifetimes.size() &&
+            allocation_class(lowered.tensors()[tensor.value()].role) ==
+                compiler::AllocationClass::activation) {
+          lifetimes[tensor.value()] = {0, command_count};
+        }
+      };
+      for (const ir::lowered::LoweredTensorId tensor : entry.inputs) keep_bound(tensor);
+      for (const ir::lowered::LoweredTensorId tensor : entry.outputs) keep_bound(tensor);
+    }
+    return lifetimes;
   }
 
   static base::Result<std::uint64_t> tensor_bytes(const ir::lowered::Tensor& tensor) {

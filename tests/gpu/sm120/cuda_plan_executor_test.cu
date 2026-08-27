@@ -47,6 +47,30 @@ superinfer::ir::physical::Plan make_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_multi_stream_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({48, 0, 2});
+  assert(builder.add_buffer(0, 16, 16).has_value());
+  assert(builder.add_buffer(16, 16, 16).has_value());
+  assert(builder.add_buffer(32, 16, 16).has_value());
+  assert(builder
+             .add_command(base::KernelId{4},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}},
+                          {}, 0, 0, 0)
+             .has_value());
+  assert(builder
+             .add_command(base::KernelId{4},
+                          {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                           ir::physical::BufferId{2}},
+                          {ir::physical::CommandId{0}}, 1, 0, 0)
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 superinfer::ir::physical::Plan make_numeric_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
@@ -477,7 +501,7 @@ int main() {
   assert(session.value().device_arena_bytes() == 48);
   assert(session.value().lifecycle_trace().device_allocations == 1);
   assert(session.value().lifecycle_trace().stream_creations == 1);
-  assert(session.value().lifecycle_trace().event_creations == 2);
+  assert(session.value().lifecycle_trace().event_creations == 0);
   assert(session.value().lifecycle_trace().kernel_bindings == 2);
   assert(session.value().lifecycle_trace().device_synchronizations == 0);
   assert(session.value().execute().ok());
@@ -488,6 +512,15 @@ int main() {
   assert(session.value().lifecycle_trace().device_synchronizations == 1);
   assert(session.value().trace().commands_executed == 6);
   assert(session.value().trace().launches == 6);
+
+  const auto multi_stream_plan = make_multi_stream_plan();
+  auto multi_stream = sm120::cuda_runtime::CudaPlanSession::create(
+      multi_stream_plan, 120, "baseline-v1");
+  assert(multi_stream.has_value());
+  assert(multi_stream.value().lifecycle_trace().stream_creations == 2);
+  assert(multi_stream.value().lifecycle_trace().event_creations == 2);
+  assert(multi_stream.value().execute().ok());
+  assert(multi_stream.value().synchronize_for_test().ok());
 
   const auto silu_mul_plan = make_silu_mul_plan();
   auto silu_mul = sm120::cuda_runtime::CudaPlanSession::create(

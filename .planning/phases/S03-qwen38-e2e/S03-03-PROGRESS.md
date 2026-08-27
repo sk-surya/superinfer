@@ -2,9 +2,10 @@
 
 ## Status
 
-In progress. The first real `.sinf` full-graph token has been executed on GPU 0 and now selects the
-same greedy token as the independent Transformers reference. Multi-token state continuation,
-repeatability, failure behavior, and the final machine-readable acceptance report remain open.
+In progress. The first real `.sinf` full-graph token and a statically unrolled three-token prefill
+have been executed on GPU 0 and select the same greedy tokens as the independent Transformers
+reference. Layer evidence, state continuation, repeatability, and failure behavior are recorded;
+broader corpus coverage and final acceptance closure remain open.
 
 ## Evidence so far
 
@@ -23,6 +24,10 @@ repeatability, failure behavior, and the final machine-readable acceptance repor
   step captures.
 - A three-token shared-state chain `49276, 2349, 1074` also matches the external reference; its
   per-step vector metrics are recorded in `artifacts/S03/qwen38-e2e-three-token-differential.json`.
+- A three-token static `prefill` entry point from the real `.sinf` artifact produces all three logit
+  rows in one execution, matches the reference greedy sequence, and has byte-identical fresh-session
+  captures; metrics and capture hashes are recorded in
+  `artifacts/S03/qwen38-e2e-three-token-prefill-differential.json`.
 - Failure matrix passes artifact corruption/truncation, target mismatch, injected CUDA fault poisoning,
   and over-capacity continuation rejection; see `artifacts/S03/qwen38-e2e-failure-matrix.json`.
 
@@ -44,6 +49,6 @@ the shared-cache Transformers reference. Full-vector drift is recorded per step 
 `artifacts/S03/qwen38-e2e-two-token-differential.json`; it is quantized-logit drift, not a token
 divergence. The local reference environment is Transformers 5.14.1 rather than the planned 5.12.1.
 
-The remaining acceptance work is the final reviewed corpus/report packaging and any additional prompt
-fixtures required by the plan (chat/Unicode/near-boundary coverage). S03F-02 remains blocked until
-that S03 acceptance is explicitly closed.
+The remaining acceptance work is to exercise and package the broader reviewed corpus (plain/chat/
+Unicode/near-boundary), repeat the accepted prefill path under the corpus harness, and close the
+final S03 report. S03F-02 remains blocked until that S03 acceptance is explicitly closed.

@@ -24,9 +24,9 @@ inline constexpr std::string_view kTensorInventorySha256 =
  * Emits canonical Semantic IR for the pinned Qwen3.8 language path.
  *
  * The frontend owns model topology and semantic attributes only. It does not select layouts,
- * storage encodings, CUDA kernels, or target capabilities. This V0 slice emits one-token graph
- * topology for all 64 language layers; tensor payload mapping is validated by the Python source
- * inventory before this frontend is invoked.
+ * storage encodings, CUDA kernels, or target capabilities. The default entry point emits one-token
+ * decode topology. A caller may request a statically-sized prefill graph, represented as an
+ * unrolled sequence of the same semantic token step with explicit state edges between steps.
  */
 class Frontend final : public compiler::ModelFrontend {
  public:
@@ -46,10 +46,18 @@ class Frontend final : public compiler::ModelFrontend {
   }
 
   base::Result<ir::semantic::Module> emit(const compiler::SourceInventory& source) const override {
+    return emit(source, 1);
+  }
+
+  base::Result<ir::semantic::Module> emit(const compiler::SourceInventory& source,
+                                          std::uint32_t sequence_length) const {
     const base::Status source_status = validate(source);
     if (!source_status.ok()) {
       base::Status error = source_status;
       return error.with_context("Qwen3.8 frontend source");
+    }
+    if (sequence_length == 0) {
+      return base::Status::invalid_argument("Qwen3.8 sequence length must be positive");
     }
 
     using namespace ir::semantic;
@@ -61,16 +69,6 @@ class Frontend final : public compiler::ModelFrontend {
     const TensorSpec logits_spec{{Dimension::static_value(1), Dimension::static_value(248320)},
                                  DType::bf16, QuantizationIntent::none, TensorRole::logits};
 
-    const auto token_ids = builder.add_tensor("token_ids", token_spec);
-    if (!token_ids.has_value()) {
-      base::Status error = token_ids.error();
-      return error.with_context("Qwen3.8 token input");
-    }
-    const auto embedding = builder.add_tensor("embedding", hidden_spec);
-    if (!embedding.has_value()) {
-      base::Status error = embedding.error();
-      return error.with_context("Qwen3.8 embedding");
-    }
     std::vector<std::pair<std::string, TensorId>> source_weights;
     source_weights.reserve(source.tensors.size());
     for (const compiler::SourceTensorRecord& record : source.tensors) {
@@ -105,23 +103,36 @@ class Frontend final : public compiler::ModelFrontend {
       operands.push_back(weight.value());
       return {};
     };
-    if (!builder.add_operation("embedding", OperationKind::embedding,
-                               {token_ids.value(), embedding_weight.value()},
-                               {embedding.value()})
-             .has_value()) {
-      return base::Status::invalid_argument("Qwen3.8 embedding operation could not be emitted");
-    }
-
-    TensorId current = embedding.value();
     std::uint32_t gated_delta_layers = 0;
     std::uint32_t full_attention_layers = 0;
-    for (std::uint32_t layer = 0; layer < 64; ++layer) {
-      const auto input_norm = builder.add_tensor("layer_" + index(layer) + "_input_norm", hidden_spec);
-      const auto attention = builder.add_tensor("layer_" + index(layer) + "_attention", hidden_spec);
-      const auto attention_residual = builder.add_tensor("layer_" + index(layer) + "_attention_residual", hidden_spec);
-      const auto post_norm = builder.add_tensor("layer_" + index(layer) + "_post_norm", hidden_spec);
-      const auto ffn = builder.add_tensor("layer_" + index(layer) + "_ffn", hidden_spec);
-      const auto output = builder.add_tensor("layer_" + index(layer) + "_output", hidden_spec);
+    std::vector<TensorId> previous_state_a(64);
+    std::vector<TensorId> previous_state_b(64);
+    std::vector<TensorId> entry_inputs;
+    std::vector<TensorId> entry_outputs;
+    entry_inputs.reserve(sequence_length);
+    entry_outputs.reserve(sequence_length);
+    for (std::uint32_t position = 0; position < sequence_length; ++position) {
+      const std::string step_suffix = sequence_length == 1 ? "" : "_t" + std::to_string(position);
+      const auto token_ids = builder.add_tensor("token_ids" + step_suffix, token_spec);
+      const auto embedding = builder.add_tensor("embedding" + step_suffix, hidden_spec);
+      if (!token_ids.has_value() || !embedding.has_value()) {
+        return base::Status::resource_exhausted("Qwen3.8 token step emission failed");
+      }
+      entry_inputs.push_back(token_ids.value());
+      if (!builder.add_operation("embedding" + step_suffix, OperationKind::embedding,
+                                 {token_ids.value(), embedding_weight.value()}, {embedding.value()})
+               .has_value()) {
+        return base::Status::invalid_argument("Qwen3.8 embedding operation could not be emitted");
+      }
+      TensorId current = embedding.value();
+      for (std::uint32_t layer = 0; layer < 64; ++layer) {
+      const std::string layer_prefix = "layer_" + index(layer) + step_suffix;
+      const auto input_norm = builder.add_tensor(layer_prefix + "_input_norm", hidden_spec);
+      const auto attention = builder.add_tensor(layer_prefix + "_attention", hidden_spec);
+      const auto attention_residual = builder.add_tensor(layer_prefix + "_attention_residual", hidden_spec);
+      const auto post_norm = builder.add_tensor(layer_prefix + "_post_norm", hidden_spec);
+      const auto ffn = builder.add_tensor(layer_prefix + "_ffn", hidden_spec);
+      const auto output = builder.add_tensor(layer_prefix + "_output", hidden_spec);
       const bool full_attention = (layer % 4U) == 3U;
       const TensorSpec linear_state_spec{{Dimension::static_value(48), Dimension::static_value(128),
                                           Dimension::static_value(128)},
@@ -134,21 +145,33 @@ class Frontend final : public compiler::ModelFrontend {
                                             Dimension::static_value(4), Dimension::static_value(256)},
                                            DType::bf16, QuantizationIntent::none,
                                            TensorRole::kv_cache};
-      const auto state_a_in = builder.add_tensor(
-          "layer_" + index(layer) + (full_attention ? "_key_state_in" : "_delta_state_in"),
-          full_attention ? full_key_state_spec : linear_state_spec);
+      TensorId state_a_input;
+      TensorId state_b_input;
+      if (position == 0) {
+        const auto state_a_in = builder.add_tensor(
+            layer_prefix + (full_attention ? "_key_state_in" : "_delta_state_in"),
+            full_attention ? full_key_state_spec : linear_state_spec);
+        const auto state_b_in = builder.add_tensor(
+            layer_prefix + (full_attention ? "_value_state_in" : "_convolution_state_in"),
+            full_attention ? full_key_state_spec : convolution_state_spec);
+        if (!state_a_in.has_value() || !state_b_in.has_value()) {
+          return base::Status::resource_exhausted("Qwen3.8 initial state emission failed");
+        }
+        state_a_input = state_a_in.value();
+        state_b_input = state_b_in.value();
+      } else {
+        state_a_input = previous_state_a[layer];
+        state_b_input = previous_state_b[layer];
+      }
       const auto state_a_out = builder.add_tensor(
-          "layer_" + index(layer) + (full_attention ? "_key_state_out" : "_delta_state_out"),
+          layer_prefix + (full_attention ? "_key_state_out" : "_delta_state_out"),
           full_attention ? full_key_state_spec : linear_state_spec);
-      const auto state_b_in = builder.add_tensor(
-          "layer_" + index(layer) + (full_attention ? "_value_state_in" : "_convolution_state_in"),
-          full_attention ? full_key_state_spec : convolution_state_spec);
       const auto state_b_out = builder.add_tensor(
-          "layer_" + index(layer) + (full_attention ? "_value_state_out" : "_convolution_state_out"),
+          layer_prefix + (full_attention ? "_value_state_out" : "_convolution_state_out"),
           full_attention ? full_key_state_spec : convolution_state_spec);
       if (!input_norm.has_value() || !attention.has_value() || !attention_residual.has_value() ||
-          !post_norm.has_value() || !ffn.has_value() || !output.has_value() || !state_a_in.has_value() ||
-          !state_a_out.has_value() || !state_b_in.has_value() || !state_b_out.has_value()) {
+          !post_norm.has_value() || !ffn.has_value() || !output.has_value() ||
+          !state_a_out.has_value() || !state_b_out.has_value()) {
         return base::Status::resource_exhausted("Qwen3.8 frontend tensor emission failed");
       }
       std::vector<TensorId> input_norm_inputs{current};
@@ -159,7 +182,7 @@ class Frontend final : public compiler::ModelFrontend {
       OperationAttributes norm_attributes;
       norm_attributes.epsilon = 1.0e-6F;
       norm_attributes.norm_scale_convention = NormScaleConvention::one_plus_weight;
-      if (!builder.add_operation("layer_" + index(layer) + "_input_norm", OperationKind::rms_norm,
+      if (!builder.add_operation(layer_prefix + "_input_norm", OperationKind::rms_norm,
                                  std::move(input_norm_inputs), {input_norm.value()}, norm_attributes)
                    .has_value()) {
         return base::Status::invalid_argument("Qwen3.8 input norm operation could not be emitted");
@@ -169,6 +192,8 @@ class Frontend final : public compiler::ModelFrontend {
       attention_attributes.num_kv_heads = full_attention ? 4 : 16;
       attention_attributes.head_dimension = full_attention ? 256 : 128;
       attention_attributes.rope_dimension = full_attention ? 64 : 0;
+      attention_attributes.attention_position = position;
+      attention_attributes.rope_position = position;
       if (full_attention) {
         attention_attributes.attention_output_gate = AttentionOutputGate::sigmoid;
         attention_attributes.rope_theta = 10000000.0F;
@@ -182,7 +207,7 @@ class Frontend final : public compiler::ModelFrontend {
       const OperationKind attention_kind = full_attention
                                                ? OperationKind::gated_grouped_query_attention
                                                : OperationKind::gated_delta_attention;
-      std::vector<TensorId> attention_inputs{input_norm.value(), state_a_in.value(), state_b_in.value()};
+      std::vector<TensorId> attention_inputs{input_norm.value(), state_a_input, state_b_input};
       const std::string weight_prefix = "model.language_model.layers." + std::to_string(layer) + ".";
       const std::vector<std::string> attention_weight_names = full_attention
           ? std::vector<std::string>{weight_prefix + "self_attn.q_proj.weight",
@@ -204,17 +229,17 @@ class Frontend final : public compiler::ModelFrontend {
         base::Status binding = append_required_weight(attention_inputs, weight_name);
         if (!binding.ok()) return binding.with_context("Qwen3.8 attention weight binding");
       }
-      if (!builder.add_operation("layer_" + index(layer) + "_attention", attention_kind,
+      if (!builder.add_operation(layer_prefix + "_attention", attention_kind,
                                  std::move(attention_inputs),
                                  {attention.value(), state_a_out.value(), state_b_out.value()},
                                  attention_attributes)
                    .has_value()) {
         return base::Status::invalid_argument("Qwen3.8 attention operation could not be emitted");
       }
-      if (!builder.add_state_edge("layer_" + index(layer) + "_state_a", state_a_in.value(),
+      if (!builder.add_state_edge(layer_prefix + "_state_a", state_a_input,
                                  state_a_out.value())
                    .ok() ||
-          !builder.add_state_edge("layer_" + index(layer) + "_state_b", state_b_in.value(),
+          !builder.add_state_edge(layer_prefix + "_state_b", state_b_input,
                                  state_b_out.value())
                    .ok()) {
         return base::Status::invalid_argument("Qwen3.8 attention state could not be emitted");
@@ -236,25 +261,27 @@ class Frontend final : public compiler::ModelFrontend {
         base::Status binding = append_required_weight(ffn_inputs, weight_prefix + suffix);
         if (!binding.ok()) return binding.with_context("Qwen3.8 FFN weight binding");
       }
-      if (!builder.add_operation("layer_" + index(layer) + "_attention_residual",
+      if (!builder.add_operation(layer_prefix + "_attention_residual",
                                  OperationKind::residual,
                                  {current, attention.value()}, {attention_residual.value()})
                    .has_value() ||
-          !builder.add_operation("layer_" + index(layer) + "_post_norm", OperationKind::rms_norm,
+          !builder.add_operation(layer_prefix + "_post_norm", OperationKind::rms_norm,
                                  std::move(post_norm_inputs), {post_norm.value()}, norm_attributes)
                    .has_value() ||
-          !builder.add_operation("layer_" + index(layer) + "_ffn", OperationKind::gated_dense_ffn,
+          !builder.add_operation(layer_prefix + "_ffn", OperationKind::gated_dense_ffn,
                                  std::move(ffn_inputs), {ffn.value()})
                    .has_value() ||
-          !builder.add_operation("layer_" + index(layer) + "_output", OperationKind::residual,
+          !builder.add_operation(layer_prefix + "_output", OperationKind::residual,
                                  {attention_residual.value(), ffn.value()}, {output.value()})
                    .has_value()) {
         return base::Status::invalid_argument("Qwen3.8 feed-forward operation could not be emitted");
       }
+      previous_state_a[layer] = state_a_out.value();
+      previous_state_b[layer] = state_b_out.value();
       current = output.value();
     }
 
-    const auto final_norm = builder.add_tensor("final_norm", hidden_spec);
+    const auto final_norm = builder.add_tensor("final_norm" + step_suffix, hidden_spec);
     if (!final_norm.has_value()) {
       return base::Status::resource_exhausted("Qwen3.8 final norm tensor emission failed");
     }
@@ -267,7 +294,7 @@ class Frontend final : public compiler::ModelFrontend {
     OperationAttributes final_norm_attributes;
     final_norm_attributes.epsilon = 1.0e-6F;
     final_norm_attributes.norm_scale_convention = NormScaleConvention::one_plus_weight;
-    if (!builder.add_operation("final_norm", OperationKind::rms_norm,
+    if (!builder.add_operation("final_norm" + step_suffix, OperationKind::rms_norm,
                                {current, final_norm_weight.value()}, {final_norm.value()},
                                final_norm_attributes)
              .has_value()) {
@@ -275,7 +302,7 @@ class Frontend final : public compiler::ModelFrontend {
     }
     current = final_norm.value();
 
-    const auto logits = builder.add_tensor("logits", logits_spec);
+    const auto logits = builder.add_tensor("logits" + step_suffix, logits_spec);
     if (!logits.has_value()) {
       base::Status error = logits.error();
       return error.with_context("Qwen3.8 logits");
@@ -285,14 +312,19 @@ class Frontend final : public compiler::ModelFrontend {
       base::Status error = lm_head_weight.error();
       return error.with_context("Qwen3.8 LM head weight binding");
     }
-    if (!builder.add_operation("lm_head", OperationKind::lm_head,
+    if (!builder.add_operation("lm_head" + step_suffix, OperationKind::lm_head,
                                {current, lm_head_weight.value()}, {logits.value()})
-             .has_value() ||
-        !builder.add_entry_point("decode", {token_ids.value()}, {logits.value()}).ok()) {
+             .has_value()) {
       return base::Status::invalid_argument("Qwen3.8 output graph could not be emitted");
     }
-    if (gated_delta_layers != 48 || full_attention_layers != 16) {
+    entry_outputs.push_back(logits.value());
+    }
+    if (gated_delta_layers != 48 * sequence_length || full_attention_layers != 16 * sequence_length) {
       return base::Status::internal("Qwen3.8 layer topology invariant was not emitted");
+    }
+    const std::string entry_name = sequence_length == 1 ? "decode" : "prefill";
+    if (!builder.add_entry_point(entry_name, std::move(entry_inputs), std::move(entry_outputs)).ok()) {
+      return base::Status::invalid_argument("Qwen3.8 entry point could not be emitted");
     }
     return std::move(builder).build();
   }

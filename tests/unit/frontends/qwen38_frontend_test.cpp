@@ -78,6 +78,21 @@ int main() {
          std::string::npos);
   assert(module.value().dump().find("weight/lm_head.weight_scale") == std::string::npos);
 
+  const auto prefill = frontend.emit(source, 2);
+  assert(prefill.has_value());
+  assert(prefill.value().verify().ok());
+  assert(prefill.value().entry_points().size() == 1);
+  assert(prefill.value().entry_points().front().name == "prefill");
+  assert(prefill.value().entry_points().front().inputs.size() == 2);
+  assert(prefill.value().entry_points().front().outputs.size() == 2);
+  assert(prefill.value().state_edges().size() == 256);
+  for (const auto& operation : prefill.value().operations()) {
+    if (operation.kind == ir::semantic::OperationKind::gated_grouped_query_attention) {
+      assert(operation.attributes.attention_position < 2);
+      assert(operation.attributes.rope_position == operation.attributes.attention_position);
+    }
+  }
+
   for (const auto& operation : module.value().operations()) {
     if (operation.name == "embedding") {
       assert(operation.inputs.size() == 2);

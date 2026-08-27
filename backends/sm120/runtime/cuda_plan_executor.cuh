@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -1472,7 +1473,12 @@ class CudaPlanSession final {
         return base::Status::unsupported("CUDA baseline has no command workspace contract");
       }
       const base::Status command_status = detail::validate_command(command, plan);
-      if (!command_status.ok()) return command_status;
+      if (!command_status.ok()) {
+        base::Status error = command_status;
+        error.with_context("physical command " + std::to_string(command.id.value()) +
+                           " kernel " + std::to_string(command.kernel.value()));
+        return error;
+      }
       session.launchers_.push_back(launcher);
     }
     auto device_arena = DeviceBuffer::allocate(plan.resources().arena_bytes,
@@ -1570,9 +1576,6 @@ class CudaPlanSession final {
     if (poisoned_) return base::Status::failed_precondition("CUDA session is poisoned");
     const auto validation = validate_copy(id, source.size());
     if (!validation.ok()) return validation;
-    ++lifecycle_trace_->device_synchronizations;
-    const cudaError_t sync_error = cudaDeviceSynchronize();
-    if (sync_error != cudaSuccess) return poison(sync_error, "host-to-device copy boundary");
     const auto& buffer = plan_.buffers()[id.value()];
     const cudaError_t copy_error = cudaMemcpy(detail::buffer_pointer(plan_, device_arena_.data(), buffer.id),
                                               source.data(), source.size(), cudaMemcpyHostToDevice);

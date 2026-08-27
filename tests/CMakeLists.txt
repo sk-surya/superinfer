@@ -171,6 +171,19 @@ if(SUPERINFER_CUDA_AVAILABLE)
   add_test(NAME superinfer.sm120.qwen38.gdn_artifact
     COMMAND superinfer_sm120_qwen38_gdn_artifact)
   set_tests_properties(superinfer.sm120.qwen38.gdn_artifact PROPERTIES SKIP_RETURN_CODE 77)
+
+  add_executable(superinfer_sm120_qwen38_e2e_artifact
+    gpu/sm120/qwen38_e2e_artifact_test.cu)
+  target_compile_features(superinfer_sm120_qwen38_e2e_artifact PRIVATE cuda_std_20)
+  target_include_directories(superinfer_sm120_qwen38_e2e_artifact PRIVATE
+    "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/backends")
+  target_link_libraries(superinfer_sm120_qwen38_e2e_artifact PRIVATE
+    superinfer_sm120_cuda_runtime superinfer_artifact superinfer_compiler)
+  set_target_properties(superinfer_sm120_qwen38_e2e_artifact PROPERTIES
+    CUDA_ARCHITECTURES "120a")
+  add_test(NAME superinfer.sm120.qwen38.e2e_artifact
+    COMMAND superinfer_sm120_qwen38_e2e_artifact)
+  set_tests_properties(superinfer.sm120.qwen38.e2e_artifact PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 if(SUPERINFER_ENABLE_SANITIZERS)

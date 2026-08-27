@@ -1,0 +1,38 @@
+{
+  "kind": "qwen38_artifact_full_graph_token_differential",
+  "status": "token_alignment_pass_vector_capture_pending",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "workload": {
+    "token": 0,
+    "layers": 64,
+    "commands": 2424,
+    "state_buffers": 128,
+    "arena_bytes": 19190769152
+  },
+  "target": {
+    "gpu": 0,
+    "name": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a",
+    "cuda_visible_devices": "0"
+  },
+  "superinfer": {
+    "greedy": 49276,
+    "top_logit_bf16": 11.6875,
+    "checksum_bf16": -792475.0
+  },
+  "reference": {
+    "implementation": "streamed Qwen3_5DecoderLayer with DynamicCache",
+    "transformers_version": "5.14.1",
+    "greedy": 49276,
+    "checksum_f32": -792161.3125,
+    "output_sha256": "2c323cec8e2f1b8028939a7e9e74efd87e3eac53a1f788aa723cab673bdec3d4"
+  },
+  "comparison": {
+    "greedy_token_match": true,
+    "vector_error": "not_recorded_until_completed_capture",
+    "quality_claim": "token alignment only; S03 is not complete"
+  }
+}

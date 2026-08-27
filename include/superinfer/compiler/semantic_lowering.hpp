@@ -249,16 +249,17 @@ class SemanticLowering final {
         const auto emit_projection = [&](ir::semantic::TensorId weight,
                                          const std::pair<ir::lowered::LoweredTensorId,
                                                          ir::lowered::LoweredTensorId>& sidecars,
-                                         ir::lowered::LoweredTensorId destination) -> base::Status {
+                                         ir::lowered::LoweredTensorId destination,
+                                         ir::lowered::LoweredTensorId activation) -> base::Status {
           return builder.add_kernel_requirement(
               "nvfp4_linear", options.target_capability,
-              {inputs[0], lowered_tensors[weight.value()], sidecars.first, sidecars.second,
+              {activation, lowered_tensors[weight.value()], sidecars.first, sidecars.second,
                destination});
         };
         base::Status gate_status = emit_projection(operation.inputs[1], gate_sidecars.value(),
-                                                   gate_projection.value());
+                                                   gate_projection.value(), inputs[0]);
         base::Status up_status = emit_projection(operation.inputs[2], up_sidecars.value(),
-                                                 up_projection.value());
+                                                 up_projection.value(), inputs[0]);
         if (!gate_status.ok() || !up_status.ok()) {
           return (!gate_status.ok() ? gate_status : up_status).with_context(
               "quantized FFN projection lowering");
@@ -268,7 +269,7 @@ class SemanticLowering final {
             {gate_projection.value(), up_projection.value(), gated_projection.value()});
         if (!activation_status.ok()) return activation_status.with_context("quantized FFN activation lowering");
         base::Status down_status = emit_projection(operation.inputs[3], down_sidecars.value(),
-                                                   outputs.front());
+                                                   outputs.front(), gated_projection.value());
         if (!down_status.ok()) return down_status.with_context("quantized FFN down projection lowering");
         if (cast_output) {
           base::Status cast = emit_cast(ir::semantic::DType::f32, ir::semantic::DType::bf16,
@@ -341,25 +342,28 @@ class SemanticLowering final {
         const auto emit_projection = [&](std::size_t weight_index,
                                          const std::pair<ir::lowered::LoweredTensorId,
                                                          ir::lowered::LoweredTensorId>& sidecars,
-                                         ir::lowered::LoweredTensorId destination) -> base::Status {
+                                         ir::lowered::LoweredTensorId destination,
+                                         ir::lowered::LoweredTensorId activation) -> base::Status {
           return builder.add_kernel_requirement(
               "nvfp4_linear", options.target_capability,
-              {inputs[0], lowered_tensors[operation.inputs[weight_index].value()], sidecars.first,
+              {activation, lowered_tensors[operation.inputs[weight_index].value()], sidecars.first,
                sidecars.second, destination});
         };
-        base::Status status = emit_projection(3, q_sidecars.value(), q_projection.value());
+        base::Status status = emit_projection(3, q_sidecars.value(), q_projection.value(), inputs[0]);
         if (!status.ok()) return status.with_context("attention Q projection lowering");
         status = builder.add_kernel_requirement(
             "split_last", options.target_capability,
             {q_projection.value(), q_raw.value(), q_gate.value()}, operation.attributes);
         if (!status.ok()) return status.with_context("attention Q/gate split lowering");
-        status = emit_projection(4, k_sidecars.value(), k_projection.value());
+        status = emit_projection(4, k_sidecars.value(), k_projection.value(), inputs[0]);
         if (!status.ok()) return status.with_context("attention K projection lowering");
-        status = emit_projection(5, v_sidecars.value(), v_projection.value());
+        status = emit_projection(5, v_sidecars.value(), v_projection.value(), inputs[0]);
         if (!status.ok()) return status.with_context("attention V projection lowering");
 
         ir::semantic::OperationAttributes norm_attributes;
         norm_attributes.epsilon = 1.0e-6F;
+        norm_attributes.norm_scale_convention =
+            ir::semantic::NormScaleConvention::one_plus_weight;
         const auto q_norm_weight = lowered_tensors[operation.inputs[7].value()];
         const auto k_norm_weight = lowered_tensors[operation.inputs[8].value()];
         status = builder.add_kernel_requirement(
@@ -392,7 +396,7 @@ class SemanticLowering final {
             "sigmoid_mul", options.target_capability,
             {q_gate.value(), attended.value(), gated.value()});
         if (!status.ok()) return status.with_context("attention output gate lowering");
-        status = emit_projection(6, o_sidecars.value(), outputs.front());
+        status = emit_projection(6, o_sidecars.value(), outputs.front(), gated.value());
         if (!status.ok()) return status.with_context("attention O projection lowering");
         if (cast_output) {
           base::Status cast = emit_cast(ir::semantic::DType::f32, ir::semantic::DType::bf16,
@@ -488,10 +492,11 @@ class SemanticLowering final {
         const auto emit_nvfp4_projection = [&](std::size_t weight_index,
                                                const std::pair<ir::lowered::LoweredTensorId,
                                                                ir::lowered::LoweredTensorId>& sidecars,
-                                               ir::lowered::LoweredTensorId destination) -> base::Status {
+                                               ir::lowered::LoweredTensorId destination,
+                                               ir::lowered::LoweredTensorId activation) -> base::Status {
           return builder.add_kernel_requirement(
               "nvfp4_linear", options.target_capability,
-              {inputs[0], lowered_tensors[operation.inputs[weight_index].value()], sidecars.first,
+              {activation, lowered_tensors[operation.inputs[weight_index].value()], sidecars.first,
                sidecars.second, destination});
         };
         const auto to_f32_weight = [&](std::size_t weight_index)
@@ -509,7 +514,8 @@ class SemanticLowering final {
           if (!cast.ok()) return cast;
           return converted.value();
         };
-        base::Status status = emit_nvfp4_projection(3, qkv_sidecars.value(), qkv_projection.value());
+        base::Status status = emit_nvfp4_projection(
+            3, qkv_sidecars.value(), qkv_projection.value(), inputs[0]);
         if (!status.ok()) return status.with_context("gated delta QKV projection lowering");
         const auto conv_weight = to_f32_weight(11);
         if (!conv_weight.has_value()) {
@@ -528,7 +534,7 @@ class SemanticLowering final {
             "split", options.target_capability,
             {qk_remainder.value(), key.value(), value.value()});
         if (!status.ok()) return status.with_context("gated delta K/V split lowering");
-        status = emit_nvfp4_projection(4, z_sidecars.value(), z.value());
+        status = emit_nvfp4_projection(4, z_sidecars.value(), z.value(), inputs[0]);
         if (!status.ok()) return status.with_context("gated delta Z projection lowering");
         const auto a_weight = to_f32_weight(5);
         const auto b_weight = to_f32_weight(6);
@@ -566,7 +572,7 @@ class SemanticLowering final {
         status = builder.add_kernel_requirement(
             "silu_mul", options.target_capability, {z.value(), normalized.value(), gated.value()});
         if (!status.ok()) return status.with_context("gated delta output gate lowering");
-        status = emit_nvfp4_projection(7, out_sidecars.value(), outputs.front());
+        status = emit_nvfp4_projection(7, out_sidecars.value(), outputs.front(), gated.value());
         if (!status.ok()) return status.with_context("gated delta output projection lowering");
         if (cast_output) {
           base::Status cast = emit_cast(ir::semantic::DType::f32, ir::semantic::DType::bf16,

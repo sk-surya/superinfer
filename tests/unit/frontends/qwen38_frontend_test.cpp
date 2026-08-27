@@ -18,6 +18,7 @@ std::vector<superinfer::compiler::SourceTensorRecord> source_tensors() {
     tensors.push_back({std::move(name), std::move(role), std::move(dtype), std::move(shape), offset, 2});
   };
   add("model.language_model.embed_tokens.weight", "embedding");
+  add("model.language_model.norm.weight", "normalization");
   add("lm_head.weight", "lm_head", "U8", {8, 8});
   add("lm_head.weight_scale", "scale", "F8_E4M3");
   for (std::uint32_t layer = 0; layer < 64; ++layer) {
@@ -86,6 +87,16 @@ int main() {
     if (operation.name == "lm_head") {
       assert(operation.inputs.size() == 2);
       assert(module.value().tensors()[operation.inputs[1].value()].name == "weight/lm_head.weight");
+      assert(module.value().tensors()[operation.inputs[0].value()].name == "final_norm");
+    }
+    if (operation.name == "final_norm") {
+      assert(operation.kind == ir::semantic::OperationKind::rms_norm);
+      assert(operation.inputs.size() == 2);
+      assert(module.value().tensors()[operation.inputs[1].value()].name ==
+             "weight/model.language_model.norm.weight");
+      assert(operation.attributes.epsilon == 1.0e-6F);
+      assert(operation.attributes.norm_scale_convention ==
+             ir::semantic::NormScaleConvention::one_plus_weight);
     }
   }
   for (const auto& tensor : module.value().tensors()) {
@@ -119,7 +130,7 @@ int main() {
   }
   assert(gated_delta == 48);
   assert(full_attention == 16);
-  assert(qwen_rms_norms == 128);
+  assert(qwen_rms_norms == 129);
   for (const auto& operation : module.value().operations()) {
     if (operation.kind == ir::semantic::OperationKind::gated_delta_attention ||
         operation.kind == ir::semantic::OperationKind::gated_grouped_query_attention) {
@@ -134,6 +145,7 @@ int main() {
     if (operation.kind == ir::semantic::OperationKind::gated_grouped_query_attention) {
       assert(operation.attributes.attention_output_gate ==
              ir::semantic::AttentionOutputGate::sigmoid);
+      assert(operation.attributes.rope_theta == 10000000.0F);
       assert(module.value().tensors()[operation.inputs[1].value()].spec.shape.size() == 3);
       assert(module.value().tensors()[operation.inputs[1].value()].spec.shape[0].value ==
              frontends::qwen38::kMaxContext);
@@ -168,6 +180,7 @@ int main() {
   std::size_t lowered_delta_parameters = 0;
   std::size_t lowered_convolution = 0;
   std::size_t lowered_linear = 0;
+  std::size_t lowered_one_plus_norms = 0;
   for (const auto& requirement : lowered.value().kernel_requirements()) {
     lowered_casts += requirement.operation == "cast";
     if (requirement.operation == "nvfp4_linear") {
@@ -185,6 +198,11 @@ int main() {
     lowered_delta_parameters += requirement.operation == "gated_delta_parameters";
     lowered_convolution += requirement.operation == "causal_conv_silu";
     lowered_linear += requirement.operation == "linear";
+    if (requirement.operation == "rms_norm" &&
+        requirement.attributes.norm_scale_convention ==
+            ir::semantic::NormScaleConvention::one_plus_weight) {
+      ++lowered_one_plus_norms;
+    }
   }
   assert(lowered_casts > 0);
   assert(lowered_nvfp4_projections == 401);
@@ -199,6 +217,7 @@ int main() {
   assert(lowered_delta_parameters == 48);
   assert(lowered_convolution == 48);
   assert(lowered_linear == 96);
+  assert(lowered_one_plus_norms == 161);
   bool saw_lm_head_block_scale = false;
   bool saw_lm_head_tensor_scale = false;
   for (const auto& tensor : lowered.value().tensors()) {
@@ -252,8 +271,10 @@ int main() {
   std::size_t recurrent_commands = 0;
   for (const auto& command : physical.value().plan.commands()) {
     cached_attention_commands += command.kernel.value() == 23;
+    if (command.kernel.value() == 26) assert(command.split.outer == 1);
     if (command.kernel.value() == 15) {
       ++recurrent_commands;
+      assert(command.attention.query_heads == 16);
       assert(command.attention.key_value_heads == 16);
       assert(command.attention.value_heads == 48);
       assert(command.attention.head_dimension == 128);

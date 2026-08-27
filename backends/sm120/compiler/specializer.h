@@ -219,12 +219,14 @@ class Specializer final {
                         static_cast<std::uint32_t>(key_cache.physical_shape[0])};
       }
       if (requirement.operation == "gated_delta_attention") {
-        if (requirement.attributes.num_kv_heads == 0 || requirement.attributes.head_dimension == 0 ||
+        if (requirement.attributes.num_heads == 0 || requirement.attributes.num_kv_heads == 0 ||
+            requirement.attributes.head_dimension == 0 ||
             requirement.attributes.value_head_count == 0 ||
             requirement.attributes.value_head_dimension == 0) {
           return base::Status::invalid_argument("gated delta requirement lacks authored dimensions");
         }
-        attention = {0, requirement.attributes.num_kv_heads, requirement.attributes.head_dimension,
+        attention = {requirement.attributes.num_heads, requirement.attributes.num_kv_heads,
+                     requirement.attributes.head_dimension,
                      1, requirement.attributes.value_head_count,
                      requirement.attributes.value_head_dimension};
       }
@@ -273,21 +275,36 @@ class Specializer final {
                 std::numeric_limits<std::uint32_t>::max()) {
           return base::Status::invalid_argument("last-dimension split output shape is invalid");
         }
-        split = {requirement.attributes.num_heads, static_cast<std::uint32_t>(first_elements),
-                 static_cast<std::uint32_t>(second_elements)};
+        // Qwen's q projection is flattened from [batch, heads, head_dim * 2].  The
+        // query and gate are interleaved per head, so split each authored head row
+        // rather than treating the flattened vector as [all_query, all_gate]. Keep
+        // the one-row fallback for deliberately tiny structural fixtures whose
+        // placeholder widths cannot be divided by the authored head count.
+        if (first_elements % requirement.attributes.num_heads == 0 &&
+            second_elements % requirement.attributes.num_heads == 0) {
+          split = {requirement.attributes.num_heads,
+                   static_cast<std::uint32_t>(first_elements / requirement.attributes.num_heads),
+                   static_cast<std::uint32_t>(second_elements / requirement.attributes.num_heads)};
+        } else {
+          split = {1, static_cast<std::uint32_t>(first_elements),
+                   static_cast<std::uint32_t>(second_elements)};
+        }
       }
       workspace_bytes = std::max(workspace_bytes, candidate.value().workspace_bytes);
       const float epsilon = (requirement.operation == "rms_norm" ||
                              requirement.operation == "layer_norm")
                                 ? requirement.attributes.epsilon
                                 : 1.0e-5F;
+      const float scalar = requirement.operation == "rope"
+                               ? requirement.attributes.rope_theta
+                               : 1.0F;
       const bool add_one_to_scale =
           requirement.operation == "rms_norm" &&
           requirement.attributes.norm_scale_convention ==
               ir::semantic::NormScaleConvention::one_plus_weight;
       const auto command = plan_builder.add_command(
           candidate.value().id, std::move(operands), dependencies, 0, 0,
-          candidate.value().workspace_bytes, epsilon, 1.0F, attention, add_one_to_scale, {}, rope,
+          candidate.value().workspace_bytes, epsilon, scalar, attention, add_one_to_scale, {}, rope,
           cache_append, convolution, split);
       if (!command.has_value()) {
         base::Status error = command.error();

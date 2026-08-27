@@ -171,6 +171,7 @@ class Frontend final : public compiler::ModelFrontend {
       attention_attributes.rope_dimension = full_attention ? 64 : 0;
       if (full_attention) {
         attention_attributes.attention_output_gate = AttentionOutputGate::sigmoid;
+        attention_attributes.rope_theta = 10000000.0F;
       }
       if (!full_attention) {
         attention_attributes.key_head_dimension = 128;
@@ -252,6 +253,27 @@ class Frontend final : public compiler::ModelFrontend {
       }
       current = output.value();
     }
+
+    const auto final_norm = builder.add_tensor("final_norm", hidden_spec);
+    if (!final_norm.has_value()) {
+      return base::Status::resource_exhausted("Qwen3.8 final norm tensor emission failed");
+    }
+    const auto final_norm_weight = find_source_weight(
+        source_weights, "model.language_model.norm.weight");
+    if (!final_norm_weight.has_value()) {
+      base::Status error = final_norm_weight.error();
+      return error.with_context("Qwen3.8 final norm weight binding");
+    }
+    OperationAttributes final_norm_attributes;
+    final_norm_attributes.epsilon = 1.0e-6F;
+    final_norm_attributes.norm_scale_convention = NormScaleConvention::one_plus_weight;
+    if (!builder.add_operation("final_norm", OperationKind::rms_norm,
+                               {current, final_norm_weight.value()}, {final_norm.value()},
+                               final_norm_attributes)
+             .has_value()) {
+      return base::Status::invalid_argument("Qwen3.8 final norm operation could not be emitted");
+    }
+    current = final_norm.value();
 
     const auto logits = builder.add_tensor("logits", logits_spec);
     if (!logits.has_value()) {

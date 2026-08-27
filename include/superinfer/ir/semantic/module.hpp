@@ -86,6 +86,7 @@ struct OperationAttributes final {
   std::uint32_t rope_position{0};
   NormScaleConvention norm_scale_convention{NormScaleConvention::direct_weight};
   AttentionOutputGate attention_output_gate{AttentionOutputGate::none};
+  float rope_theta{0.0F};
 };
 
 struct Tensor final {

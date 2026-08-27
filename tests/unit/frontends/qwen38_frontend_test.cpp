@@ -158,6 +158,11 @@ int main() {
   std::size_t lowered_casts = 0;
   std::size_t lowered_nvfp4_projections = 0;
   std::size_t lowered_silu_mul = 0;
+  std::size_t lowered_sigmoid_mul = 0;
+  std::size_t lowered_splits = 0;
+  std::size_t lowered_rope = 0;
+  std::size_t lowered_cache_appends = 0;
+  std::size_t lowered_cached_attention = 0;
   for (const auto& requirement : lowered.value().kernel_requirements()) {
     lowered_casts += requirement.operation == "cast";
     if (requirement.operation == "nvfp4_linear") {
@@ -165,10 +170,20 @@ int main() {
       assert(requirement.operands.size() == 5);
     }
     lowered_silu_mul += requirement.operation == "silu_mul";
+    lowered_sigmoid_mul += requirement.operation == "sigmoid_mul";
+    lowered_splits += requirement.operation == "split";
+    lowered_rope += requirement.operation == "rope";
+    lowered_cache_appends += requirement.operation == "cache_append";
+    lowered_cached_attention += requirement.operation == "attention_bf16_cache";
   }
   assert(lowered_casts > 0);
-  assert(lowered_nvfp4_projections == 193);
+  assert(lowered_nvfp4_projections == 257);
   assert(lowered_silu_mul == 64);
+  assert(lowered_sigmoid_mul == 16);
+  assert(lowered_splits == 16);
+  assert(lowered_rope == 32);
+  assert(lowered_cache_appends == 16);
+  assert(lowered_cached_attention == 16);
   bool saw_lm_head_block_scale = false;
   bool saw_lm_head_tensor_scale = false;
   for (const auto& tensor : lowered.value().tensors()) {

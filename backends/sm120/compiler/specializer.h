@@ -175,19 +175,46 @@ class Specializer final {
       }
       ir::physical::AttentionDimensions attention{};
       ir::physical::RopeDimensions rope{};
-      if (requirement.operation == "attention") {
+      ir::physical::CacheAppendDimensions cache_append{};
+      if (requirement.operation == "attention" ||
+          requirement.operation == "attention_bf16_cache") {
         if (requirement.operands.size() < 4 || requirement.attributes.num_heads == 0 ||
             requirement.attributes.num_kv_heads == 0 || requirement.attributes.head_dimension == 0) {
           return base::Status::invalid_argument("attention requirement lacks authored dimensions");
         }
-        const auto& key_tensor = lowered.tensors()[requirement.operands[1].value()];
-        if (key_tensor.physical_shape.size() != 3 || key_tensor.physical_shape[0] == 0 ||
-            key_tensor.physical_shape[0] > std::numeric_limits<std::uint32_t>::max()) {
-          return base::Status::invalid_argument("attention key tensor lacks a static position dimension");
+        std::uint64_t positions = 0;
+        if (requirement.operation == "attention") {
+          const auto& key_tensor = lowered.tensors()[requirement.operands[1].value()];
+          if (key_tensor.physical_shape.size() != 3 || key_tensor.physical_shape[0] == 0 ||
+              key_tensor.physical_shape[0] > std::numeric_limits<std::uint32_t>::max()) {
+            return base::Status::invalid_argument("attention key tensor lacks a static position dimension");
+          }
+          positions = key_tensor.physical_shape[0];
+        } else {
+          if (requirement.attributes.attention_position == std::numeric_limits<std::uint32_t>::max()) {
+            return base::Status::invalid_argument("cached attention position overflows active length");
+          }
+          positions = static_cast<std::uint64_t>(requirement.attributes.attention_position) + 1U;
         }
         attention = {requirement.attributes.num_heads, requirement.attributes.num_kv_heads,
                      requirement.attributes.head_dimension,
-                     static_cast<std::uint32_t>(key_tensor.physical_shape[0])};
+                     static_cast<std::uint32_t>(positions)};
+      }
+      if (requirement.operation == "cache_append") {
+        if (requirement.operands.size() != 4 || requirement.attributes.num_kv_heads == 0 ||
+            requirement.attributes.head_dimension == 0) {
+          return base::Status::invalid_argument("cache append lacks authored dimensions");
+        }
+        const auto& key_cache = lowered.tensors()[requirement.operands[2].value()];
+        if (key_cache.physical_shape.size() != 3 || key_cache.physical_shape[0] == 0 ||
+            key_cache.physical_shape[1] != requirement.attributes.num_kv_heads ||
+            key_cache.physical_shape[2] != requirement.attributes.head_dimension ||
+            key_cache.physical_shape[0] > std::numeric_limits<std::uint32_t>::max()) {
+          return base::Status::invalid_argument("cache append state lacks authored cache dimensions");
+        }
+        cache_append = {requirement.attributes.num_kv_heads, requirement.attributes.head_dimension,
+                        requirement.attributes.attention_position,
+                        static_cast<std::uint32_t>(key_cache.physical_shape[0])};
       }
       if (requirement.operation == "rope") {
         if (requirement.attributes.num_heads == 0 || requirement.attributes.head_dimension == 0 ||
@@ -209,7 +236,8 @@ class Specializer final {
               ir::semantic::NormScaleConvention::one_plus_weight;
       const auto command = plan_builder.add_command(
           candidate.value().id, std::move(operands), dependencies, 0, 0,
-          candidate.value().workspace_bytes, epsilon, 1.0F, attention, add_one_to_scale, {}, rope);
+          candidate.value().workspace_bytes, epsilon, 1.0F, attention, add_one_to_scale, {}, rope,
+          cache_append);
       if (!command.has_value()) {
         base::Status error = command.error();
         return error.with_context("physical command");

@@ -153,6 +153,7 @@ class SemanticLowering final {
                                              operation.kind == ir::semantic::OperationKind::rms_norm ||
                                              operation.kind == ir::semantic::OperationKind::residual ||
                                              operation.kind == ir::semantic::OperationKind::gated_dense_ffn ||
+                                             operation.kind == ir::semantic::OperationKind::gated_grouped_query_attention ||
                                              operation.kind == ir::semantic::OperationKind::lm_head;
       const std::size_t converted_inputs =
           operation.kind == ir::semantic::OperationKind::residual ? inputs.size() :
@@ -262,6 +263,130 @@ class SemanticLowering final {
         base::Status down_status = emit_projection(operation.inputs[3], down_sidecars.value(),
                                                    outputs.front());
         if (!down_status.ok()) return down_status.with_context("quantized FFN down projection lowering");
+        if (cast_output) {
+          base::Status cast = emit_cast(ir::semantic::DType::f32, ir::semantic::DType::bf16,
+                                        output_target, lowered_tensors[operation.outputs.front().value()]);
+          if (!cast.ok()) return cast.with_context("activation output lowering");
+        }
+        continue;
+      }
+      if (operation.kind == ir::semantic::OperationKind::gated_grouped_query_attention) {
+        // Qwen's full-attention node is semantically gated: q_proj contains a query and a
+        // separate gate, while K/V are appended to persistent BF16 state before grouped
+        // attention. Keep every boundary explicit so no provider has to infer model meaning
+        // from an unusual projection shape.
+        if (operation.inputs.size() != 9 || operation.outputs.size() != 3 ||
+            operation.attributes.attention_output_gate != ir::semantic::AttentionOutputGate::sigmoid) {
+          return base::Status::invalid_argument("gated grouped attention contract is incomplete");
+        }
+        const auto static_first_dimension = [&](std::size_t input_index) -> base::Result<std::uint64_t> {
+          const auto& shape = semantic.tensors()[operation.inputs[input_index].value()].spec.shape;
+          if (shape.size() != 2 || shape[0].is_symbolic || shape[1].is_symbolic ||
+              shape[0].value == 0 || shape[1].value == 0) {
+            return base::Status::invalid_argument("attention projection requires a static matrix shape");
+          }
+          return shape[0].value;
+        };
+        const auto q_elements = static_first_dimension(3);
+        const auto k_elements = static_first_dimension(4);
+        const auto v_elements = static_first_dimension(5);
+        const auto o_elements = static_first_dimension(6);
+        if (!q_elements.has_value() || !k_elements.has_value() || !v_elements.has_value() ||
+            !o_elements.has_value() || q_elements.value() == 0 || q_elements.value() % 2 != 0) {
+          return base::Status::invalid_argument("attention projection dimensions are invalid");
+        }
+        const auto q_projection = add_named_f32_scratch(
+            operation.outputs.front(), {q_elements.value()}, operation.name + "$q_projection");
+        const auto q_raw = add_named_f32_scratch(
+            operation.outputs.front(), {q_elements.value() / 2U}, operation.name + "$q");
+        const auto q_gate = add_named_f32_scratch(
+            operation.outputs.front(), {q_elements.value() / 2U}, operation.name + "$gate");
+        const auto k_projection = add_named_f32_scratch(
+            operation.outputs.front(), {k_elements.value()}, operation.name + "$k_projection");
+        const auto v_projection = add_named_f32_scratch(
+            operation.outputs.front(), {v_elements.value()}, operation.name + "$v_projection");
+        const auto q_norm = add_named_f32_scratch(
+            operation.outputs.front(), {q_elements.value() / 2U}, operation.name + "$q_norm");
+        const auto k_norm = add_named_f32_scratch(
+            operation.outputs.front(), {k_elements.value()}, operation.name + "$k_norm");
+        const auto q_rope = add_named_f32_scratch(
+            operation.outputs.front(), {q_elements.value() / 2U}, operation.name + "$q_rope");
+        const auto k_rope = add_named_f32_scratch(
+            operation.outputs.front(), {k_elements.value()}, operation.name + "$k_rope");
+        const auto attended = add_named_f32_scratch(
+            operation.outputs.front(), {q_elements.value() / 2U}, operation.name + "$attended");
+        const auto gated = add_named_f32_scratch(
+            operation.outputs.front(), {q_elements.value() / 2U}, operation.name + "$gated");
+        if (!q_projection.has_value() || !q_raw.has_value() || !q_gate.has_value() ||
+            !k_projection.has_value() || !v_projection.has_value() || !q_norm.has_value() ||
+            !k_norm.has_value() || !q_rope.has_value() || !k_rope.has_value() ||
+            !attended.has_value() || !gated.has_value()) {
+          return base::Status::resource_exhausted("gated grouped attention scratch lowering failed");
+        }
+        const auto q_sidecars = add_nvfp4_sidecars(operation.inputs[3]);
+        const auto k_sidecars = add_nvfp4_sidecars(operation.inputs[4]);
+        const auto v_sidecars = add_nvfp4_sidecars(operation.inputs[5]);
+        const auto o_sidecars = add_nvfp4_sidecars(operation.inputs[6]);
+        if (!q_sidecars.has_value() || !k_sidecars.has_value() || !v_sidecars.has_value() ||
+            !o_sidecars.has_value()) {
+          return base::Status::invalid_argument("gated grouped attention sidecar lowering failed");
+        }
+        const auto emit_projection = [&](std::size_t weight_index,
+                                         const std::pair<ir::lowered::LoweredTensorId,
+                                                         ir::lowered::LoweredTensorId>& sidecars,
+                                         ir::lowered::LoweredTensorId destination) -> base::Status {
+          return builder.add_kernel_requirement(
+              "nvfp4_linear", options.target_capability,
+              {inputs[0], lowered_tensors[operation.inputs[weight_index].value()], sidecars.first,
+               sidecars.second, destination});
+        };
+        base::Status status = emit_projection(3, q_sidecars.value(), q_projection.value());
+        if (!status.ok()) return status.with_context("attention Q projection lowering");
+        status = builder.add_kernel_requirement(
+            "split", options.target_capability,
+            {q_projection.value(), q_raw.value(), q_gate.value()});
+        if (!status.ok()) return status.with_context("attention Q/gate split lowering");
+        status = emit_projection(4, k_sidecars.value(), k_projection.value());
+        if (!status.ok()) return status.with_context("attention K projection lowering");
+        status = emit_projection(5, v_sidecars.value(), v_projection.value());
+        if (!status.ok()) return status.with_context("attention V projection lowering");
+
+        ir::semantic::OperationAttributes norm_attributes;
+        norm_attributes.epsilon = 1.0e-6F;
+        const auto q_norm_weight = lowered_tensors[operation.inputs[7].value()];
+        const auto k_norm_weight = lowered_tensors[operation.inputs[8].value()];
+        status = builder.add_kernel_requirement(
+            "rms_norm", options.target_capability,
+            {q_raw.value(), q_norm_weight, q_norm.value()}, norm_attributes);
+        if (!status.ok()) return status.with_context("attention Q norm lowering");
+        status = builder.add_kernel_requirement(
+            "rms_norm", options.target_capability,
+            {k_projection.value(), k_norm_weight, k_norm.value()}, norm_attributes);
+        if (!status.ok()) return status.with_context("attention K norm lowering");
+
+        auto q_rope_attributes = operation.attributes;
+        status = builder.add_kernel_requirement(
+            "rope", options.target_capability, {q_norm.value(), q_rope.value()}, q_rope_attributes);
+        if (!status.ok()) return status.with_context("attention Q RoPE lowering");
+        auto k_rope_attributes = operation.attributes;
+        k_rope_attributes.num_heads = operation.attributes.num_kv_heads;
+        status = builder.add_kernel_requirement(
+            "rope", options.target_capability, {k_norm.value(), k_rope.value()}, k_rope_attributes);
+        if (!status.ok()) return status.with_context("attention K RoPE lowering");
+        status = builder.add_kernel_requirement(
+            "cache_append", options.target_capability,
+            {k_rope.value(), v_projection.value(), inputs[1], inputs[2]}, operation.attributes);
+        if (!status.ok()) return status.with_context("attention KV cache lowering");
+        status = builder.add_kernel_requirement(
+            "attention_bf16_cache", options.target_capability,
+            {q_rope.value(), inputs[1], inputs[2], attended.value()}, operation.attributes);
+        if (!status.ok()) return status.with_context("attention cached GQA lowering");
+        status = builder.add_kernel_requirement(
+            "sigmoid_mul", options.target_capability,
+            {q_gate.value(), attended.value(), gated.value()});
+        if (!status.ok()) return status.with_context("attention output gate lowering");
+        status = emit_projection(6, o_sidecars.value(), outputs.front());
+        if (!status.ok()) return status.with_context("attention O projection lowering");
         if (cast_output) {
           base::Status cast = emit_cast(ir::semantic::DType::f32, ir::semantic::DType::bf16,
                                         output_target, lowered_tensors[operation.outputs.front().value()]);

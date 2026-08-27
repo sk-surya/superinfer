@@ -1,0 +1,37 @@
+{
+  "schema": "superinfer.qwen38.e2e.capacity-boundary.v1",
+  "status": "pass",
+  "target": {
+    "gpu": 0,
+    "name": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a",
+    "gpu_1_used": false
+  },
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "physical_contract": {
+    "kv_capacity": 4096,
+    "state_buffers": 128,
+    "device_arena_bytes": 19191265792,
+    "device_allocations": 1
+  },
+  "legal_boundary": {
+    "position": 4095,
+    "result": "pass",
+    "commands_executed": 4848,
+    "allocation_growth": "none",
+    "output_finite": true,
+    "note": "The test harness initializes the declared state buffers, executes the ordinary token once, then executes the same immutable schedule at position 4095."
+  },
+  "reject_boundary": {
+    "position": 4096,
+    "result": "pass",
+    "diagnostic": "out_of_range before command launch"
+  },
+  "limitations": [
+    "The legal-boundary run validates capacity, lifecycle, and finite execution behavior; it is not an external numerical reference at position 4095.",
+    "The far-position continuation intentionally exercises the runtime bound with a zero-initialized cache, not a 4095-token semantic prompt."
+  ]
+}

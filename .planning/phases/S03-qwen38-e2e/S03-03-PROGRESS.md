@@ -14,8 +14,9 @@ broader corpus coverage and final acceptance closure remain open.
 - Target: GPU 0, NVIDIA GeForce RTX 5090, `sm_120a`; GPU 1 was not used.
 - Full graph: 64 layers, 48 Gated-DeltaNet and 16 full-attention layers.
 - Physical plan: 2,424 commands, 19,190,769,152-byte device arena, 128 explicit state buffers.
-- Reference: streamed `Qwen3_5TextConfig`/`Qwen3_5DecoderLayer`, Transformers 5.14.1 available in
-  the local offline environment; the pinned source/model identities remain recorded by the artifact.
+- Reference: streamed `Qwen3_5TextConfig`/`Qwen3_5DecoderLayer`, Transformers 5.12.1 with
+  torch 2.13.0+cu130 in the local offline environment; the pinned source/model identities remain
+  recorded by the artifact and the corpus-reference evidence.
 - Token 0: SuperInfer greedy `49276`, logit `11.6875`, checksum `-792475`; reference greedy `49276`,
   checksum `-792161.3125`.
 - Two-token continuation: SuperInfer greedy sequence `49276, 2349`; reference sequence `49276, 2349`.
@@ -36,6 +37,18 @@ broader corpus coverage and final acceptance closure remain open.
   `artifacts/S03/qwen38-e2e-plain-short-decode-differential.json`.
 - The real-artifact capacity guard rejects position `4096` before launch for the configured
   `kv_capacity=4096`; this remains a boundary-rejection check rather than a full near-boundary run.
+- A legal position `4095` execution now completes on the same real-artifact plan with finite output,
+  128 stable state buffers, and no device-allocation growth; the paired `4096` rejection is recorded
+  in `artifacts/S03/qwen38-e2e-kv-boundary.json`.
+- The independent tokenizer contract passes the pinned plain, Unicode, special-token, varied-length,
+  and rendered chat-template cases; exact IDs, token hashes, tokenizer file hashes, and Transformers
+  5.12.1 identity are recorded in `artifacts/S03/qwen38-tokenizer-contract.json`.
+- The layer-streamed corpus oracle amortizes checkpoint loading across all five cases and records
+  the exact reference environment in `build/evidence/reference-batched-corpus/`. The paired target
+  run is intentionally retained as a failed acceptance artifact in
+  `artifacts/S03/qwen38-e2e-corpus-acceptance-failure.json`: plain, Unicode, and special-token cases
+  pass, while varied-length and chat-template replay are non-repeatable across fresh sessions and
+  diverge at long continuation positions.
 - Failure matrix passes artifact corruption/truncation, target mismatch, injected CUDA fault poisoning,
   and over-capacity continuation rejection; see `artifacts/S03/qwen38-e2e-failure-matrix.json`.
 
@@ -55,8 +68,10 @@ reuses the validated 2,424-command schedule, mutates only cache append/RoPE/full
 fields, and completes with 4,848 command launches. The greedy sequence is `49276, 2349`, matching
 the shared-cache Transformers reference. Full-vector drift is recorded per step in
 `artifacts/S03/qwen38-e2e-two-token-differential.json`; it is quantized-logit drift, not a token
-divergence. The local reference environment is Transformers 5.14.1 rather than the planned 5.12.1.
+divergence. The qualified corpus reference environment is Transformers 5.12.1 with torch
+2.13.0+cu130.
 
-The remaining acceptance work is to exercise and package the broader reviewed corpus (plain/chat/
-Unicode/near-boundary), repeat the accepted prefill path under the corpus harness, and close the
-final S03 report. S03F-02 remains blocked until that S03 acceptance is explicitly closed.
+The remaining acceptance work is to resolve the long-replay reproducibility failure, then produce
+the reviewed passing report and second complete target-session corpus run. The legal boundary proof
+is complete for positions 4095/4096, but the numerical model contract is not yet closed for all
+declared corpus cases. S03F-02 remains blocked until that S03 acceptance is explicitly closed.

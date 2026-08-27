@@ -270,6 +270,25 @@ int main() {
     std::cerr << "Qwen full graph synchronization failed: " << sync_status.message() << '\n';
     return 1;
   }
+  bool boundary_executed = false;
+  if (std::getenv("SUPERINFER_QWEN38_BOUNDARY_EXECUTION") != nullptr) {
+    const std::uint64_t allocations_before = session.lifecycle_trace().device_allocations;
+    const auto boundary_status = session.execute_at_position_for_test(4095);
+    if (!boundary_status.ok()) {
+      std::cerr << "legal boundary continuation failed: " << boundary_status.message() << '\n';
+      return 1;
+    }
+    const auto boundary_sync = session.synchronize_for_test();
+    if (!boundary_sync.ok()) {
+      std::cerr << "legal boundary synchronization failed: " << boundary_sync.message() << '\n';
+      return 1;
+    }
+    if (session.lifecycle_trace().device_allocations != allocations_before) {
+      std::cerr << "legal boundary continuation grew device allocations\n";
+      return 1;
+    }
+    boundary_executed = true;
+  }
   const std::uint32_t token = prefill_tokens.front();
   const auto& output = specialized.value().plan.buffers()[entry.outputs.front().value()];
   if (output.tensor.dtype != superinfer::ir::physical::PhysicalDType::bf16 ||
@@ -484,6 +503,7 @@ int main() {
     }
   }
   if (capacity_rejected) std::cout << " capacity_rejection=pass";
+  if (boundary_executed) std::cout << " boundary_position=4095 boundary_allocations=stable";
   std::cout << '\n';
   return 0;
 }

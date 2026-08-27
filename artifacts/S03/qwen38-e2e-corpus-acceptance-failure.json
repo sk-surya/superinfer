@@ -1,0 +1,38 @@
+{
+  "schema": "superinfer.qwen38.s03.corpus.acceptance.failure.v1",
+  "status": "fail",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "corpus": {
+    "path": "tests/corpora/qwen38/s03-acceptance.json",
+    "sha256": "71634ade5f3c305beb64c1ff45c41229ca5e47ec3ee7c1a259a99834256b2e34"
+  },
+  "reference": {
+    "implementation": "Transformers Qwen3_5DecoderLayer, layer-streamed across corpus cases",
+    "transformers_version": "5.12.1",
+    "torch_version": "2.13.0+cu130",
+    "round_activations": false,
+    "capture_report": "build/evidence/reference-batched-corpus/corpus-reference.json",
+    "capture_report_sha256": "79db76a4e7085d592210fd85827e2d236f4ee2ab6182a7f2a370b3f4061e4d22"
+  },
+  "target": {
+    "gpu": "GPU 0 NVIDIA GeForce RTX 5090 sm_120a",
+    "gpu_1": "occupied by an unrelated sglang process; not used",
+    "mode": "one-token decode replay with explicit fixed-token continuation"
+  },
+  "cases": [
+    {"id": "plain-short", "token_match": true, "repeatable": true, "first_divergent_rows": [], "capture_sha256": "1d94d2af96c040e606b27321663f0d816eca3e7679dfeef3e0545bf657132c03"},
+    {"id": "unicode", "token_match": true, "repeatable": true, "first_divergent_rows": [], "capture_sha256": "4f1664b561186e3a2427d7adfabc7aefcf84e74a1cd269411f21ef1ea66fd1e4"},
+    {"id": "special-tokens", "token_match": true, "repeatable": true, "first_divergent_rows": [], "capture_sha256": "8380756538508ac64b4c99c0a8b25fea5727e007e41e9dd96cdc925241f45ee0"},
+    {"id": "varied-length", "token_match": false, "repeatable": false, "first_divergent_rows": [67], "capture_sha256_run0": "c0388fb24df7a6e1db5433953125f11ba1bf64e1ffd7043098c9dbc5ea74c6ce", "capture_sha256_run1": "8a7cfe8a12b890d39a19e9b72533bd5a5ebd05f3483a1c99fb8f7395b9198bcf"},
+    {"id": "chat-template", "token_match": false, "repeatable": false, "first_divergent_rows": [12, 43], "capture_sha256_run0": "296bab68a5d80cf571cd5beae406b422ecdfbefeff857a8ede0091117d41abd2", "capture_sha256_run1": "fae3d233b605b97e369ea26a7cf84629f2d19fd51837d86c5f6fd56da2df0e2e"}
+  ],
+  "source_report": {
+    "path": "build/evidence/qwen38-s03-corpus-run/acceptance.json",
+    "sha256": "8c05311b8fe6b799d952cef691fecbae4cdf173b1c6e6b9620ee16ea1a3bccbe"
+  },
+  "interpretation": "Short and Unicode/special-token execution passes. Long replay is not accepted: chat and varied-length runs are non-repeatable across fresh sessions and show token divergence. This blocks S03 closure and all S03F-02 implementation.",
+  "next_diagnostic": "Localize the first changing physical tensor/state at the earliest divergent continuation position with a bounded debug capture or CUDA memory instrumentation; do not change tolerances or claim support."
+}

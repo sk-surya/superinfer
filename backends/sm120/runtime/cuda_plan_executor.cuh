@@ -38,6 +38,14 @@ __global__ inline void silu_mul_f32(const float* gate, const float* value, float
   }
 }
 
+__global__ inline void sigmoid_mul_f32(const float* gate, const float* value, float* output,
+                                       std::size_t elements) {
+  for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < elements;
+       index += blockDim.x * gridDim.x) {
+    output[index] = (1.0F / (1.0F + expf(-gate[index]))) * value[index];
+  }
+}
+
 __global__ inline void embedding_f32(const std::uint32_t* token, const float* table, float* output,
                                      std::size_t vocabulary, std::size_t hidden) {
   const std::uint32_t row = *token;
@@ -542,6 +550,22 @@ inline cudaError_t launch_silu_mul(const ir::physical::CommandDescriptor& comman
   return cudaGetLastError();
 }
 
+inline cudaError_t launch_sigmoid_mul(const ir::physical::CommandDescriptor& command,
+                                      const ir::physical::Plan& plan, void* arena, void*,
+                                      cudaStream_t stream) {
+  if (command.buffers.size() < 3) return cudaErrorInvalidValue;
+  const auto& gate = plan.buffers()[command.buffers[0].value()];
+  const auto& value = plan.buffers()[command.buffers[1].value()];
+  const auto& output = plan.buffers()[command.buffers[2].value()];
+  if (gate.size % sizeof(float) != 0) return cudaErrorInvalidValue;
+  sigmoid_mul_f32<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, gate.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, value.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)),
+      static_cast<std::size_t>(gate.size / sizeof(float)));
+  return cudaGetLastError();
+}
+
 inline cudaError_t launch_rms_norm(const ir::physical::CommandDescriptor& command,
                                    const ir::physical::Plan& plan, void* arena, void*,
                                    cudaStream_t stream) {
@@ -910,6 +934,11 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
         return base::Status::invalid_argument("CUDA SiLU multiply requires three equal-sized f32 buffers");
       }
       return {};
+    case 19:
+      if (!same_sizes(3) || !all_dtype(ir::physical::PhysicalDType::f32)) {
+        return base::Status::invalid_argument("CUDA sigmoid multiply requires three equal-sized f32 buffers");
+      }
+      return {};
     default:
       return base::Status::unsupported("CUDA kernel ID is not registered");
   }
@@ -933,6 +962,7 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 15: return &launch_gated_delta_attention;
     case 6: return &launch_layer_norm;
     case 18: return &launch_silu_mul;
+    case 19: return &launch_sigmoid_mul;
     default: return nullptr;
   }
 }

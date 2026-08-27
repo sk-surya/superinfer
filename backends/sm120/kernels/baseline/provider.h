@@ -178,6 +178,18 @@ class BaselineProvider final : public kernels::KernelProvider {
       }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{18}, "sm120.baseline", true, 0}};
     }
+    if (query.operation == "sigmoid_mul") {
+      if (query.operand_count != 0 && query.operand_count != 3) {
+        return base::Status::unsupported("baseline sigmoid multiply requires three typed operands");
+      }
+      if (!query.operand_dtypes.empty() &&
+          (query.operand_dtypes.size() != 3 ||
+           std::any_of(query.operand_dtypes.begin(), query.operand_dtypes.end(),
+                       [](std::string_view dtype) { return dtype != "f32"; }))) {
+        return base::Status::unsupported("baseline sigmoid multiply requires f32 operands");
+      }
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{19}, "sm120.baseline", true, 0}};
+    }
     return base::Status::unsupported("no executable baseline candidate for operation");
   }
 };

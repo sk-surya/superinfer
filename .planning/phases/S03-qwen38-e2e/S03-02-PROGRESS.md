@@ -170,6 +170,10 @@ updated: 2026-08-26
   nodes and 193 total quantized projections including LM head; provider ID 18 and its RTX 5090
   CUDA differential fixture cover the activation primitive. This remains lowered-graph evidence;
   artifact reads and full FFN numerical differential are still open.
+- The attention gate now has a distinct generic `sigmoid_mul` capability (provider/kernel ID 19),
+  deliberately separate from FFN `silu_mul`. Its typed FP32 contract and CUDA fixture validate
+  the sigmoid gate equation on RTX 5090; full-attention composition and causal/state semantics
+  remain open.
   NVFP4 packed views retain their explicit packed encoding.
 - Lowered IR now retains 128 state slots with explicit read/write/commit transitions and carries
   semantic decode entry bindings. A state transition therefore survives into the representation

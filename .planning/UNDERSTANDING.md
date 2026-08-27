@@ -166,6 +166,19 @@ This checkpoint explains the typed tensor-table to Physical Plan path, explicit 
 BF16 KV storage, and the independent quantized reference. It does not certify full Qwen model
 correctness or close the S03-02 plan; Gated-Delta state continuation and S03-03 remain open.
 
+## S03-02 Gated-DeltaNet checkpoint
+
+| Field | Value |
+|---|---|
+| Level | L1 implementation checkpoint with a retained study packet |
+| Implementation status | Reached |
+| User status | Packet presented; not passed on the user's behalf |
+| Evidence | Layer-0 real-artifact differential across two state-continuing segments: max abs `0.0357285`, mean abs `0.000231544` |
+| Packet | [understanding-packets/S03-02-gdn-layer.md](understanding-packets/S03-02-gdn-layer.md) |
+
+The packet covers the two persistent state representations, the exact Qwen head topology, and the
+stateful execution trace. It does not certify full-model generation or promote any performance claim.
+
 ## Autonomous execution override
 
 On 2026-08-26 the user explicitly directed implementation to continue without waiting for

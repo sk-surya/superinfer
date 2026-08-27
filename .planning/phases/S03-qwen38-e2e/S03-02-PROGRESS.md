@@ -222,6 +222,12 @@ updated: 2026-08-27
   gating, residuals, and the gated MLP. An independent packed-NVFP4 Python/Transformers reference
   reports `max_abs=0.000198513`, `mean_abs=0.0000361938`; evidence is recorded in
   `artifacts/S03/qwen38-layer3-artifact-differential.json`.
+- A real `.sinf` artifact now drives a complete layer-0 Gated-DeltaNet decoder layer across two
+  one-token execution segments. The 20-command plan preserves BF16 convolution state and FP32
+  recurrent state between calls and matches the pinned Transformers layer under the recorded
+  NVFP4 accumulation contract (`max_abs=0.0357285`, `mean_abs=0.000231544`). State and attention
+  boundary maxima are `0.000766158` and `0.00482035`; evidence is recorded in
+  `artifacts/S03/qwen38-gdn-layer0-artifact-differential.json`.
 
 ## Remaining S03-02 work
 
@@ -229,6 +235,6 @@ updated: 2026-08-27
   physical buffers for LM/FFN and GDN numerical differential fixtures. The full-attention fixture
   proves the manual binding path; generic lowering still needs to consume the same materialization
   contract end to end.
-- Compare one complete two-segment Gated Delta layer against the pinned Transformers implementation
-  using artifact weights and retained intermediate tensors.
+- Promote the artifact-bound projection/materialization path into reusable lowering/runtime bindings
+  for LM/FFN and retain the layer fixtures as differential gates.
 - Complete conversion/runtime staged differential evidence before S03-03 acceptance.

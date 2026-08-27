@@ -1,0 +1,44 @@
+{
+  "kind": "qwen38_nvfp4_gated_delta_layer_differential",
+  "status": "pass",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "source": {
+    "model": "Qwen3.8-27B-NVFP4-RTX5090",
+    "derivative_revision": "0cc27958cefbbe231782ec8511de8c4eb5233348",
+    "reference_script": "tools/qwen38_nvfp4_gdn_reference.py",
+    "reference": "Transformers 5.12.1 Qwen3_5DecoderLayer",
+    "layer": 0,
+    "segments": 2,
+    "segment_lengths": [1, 1]
+  },
+  "execution": {
+    "commands_per_segment": 20,
+    "commands_total": 40,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "cuda_visible_devices": "0",
+    "path": "mmap .sinf -> typed artifact bindings -> Physical Plan -> CUDA executor",
+    "state": {
+      "convolution": "BF16 [4, 10240]",
+      "recurrent": "FP32 [48, 128, 128]",
+      "continued_across_segments": true
+    }
+  },
+  "comparison": {
+    "max_abs": 0.0357285,
+    "mean_abs": 0.000231544,
+    "max_abs_threshold": 0.05,
+    "mean_abs_threshold": 0.0005,
+    "attention_boundary_max_abs": 0.00482035,
+    "attention_boundary_threshold": 0.01,
+    "state_boundary_max_abs": 0.000766158,
+    "state_boundary_threshold": 0.001
+  },
+  "notes": [
+    "The final contract includes packed NVFP4 matrix-vector accumulation-order drift against Transformers.",
+    "The tighter state and linear-attention boundary checks prevent final MLP amplification from hiding a recurrent-state defect.",
+    "This proves one complete Gated-DeltaNet decoder layer with state continuation, not full-model generation."
+  ]
+}

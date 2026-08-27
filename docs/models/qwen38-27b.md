@@ -71,6 +71,17 @@ The final current-recipe checked local artifact is 18,766,778,520 bytes with SHA
 `a8d4b2b398cc3458349cd6daee09a6f8e3776bc729b893291d30f28f1fba1573`; this regeneration includes
 401 deterministic NVFP4 sidecar bindings in the manifest. Large-artifact inspection is
 section-streamed and uses bounded memory.
-Its manifest includes the validated NVFP4/FP8 quantization contract and deliberately reports
-`physical_execution_status: pending-baseline-provider-coverage`; this checkpoint proves source
-provenance and payload packaging, not Qwen token generation.
+Its manifest includes the validated NVFP4/FP8 quantization contract and reports layer-level
+physical differential evidence below; full-model token generation remains pending.
+
+## Layer differential checkpoints
+
+The current branch has real-artifact CUDA evidence for both mixed attention families:
+
+- layer 3 full attention plus gated MLP: `artifacts/S03/qwen38-layer3-artifact-differential.json`;
+- layer 0 Gated-DeltaNet plus MLP across two state-continuing segments:
+  `artifacts/S03/qwen38-gdn-layer0-artifact-differential.json`.
+
+These are layer correctness checkpoints, not full-model or token-generation acceptance. The
+fixtures intentionally retain explicit command boundaries and use GPU 0 only; full Qwen prefill,
+logits, and greedy continuation remain S03-03 work.

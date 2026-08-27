@@ -8,7 +8,9 @@ from superinfer.convert.flash_next import (
     FlashNextContract,
     FlashNextValidationError,
     build_residency_options,
+    blocked_source_evidence,
     classify_tensor_bytes,
+    official_contract,
     validate_source,
 )
 
@@ -106,8 +108,24 @@ class FlashNextLedgerTests(unittest.TestCase):
             _write_source(root)
             inventory = validate_source(root, _contract())
             ledger = classify_tensor_bytes(inventory)
-            self.assertEqual(list(ledger), ["embedding_lm_head", "ple", "routed_experts"])
+            self.assertEqual(list(ledger), [
+                "embedding_lm_head", "mtp", "non_expert_text", "ple",
+                "routed_experts", "router_indexer", "shared_experts", "vision",
+            ])
             self.assertEqual(sum(ledger.values()), sum(t.nbytes for t in inventory.tensors))
+
+    def test_official_contract_is_pinned_to_observed_metadata(self) -> None:
+        contract = official_contract()
+        self.assertEqual(contract.model_type, "qwen4_exp")
+        self.assertEqual((contract.layer_count, contract.expert_count, contract.top_k), (48, 512, 10))
+        self.assertEqual(len(contract.upstream_revision), 40)
+        self.assertEqual(contract.qsa_config["indexer_budget"], 2048)
+
+    def test_blocker_preserves_official_identity_without_capacity_claims(self) -> None:
+        evidence = blocked_source_evidence()
+        self.assertEqual(evidence["status"], "blocked")
+        self.assertEqual(evidence["official_identity"]["expected_safetensors_shards"], 131)
+        self.assertFalse(evidence["local_candidate"]["usable_for_full_ledger"])
 
     def test_residency_rejects_over_budget_and_partitions_contiguously(self) -> None:
         layers = [("layer.0", 60), ("layer.1", 40), ("layer.2", 40)]

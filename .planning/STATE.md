@@ -12,7 +12,7 @@ progress:
 completed_plans: 10
 current_phase_name: qwen38-e2e
 parallel_research_phase: S03F-01
-s03f_01_status: blocked_missing_pinned_flash_next_source_and_reference_evidence
+s03f_01_status: research_complete_capacity_quality_blocked
 ---
 
 # Project State
@@ -41,9 +41,9 @@ s03f_01_status: blocked_missing_pinned_flash_next_source_and_reference_evidence
 
 ## Current Focus
 
-S03 remains the primary implementation lane. Quantized LM/FFN/attention/GDN projection lowering, explicit tensor-scale bindings, state-buffer aliasing, per-head RMSNorm, sigmoid gating, partial RoPE, BF16 KV append, cached GQA, Gated Delta parameter derivation, and causal convolution are covered by focused CPU/CUDA evidence. Real `.sinf` artifacts now drive a complete layer-3 full-attention path and a complete layer-0 Gated-DeltaNet path across two execution segments on GPU 0, both matching independent Transformers-based references within recorded contracts. S03-02 also compiles and binds the complete 64-layer graph with liveness-aware physical ranges. S03-03 now proves two independent three-token static-prefill fixtures plus a six-position plain-short decode replay, capacity rejection, matching greedy output, byte-identical fresh-session captures, and independent Transformers logit/token agreement; Unicode/chat/varied-length corpus execution, near-boundary coverage, and final acceptance packaging remain open.
+S03 remains the primary implementation lane. Quantized LM/FFN/attention/GDN projection lowering, explicit tensor-scale bindings, state-buffer aliasing, per-head RMSNorm, sigmoid gating, partial RoPE, BF16 KV append, cached GQA, Gated Delta parameter derivation, and causal convolution are covered by focused CPU/CUDA evidence. Real `.sinf` artifacts now drive a complete layer-3 full-attention path and a complete layer-0 Gated-DeltaNet path across two execution segments on GPU 0, both matching independent Transformers-based references within recorded contracts. S03-02 also compiles and binds the complete 64-layer graph with liveness-aware physical ranges. S03-03 now proves two independent three-token static-prefill fixtures plus a six-position plain-short decode replay, capacity rejection, legal position-4095 execution without allocation growth, matching greedy output, byte-identical fresh-session captures, and independent Transformers logit/token agreement; Unicode/chat/varied-length model execution and final acceptance packaging remain open.
 
-The approved S03F amendment adds Flash-Next after S03 and before S04. **Only S03F-01 may begin before S03 closes**, and it is research-only: pin reference/model revisions, inventory exact packed tensors, produce a capacity ledger, and evaluate quantization/residency recipes. S03F-01 must not modify Physical Plan, MemoryPlanner, runtime or kernels.
+The approved S03F amendment adds Flash-Next after S03 and before S04. **Only S03F-01 may begin before S03 closes**, and it is research-only: pin reference/model revisions, inventory exact packed tensors, produce a capacity ledger, and evaluate quantization/residency recipes. S03F-01 has pinned official model/source identity and metadata, but remains capacity/quality blocked because the complete checkpoint and executable reference are unavailable locally. It did not modify Physical Plan, MemoryPlanner, runtime or kernels.
 
 After S03 closes, S03F proceeds through multi-device placement, host-resident PLE, MoE, QSA/gated residual and final dual-5090 text correctness. Broad kernel optimization remains S04 work.
 
@@ -75,7 +75,7 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
 - S03 requires real RTX 5090 model-level differential and end-to-end evidence; primitive-only tests are insufficient.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
-- S03F-01 must pin immutable Flash-Next model/reference revisions and compute exact packed-byte residency from accessible artifacts before implementation assumes expert fit.
+- S03F-01 has pinned immutable Flash-Next model/reference revisions, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.
 - If acceptable full expert residency across two 5090s is not feasible, S03F-04 may not invent silent expert paging. Record a capacity/residency ADR first.
 - Dual-GPU runtime work must validate actual peer-access topology and retain a pinned-host staged fallback; peer access is not assumed from GPU model alone.
 - Flash-Next vision and MTP are explicitly outside S03F.

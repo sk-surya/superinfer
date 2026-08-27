@@ -1,9 +1,7 @@
 {
   "checked_workspace": "/srv/repos/superinfer",
   "claims_withheld": [
-    "pinned revisions",
-    "tensor counts",
-    "packed byte totals",
+    "complete packed byte totals",
     "quality equivalence",
     "residency feasibility"
   ],
@@ -15,7 +13,24 @@
     ".planning/FLASH-NEXT-DESIGN.md",
     "S03F-01-PLAN.md"
   ],
-  "reason": "No exact Flash-Next model artifact or reference checkout is available in this workspace.",
+  "official_identity": {
+    "model_repository": "Qwen/Qwen3.8-Flash-Next",
+    "model_revision": "de4b8e4d43b917e7706784d8bb445c9af86a3540",
+    "reference_repository": "QwenLM/Qwen3.8-Flash-Next",
+    "reference_revision": "69885871a64393807d988b27b1b5e380e8f28526",
+    "config_sha256": "889658f2508e8c61d409b02e70e0d78d8d4452ec65aaafbe129805d213d2e74b",
+    "index_sha256": "99e815241ef03325536b0aaa4441deea45174c17fae31e10f0bb456410c590de",
+    "expected_safetensors_shards": 131,
+    "expected_tensor_entries": 1658,
+    "reported_bf16_payload_bytes": 359999963128
+  },
+  "local_candidate": {
+    "path": "/srv/models/hf/Qwen3.8-Flash-Next-NVFP4",
+    "identity": "RadixArk private NVFP4 candidate",
+    "complete_layers": "0-20 and 22; layer 21 is missing one expert-range shard",
+    "usable_for_full_ledger": false
+  },
+  "reason": "Official metadata and revisions are pinned, but the complete checkpoint is not available locally and the official repository has no executable reference checkout; no partial or parameter-count estimate is substituted.",
   "required": [
     "config.json",
     "model.safetensors.index.json",

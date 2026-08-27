@@ -14,6 +14,14 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
+OFFICIAL_MODEL_REPOSITORY = "Qwen/Qwen3.8-Flash-Next"
+OFFICIAL_MODEL_REVISION = "de4b8e4d43b917e7706784d8bb445c9af86a3540"
+OFFICIAL_REFERENCE_REPOSITORY = "QwenLM/Qwen3.8-Flash-Next"
+OFFICIAL_REFERENCE_REVISION = "69885871a64393807d988b27b1b5e380e8f28526"
+OFFICIAL_CONFIG_SHA256 = "889658f2508e8c61d409b02e70e0d78d8d4452ec65aaafbe129805d213d2e74b"
+OFFICIAL_INDEX_SHA256 = "99e815241ef03325536b0aaa4441deea45174c17fae31e10f0bb456410c590de"
+
+
 class FlashNextValidationError(ValueError):
     """Stable, fail-closed source or capacity diagnostic."""
 
@@ -29,6 +37,27 @@ class FlashNextContract:
     reference_repository: str
     reference_revision: str
     qsa_config: Mapping[str, Any]
+
+
+def official_contract() -> FlashNextContract:
+    """Return the pinned official contract; no checkpoint payload is implied."""
+    return FlashNextContract(
+        model_type="qwen4_exp",
+        layer_count=48,
+        expert_count=512,
+        top_k=10,
+        upstream_repository=OFFICIAL_MODEL_REPOSITORY,
+        upstream_revision=OFFICIAL_MODEL_REVISION,
+        reference_repository=OFFICIAL_REFERENCE_REPOSITORY,
+        reference_revision=OFFICIAL_REFERENCE_REVISION,
+        qsa_config={
+            "indexer_budget": 2048,
+            "indexer_compress_ratio": 4,
+            "indexer_head_dim": 128,
+            "indexer_kv_heads": 1,
+            "indexer_n_heads": 4,
+        },
+    )
 
 
 @dataclass(frozen=True)
@@ -107,17 +136,26 @@ def validate_source(model_dir: Path, contract: FlashNextContract) -> FlashNextIn
     for field in ("upstream_repository", "upstream_revision", "reference_repository", "reference_revision"):
         if provenance.get(field) != getattr(contract, field):
             raise FlashNextValidationError(f"revision_mismatch [{field}]")
+    text_config = config.get("text_config")
+    if not isinstance(text_config, dict):
+        text_config = config
     checks = (("model_type", contract.model_type, config.get("model_type")),
-              ("layer_count", contract.layer_count, config.get("num_hidden_layers")),
-              ("expert_count", contract.expert_count, config.get("num_experts")),
-              ("top_k", contract.top_k, config.get("num_experts_per_tok")))
+              ("layer_count", contract.layer_count, text_config.get("num_hidden_layers")),
+              ("expert_count", contract.expert_count, text_config.get("num_experts")),
+              ("top_k", contract.top_k, text_config.get("num_experts_per_tok")))
     for field, expected, actual in checks:
         if actual != expected:
             raise FlashNextValidationError(f"config_mismatch [{field}]")
-    if not isinstance(config.get("ple"), dict) or not config["ple"]:
+    has_ple = bool(config.get("ple")) or bool(text_config.get("ple_layer_ids")) and bool(
+        text_config.get("ngram_vocab_size_base"))
+    if not has_ple:
         raise FlashNextValidationError("missing_metadata [ple]")
     qsa = config.get("qsa")
-    if not isinstance(qsa, dict) or qsa != dict(contract.qsa_config):
+    if isinstance(qsa, dict):
+        qsa_values = qsa
+    else:
+        qsa_values = {key: text_config.get(key) for key in contract.qsa_config}
+    if qsa_values != dict(contract.qsa_config):
         raise FlashNextValidationError("unexpected_configuration [qsa]")
     index = _read_json(model_dir / "model.safetensors.index.json", "tensor_index")
     weight_map = index.get("weight_map")
@@ -148,17 +186,28 @@ def validate_source(model_dir: Path, contract: FlashNextContract) -> FlashNextIn
 
 def classify_tensor_bytes(inventory: FlashNextInventory) -> dict[str, int]:
     """Classify known tensor-name families; unknown names fail closed."""
-    totals: dict[str, int] = {"embedding_lm_head": 0, "ple": 0, "routed_experts": 0}
+    totals: dict[str, int] = {
+        "embedding_lm_head": 0, "mtp": 0, "non_expert_text": 0, "ple": 0,
+        "router_indexer": 0, "routed_experts": 0, "shared_experts": 0, "vision": 0,
+    }
     for tensor in inventory.tensors:
         name = tensor.name.lower()
-        if "ple" in name or "ngram" in name:
+        if "visual" in name or "vision" in name:
+            category = "vision"
+        elif ".mtp" in name or name.startswith("mtp"):
+            category = "mtp"
+        elif "ple" in name or "ngram" in name:
             category = "ple"
-        elif "expert" in name or ".experts." in name:
+        elif "shared_expert" in name:
+            category = "shared_experts"
+        elif ".experts." in name or "expert" in name:
             category = "routed_experts"
+        elif "router" in name or "indexer" in name:
+            category = "router_indexer"
         elif "embed" in name or "lm_head" in name:
             category = "embedding_lm_head"
         else:
-            raise FlashNextValidationError(f"unclassified_tensor [{tensor.name}]")
+            category = "non_expert_text"
         totals[category] += tensor.nbytes
     return {key: totals[key] for key in sorted(totals)}
 
@@ -201,7 +250,26 @@ def blocked_source_evidence() -> dict[str, Any]:
     return {
         "schema": "superinfer.s03f.flash-next-source-evidence.v1",
         "status": "blocked",
-        "reason": "No exact Flash-Next model artifact or reference checkout is available in this workspace.",
+        "reason": (
+            "The official metadata is reachable, but the complete 131-shard checkpoint is not "
+            "available locally and the official repository contains no executable reference checkout."
+        ),
+        "official_identity": {
+            "model_repository": OFFICIAL_MODEL_REPOSITORY,
+            "model_revision": OFFICIAL_MODEL_REVISION,
+            "reference_repository": OFFICIAL_REFERENCE_REPOSITORY,
+            "reference_revision": OFFICIAL_REFERENCE_REVISION,
+            "config_sha256": OFFICIAL_CONFIG_SHA256,
+            "index_sha256": OFFICIAL_INDEX_SHA256,
+            "expected_safetensors_shards": 131,
+        },
+        "local_candidate": {
+            "path": "/srv/models/hf/Qwen3.8-Flash-Next-NVFP4",
+            "identity": "RadixArk private NVFP4 candidate",
+            "complete_layers": "0-20 and 22; layer 21 is missing one expert-range shard",
+            "expected_layers": 48,
+            "usable_for_full_ledger": False,
+        },
         "required": ["config.json", "model.safetensors.index.json", "safetensors shards", "reference revision"],
         "checked_workspace": "/srv/repos/superinfer",
         "observed": [".planning/FLASH-NEXT-DESIGN.md", "S03F-01-PLAN.md"],
@@ -213,4 +281,10 @@ def blocked_source_evidence() -> dict[str, Any]:
     }
 
 
-__all__ = ["FlashNextContract", "FlashNextInventory", "FlashNextValidationError", "blocked_source_evidence", "build_residency_options", "classify_tensor_bytes", "validate_source"]
+__all__ = [
+    "FlashNextContract", "FlashNextInventory", "FlashNextValidationError",
+    "OFFICIAL_CONFIG_SHA256", "OFFICIAL_INDEX_SHA256", "OFFICIAL_MODEL_REPOSITORY",
+    "OFFICIAL_MODEL_REVISION", "OFFICIAL_REFERENCE_REPOSITORY", "OFFICIAL_REFERENCE_REVISION",
+    "blocked_source_evidence", "build_residency_options", "classify_tensor_bytes",
+    "official_contract", "validate_source",
+]

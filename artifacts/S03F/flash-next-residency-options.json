@@ -1,7 +1,14 @@
 {
   "candidates": [],
   "full_expert_residency_feasible": null,
-  "reason": "Residency cannot be evaluated without exact packed tensor bytes and quality measurements for the pinned source.",
+  "evidence": {
+    "model_repository": "Qwen/Qwen3.8-Flash-Next",
+    "model_revision": "de4b8e4d43b917e7706784d8bb445c9af86a3540",
+    "reference_repository": "QwenLM/Qwen3.8-Flash-Next",
+    "reference_revision": "69885871a64393807d988b27b1b5e380e8f28526",
+    "local_candidate_is_partial": true
+  },
+  "reason": "Residency cannot be evaluated without complete packed tensor bytes and executable-reference quality measurements for the pinned source; no partial candidate is promoted.",
   "status": "blocked",
   "schema": "superinfer.s03f.flash-next-residency-options.v1",
   "quality_evidence": "not_available"

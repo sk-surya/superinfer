@@ -337,12 +337,14 @@ int main() {
       ir::semantic::TensorRole::kv_cache);
   const auto kv_output = role_builder.add_tensor(
       ir::semantic::TensorId{1}, {2, 4}, ir::lowered::LayoutKind::row_major,
-      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32);
+      base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32,
+      ir::semantic::TensorRole::kv_cache);
   const auto kv_scale = role_builder.add_tensor(
       ir::semantic::TensorId{2}, {2, 4}, ir::lowered::LayoutKind::row_major,
       base::MemorySpace::device, 16, ir::semantic::DType::f32, ir::semantic::DType::f32,
       ir::semantic::TensorRole::weight);
   assert(kv_tensor.has_value() && kv_output.has_value() && kv_scale.has_value());
+  assert(role_builder.add_state_slot("kv", kv_tensor.value(), kv_output.value()).has_value());
   assert(role_builder
              .add_kernel_requirement("rms_norm", 120,
                                      {kv_tensor.value(), kv_scale.value(), kv_output.value()})
@@ -353,6 +355,10 @@ int main() {
   assert(role_result.has_value());
   assert(role_result.value().memory.allocations.front().allocation_class ==
          compiler::AllocationClass::kv_state);
+  assert(role_result.value().memory.allocations.size() == 2);
+  assert(role_result.value().plan.buffers().size() == 2);
+  assert(role_result.value().plan.commands().front().buffers[0] ==
+         role_result.value().plan.commands().front().buffers[1]);
 
   RejectingProvider rejecting_provider;
   const auto provider_rejection = specializer.compile(make_fixture(), {target, 256, 64}, rejecting_provider);

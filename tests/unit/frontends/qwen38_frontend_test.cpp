@@ -134,6 +134,16 @@ int main() {
     if (operation.kind == ir::semantic::OperationKind::gated_grouped_query_attention) {
       assert(operation.attributes.attention_output_gate ==
              ir::semantic::AttentionOutputGate::sigmoid);
+      assert(module.value().tensors()[operation.inputs[1].value()].spec.shape.size() == 3);
+      assert(module.value().tensors()[operation.inputs[1].value()].spec.shape[0].value ==
+             frontends::qwen38::kMaxContext);
+      assert(module.value().tensors()[operation.inputs[1].value()].spec.shape[1].value == 4);
+      assert(module.value().tensors()[operation.inputs[1].value()].spec.shape[2].value == 256);
+      assert(module.value().tensors()[operation.inputs[2].value()].spec.shape.size() == 3);
+      assert(module.value().tensors()[operation.inputs[2].value()].spec.shape[0].value ==
+             frontends::qwen38::kMaxContext);
+      assert(module.value().tensors()[operation.inputs[2].value()].spec.shape[1].value == 4);
+      assert(module.value().tensors()[operation.inputs[2].value()].spec.shape[2].value == 256);
     }
     if (operation.kind == ir::semantic::OperationKind::gated_dense_ffn) {
       assert(operation.inputs.size() == 4);

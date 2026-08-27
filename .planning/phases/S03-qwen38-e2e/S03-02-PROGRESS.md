@@ -174,6 +174,10 @@ updated: 2026-08-26
 - Lowered IR now retains 128 state slots with explicit read/write/commit transitions and carries
   semantic decode entry bindings. A state transition therefore survives into the representation
   consumed by physical planning instead of being reconstructed from command position.
+- Full-attention KV state now carries the pinned `[max_context, kv_heads, head_dim]` shape
+  (`[262144, 4, 256]`) for both key and value slots. Physical compilation aliases each state
+  slot's input/output IR values to one validated allocation, preserving in-place continuation
+  without double-reserving the cache. A specializer regression covers the shared buffer contract.
 - Full-attention semantics explicitly declare Qwen's sigmoid output gate; the frontend never relies
   on an unusual q-projection shape to infer model meaning. The frontend now emits a dedicated
   gated-grouped-attention semantic kind, lowered only to the generic attention capability; the

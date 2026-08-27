@@ -51,9 +51,30 @@ class Specializer final {
             ? options.target.device_memory_bytes
             : std::min(options.target.device_memory_bytes, options.max_device_memory_bytes);
     compiler::MemoryPlanner planner{memory_budget, 0};
+    const std::uint64_t no_alias = std::numeric_limits<std::uint64_t>::max();
+    std::vector<std::uint64_t> state_alias(lowered.tensors().size(), no_alias);
+    for (const ir::lowered::StateSlot& slot : lowered.state_slots()) {
+      if (slot.input.value() >= lowered.tensors().size() ||
+          slot.output.value() >= lowered.tensors().size()) {
+        return base::Status::out_of_range("state slot tensor is undefined during physical planning");
+      }
+      const ir::lowered::Tensor& input = lowered.tensors()[slot.input.value()];
+      const ir::lowered::Tensor& output = lowered.tensors()[slot.output.value()];
+      if (input.physical_shape != output.physical_shape || input.storage_dtype != output.storage_dtype ||
+          input.layout != output.layout || input.memory_space != output.memory_space) {
+        return base::Status::failed_precondition(
+            "state slot input and output tensors have incompatible physical contracts");
+      }
+      if (state_alias[slot.output.value()] != no_alias &&
+          state_alias[slot.output.value()] != slot.input.value()) {
+        return base::Status::failed_precondition("state output has multiple physical aliases");
+      }
+      state_alias[slot.output.value()] = slot.input.value();
+    }
     std::vector<compiler::AllocationRequest> requests;
     requests.reserve(lowered.tensors().size());
     for (const ir::lowered::Tensor& tensor : lowered.tensors()) {
+      if (state_alias[tensor.id.value()] != no_alias) continue;
       const auto bytes = tensor_bytes(tensor);
       if (!bytes.has_value()) {
         base::Status error = bytes.error();
@@ -89,6 +110,14 @@ class Specializer final {
         return error.with_context("physical buffer");
       }
       buffer_for_tensor[allocation.id] = buffer.value();
+    }
+    for (const ir::lowered::StateSlot& slot : lowered.state_slots()) {
+      if (buffer_for_tensor[slot.input.value()].value() == no_alias) {
+        return base::Status::failed_precondition("state input has no physical allocation");
+      }
+      if (buffer_for_tensor[slot.output.value()].value() == no_alias) {
+        buffer_for_tensor[slot.output.value()] = buffer_for_tensor[slot.input.value()];
+      }
     }
 
     for (const ir::lowered::EntryPoint& entry : lowered.entry_points()) {

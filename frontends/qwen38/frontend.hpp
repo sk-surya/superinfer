@@ -16,6 +16,7 @@ inline constexpr std::string_view kSourceIdentity =
     "+gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@0cc27958cefbbe231782ec8511de8c4eb5233348"
     "+LMHead4@62abd1d060bd801005f47754f01619054cc248d3417699ecea414c7ede1b3a4a";
 inline constexpr std::uint64_t kTensorCount = 2402;
+inline constexpr std::uint32_t kMaxContext = 262144;
 inline constexpr std::string_view kTensorInventorySha256 =
     "7342659a53eecbb04c47b5de89d957ca47cb021970cb252575b8b9161d0a84fc";
 
@@ -129,7 +130,8 @@ class Frontend final : public compiler::ModelFrontend {
       const TensorSpec convolution_state_spec{{Dimension::static_value(4), Dimension::static_value(10240)},
                                               DType::bf16, QuantizationIntent::none,
                                               TensorRole::decode_state};
-      const TensorSpec full_key_state_spec{{Dimension::static_value(4), Dimension::static_value(256)},
+      const TensorSpec full_key_state_spec{{Dimension::static_value(kMaxContext),
+                                            Dimension::static_value(4), Dimension::static_value(256)},
                                            DType::bf16, QuantizationIntent::none,
                                            TensorRole::kv_cache};
       const auto state_a_in = builder.add_tensor(

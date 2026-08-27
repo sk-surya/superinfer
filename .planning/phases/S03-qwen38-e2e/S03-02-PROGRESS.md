@@ -214,6 +214,8 @@ updated: 2026-08-26
   derivation, recurrent state update, repeated-head RMSNorm, SiLU gating, and output projection.
   The resulting graph compiles to a bounded Physical Plan in the synthetic frontend fixture;
   artifact-backed layer numerical evidence remains open.
+- After these changes, the full validation gate passes again: Python tests, CPU CTest 22/22,
+  CUDA CTest 24/24 on RTX 5090, sanitizer CTest, install-consumer, and wheel validation.
 
 ## Remaining S03-02 work
 

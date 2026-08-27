@@ -216,6 +216,34 @@ class Specializer final {
                         requirement.attributes.attention_position,
                         static_cast<std::uint32_t>(key_cache.physical_shape[0])};
       }
+      if (requirement.operation == "gated_delta_attention") {
+        if (requirement.attributes.num_kv_heads == 0 || requirement.attributes.head_dimension == 0 ||
+            requirement.attributes.value_head_count == 0 ||
+            requirement.attributes.value_head_dimension == 0) {
+          return base::Status::invalid_argument("gated delta requirement lacks authored dimensions");
+        }
+        attention = {0, requirement.attributes.num_kv_heads, requirement.attributes.head_dimension,
+                     1, requirement.attributes.value_head_count,
+                     requirement.attributes.value_head_dimension};
+      }
+      ir::physical::ConvolutionDimensions convolution{};
+      if (requirement.operation == "causal_conv_silu") {
+        if (requirement.attributes.convolution_kernel_dimension == 0 || requirement.operands.empty()) {
+          return base::Status::invalid_argument("causal convolution lacks authored dimensions");
+        }
+        std::uint64_t channels = 1;
+        for (const std::uint64_t dimension :
+             lowered.tensors()[requirement.operands.front().value()].physical_shape) {
+          const auto product = base::checked_mul(channels, dimension);
+          if (!product.has_value() || product.value() == 0 ||
+              product.value() > std::numeric_limits<std::uint32_t>::max()) {
+            return base::Status::invalid_argument("causal convolution input has invalid channel count");
+          }
+          channels = product.value();
+        }
+        convolution = {static_cast<std::uint32_t>(channels),
+                       requirement.attributes.convolution_kernel_dimension};
+      }
       if (requirement.operation == "rope") {
         if (requirement.attributes.num_heads == 0 || requirement.attributes.head_dimension == 0 ||
             requirement.attributes.rope_dimension == 0 ||
@@ -237,7 +265,7 @@ class Specializer final {
       const auto command = plan_builder.add_command(
           candidate.value().id, std::move(operands), dependencies, 0, 0,
           candidate.value().workspace_bytes, epsilon, 1.0F, attention, add_one_to_scale, {}, rope,
-          cache_append);
+          cache_append, convolution);
       if (!command.has_value()) {
         base::Status error = command.error();
         return error.with_context("physical command");

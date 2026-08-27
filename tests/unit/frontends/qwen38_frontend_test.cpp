@@ -163,6 +163,10 @@ int main() {
   std::size_t lowered_rope = 0;
   std::size_t lowered_cache_appends = 0;
   std::size_t lowered_cached_attention = 0;
+  std::size_t lowered_gated_delta = 0;
+  std::size_t lowered_delta_parameters = 0;
+  std::size_t lowered_convolution = 0;
+  std::size_t lowered_linear = 0;
   for (const auto& requirement : lowered.value().kernel_requirements()) {
     lowered_casts += requirement.operation == "cast";
     if (requirement.operation == "nvfp4_linear") {
@@ -175,15 +179,23 @@ int main() {
     lowered_rope += requirement.operation == "rope";
     lowered_cache_appends += requirement.operation == "cache_append";
     lowered_cached_attention += requirement.operation == "attention_bf16_cache";
+    lowered_gated_delta += requirement.operation == "gated_delta_attention";
+    lowered_delta_parameters += requirement.operation == "gated_delta_parameters";
+    lowered_convolution += requirement.operation == "causal_conv_silu";
+    lowered_linear += requirement.operation == "linear";
   }
   assert(lowered_casts > 0);
-  assert(lowered_nvfp4_projections == 257);
-  assert(lowered_silu_mul == 64);
+  assert(lowered_nvfp4_projections == 401);
+  assert(lowered_silu_mul == 112);
   assert(lowered_sigmoid_mul == 16);
-  assert(lowered_splits == 16);
+  assert(lowered_splits == 112);
   assert(lowered_rope == 32);
   assert(lowered_cache_appends == 16);
   assert(lowered_cached_attention == 16);
+  assert(lowered_gated_delta == 48);
+  assert(lowered_delta_parameters == 48);
+  assert(lowered_convolution == 48);
+  assert(lowered_linear == 96);
   bool saw_lm_head_block_scale = false;
   bool saw_lm_head_tensor_scale = false;
   for (const auto& tensor : lowered.value().tensors()) {
@@ -198,11 +210,6 @@ int main() {
   assert(lowered.value().entry_points().size() == 1);
   assert(lowered.value().entry_points().front().inputs.size() == 1);
   assert(lowered.value().entry_points().front().outputs.size() == 1);
-  assert(lowered.value().kernel_requirements()[1].operation == "cast");
-  assert(lowered.value().kernel_requirements()[2].operation == "cast");
-  assert(lowered.value().kernel_requirements()[3].operation == "rms_norm");
-  assert(lowered.value().kernel_requirements()[4].operation == "cast");
-  assert(lowered.value().kernel_requirements()[5].operation == "gated_delta_attention");
   std::size_t lowered_kv = 0;
   std::size_t lowered_decode_state = 0;
   for (const auto& tensor : lowered.value().tensors()) {
@@ -221,12 +228,10 @@ int main() {
   sm120::BaselineProvider provider;
   const auto physical = sm120::Specializer{}.compile(
       lowered.value(),
-      {compiler::TargetProfile::offline_sm120a(32ULL << 30U, "baseline-v1"), 0, 2048}, provider);
-  assert(!physical.has_value());
-  assert(physical.error().code() == base::StatusCode::unsupported);
-  assert(!physical.error().context().empty());
-  assert(physical.error().context().back() == "gated_delta_attention");
-  assert(physical.error().message().find("Qwen") == std::string::npos);
+      {compiler::TargetProfile::offline_sm120a(32ULL << 30U, "baseline-v1"), 0, 4096}, provider);
+  assert(physical.has_value());
+  assert(physical.value().plan.verify().ok());
+  assert(physical.value().plan.commands().size() == lowered.value().kernel_requirements().size());
 
   const auto rejected_inventory = frontend.validate({std::string{frontends::qwen38::kSourceIdentity}, 1,
                                                      std::string{frontends::qwen38::kTensorInventorySha256}, {}});

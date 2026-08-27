@@ -198,17 +198,30 @@ updated: 2026-08-26
 - CPU CTest passes 22/22, CUDA CTest passes 24/24 including the RTX 5090 ownership and plan-executor
   tests, and the complete `tools/validate.py --full` gate passes Python, build, install-consumer,
   sanitizer, and wheel stages.
+- Generic FP32 split, FP32-to-BF16 KV append, and BF16-cache grouped attention primitives are now
+  explicit physical contracts (IDs 21-23). RTX 5090 fixtures cover packed cache placement and
+  causal active-window attention; the split primitive prevents Qwen's q/gate projection from being
+  inferred from a weight shape.
+- RMSNorm now applies its scale vector independently to every authored row, allowing Qwen's
+  per-head q/k and Gated Delta output norms to use a 256/128-element scale over a flattened
+  multi-head activation. A grouped BF16-scale differential fixture passes on RTX 5090.
+- Qwen gated full-attention nodes lower into four NVFP4 projections, explicit q/gate split, q/k
+  normalization, partial RoPE, BF16 KV append, cached GQA, sigmoid output gating, and output
+  projection. Physical specialization carries authored position and cache-capacity metadata.
+- Generic Gated Delta preparation (ID 24) and causal depthwise SiLU convolution (ID 25) are now
+  covered by RTX 5090 differentials, including BF16 convolution-state update. Qwen GDN lowering
+  composes NVFP4 QKV/Z/output projections, auxiliary-weight casts, convolution, parameter
+  derivation, recurrent state update, repeated-head RMSNorm, SiLU gating, and output projection.
+  The resulting graph compiles to a bounded Physical Plan in the synthetic frontend fixture;
+  artifact-backed layer numerical evidence remains open.
 
 ## Remaining S03-02 work
 
-- Expand Qwen attention nodes into generic projection, q/k normalization, RoPE, cache-append, and
-  output-projection commands; the current generic attention and recurrent commands intentionally
-  reject the richer 12-operand frontend nodes.
-- Carry the validated NVFP4 sidecar bindings through target lowering into every quantized projection
-  command, including artifact payload-to-buffer materialization and LM/FFN numerical differential
-  fixtures. The LM-head lowering contract is now explicit; full graph materialization remains open.
+- Carry the validated NVFP4 sidecar bindings through target lowering into artifact-backed physical
+  buffers for every quantized projection, including LM/FFN and attention/GDN numerical differential
+  fixtures. The lowered graph and synthetic Physical Plan are now complete; payload population remains open.
 - Add artifact-backed buffer population and compare the composed quantized FFN against the pinned
   Transformers/reference implementation before promoting the lowered FFN to layer evidence.
-- Add the Qwen linear-attention convolution/gate projections and recurrent state transitions, then
-  compile a non-placeholder full-graph Physical Plan.
+- Compare one complete full-attention layer and one two-segment Gated Delta layer against the
+  pinned Transformers implementation using artifact weights and retained intermediate tensors.
 - Complete conversion/runtime staged differential evidence before S03-03 acceptance.

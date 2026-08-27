@@ -1,5 +1,6 @@
 #include <superinfer/artifact/sinf.hpp>
 #include <superinfer/artifact/host_storage_policy.hpp>
+#include <superinfer/artifact/plan_binding.hpp>
 #include <superinfer/artifact/tensor_table.hpp>
 
 #include <cassert>
@@ -66,6 +67,37 @@ int main(int argc, char** argv) {
   assert(table.value().front().name == "layer.weight");
   assert(table.value().front().logical_shape == std::vector<std::uint64_t>({4, 16}));
   assert(table.value().front().payload_end == 32);
+
+  ir::physical::PlanBuilder binding_builder;
+  binding_builder.set_resource_bounds({256, 0, 1});
+  const auto binding_buffer = binding_builder.add_buffer(
+      0, 24, 256,
+      {ir::physical::PhysicalDType::u8, {4, 16}, ir::physical::PhysicalLayout::row_major,
+       256, ir::physical::StorageEncoding::nvfp4_packed, "layer.weight"});
+  assert(binding_buffer.has_value());
+  assert(binding_builder.add_entry_point("binding", {binding_buffer.value()},
+                                         {binding_buffer.value()}).ok());
+  const auto binding_plan = std::move(binding_builder).finalize({120, "fixture"});
+  assert(binding_plan.has_value());
+  const auto resolved = artifact::ArtifactPlanBinding::resolve(
+      binding_plan.value(), typed_artifact.value(), table.value());
+  assert(resolved.has_value() && resolved.value().size() == 1);
+  assert(resolved.value().front().buffer == binding_buffer.value());
+  assert(resolved.value().front().payload.size() == 24);
+  assert(std::to_integer<unsigned char>(resolved.value().front().payload[0]) == 0);
+
+  ir::physical::PlanBuilder mismatch_builder;
+  mismatch_builder.set_resource_bounds({256, 0, 1});
+  const auto mismatch_buffer = mismatch_builder.add_buffer(
+      0, 24, 256,
+      {ir::physical::PhysicalDType::f32, {4, 16}, ir::physical::PhysicalLayout::row_major,
+       256, ir::physical::StorageEncoding::nvfp4_packed, "layer.weight"});
+  assert(mismatch_buffer.has_value());
+  const auto mismatch_plan = std::move(mismatch_builder).finalize({120, "fixture"});
+  assert(mismatch_plan.has_value());
+  assert(!artifact::ArtifactPlanBinding::resolve(
+              mismatch_plan.value(), typed_artifact.value(), table.value())
+              .has_value());
 
   const auto malformed_table = artifact::parse_tensor_table(
       {reinterpret_cast<const std::byte*>("[{\"name\":1}]"), 13});

@@ -165,6 +165,11 @@ updated: 2026-08-26
   emits the generic `nvfp4_linear` capability. Provider validation, CUDA launch, and the RTX 5090
   fixture now cover the five-buffer contract; this is projection/lowering evidence, not yet a
   complete artifact-to-layer execution proof.
+- Quantized gated FFNs now lower compositionally into two NVFP4 projections, an explicit generic
+  `silu_mul`, and a third NVFP4 projection. The frontend fixture validates 64 such activation
+  nodes and 193 total quantized projections including LM head; provider ID 18 and its RTX 5090
+  CUDA differential fixture cover the activation primitive. This remains lowered-graph evidence;
+  artifact reads and full FFN numerical differential are still open.
   NVFP4 packed views retain their explicit packed encoding.
 - Lowered IR now retains 128 state slots with explicit read/write/commit transitions and carries
   semantic decode entry bindings. A state transition therefore survives into the representation
@@ -190,6 +195,8 @@ updated: 2026-08-26
 - Carry the validated NVFP4 sidecar bindings through target lowering into every quantized projection
   command, including artifact payload-to-buffer materialization and LM/FFN numerical differential
   fixtures. The LM-head lowering contract is now explicit; full graph materialization remains open.
+- Add artifact-backed buffer population and compare the composed quantized FFN against the pinned
+  Transformers/reference implementation before promoting the lowered FFN to layer evidence.
 - Add the Qwen linear-attention convolution/gate projections and recurrent state transitions, then
   compile a non-placeholder full-graph Physical Plan.
 - Complete conversion/runtime staged differential evidence before S03-03 acceptance.

@@ -69,6 +69,24 @@ superinfer::ir::physical::Plan make_numeric_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_silu_mul_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({48, 0, 1});
+  assert(builder.add_buffer(0, 16, 16,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {4})).has_value());
+  assert(builder.add_buffer(16, 16, 16,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {4})).has_value());
+  assert(builder.add_buffer(32, 16, 16,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {4})).has_value());
+  assert(builder.add_command(base::KernelId{18},
+                             {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                              ir::physical::BufferId{2}}, {}, 0, 0, 0).has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 superinfer::ir::physical::Plan make_embedding_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
@@ -319,6 +337,29 @@ int main() {
   assert(session.value().lifecycle_trace().device_synchronizations == 1);
   assert(session.value().trace().commands_executed == 6);
   assert(session.value().trace().launches == 6);
+
+  const auto silu_mul_plan = make_silu_mul_plan();
+  auto silu_mul = sm120::cuda_runtime::CudaPlanSession::create(
+      silu_mul_plan, 120, "baseline-v1");
+  assert(silu_mul.has_value());
+  const std::array<float, 4> silu_gate{0.0F, 1.0F, -1.0F, 2.0F};
+  const std::array<float, 4> silu_value{2.0F, 2.0F, 2.0F, 2.0F};
+  assert(silu_mul.value().copy_to_device(
+      ir::physical::BufferId{0}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(silu_gate.data()), sizeof(silu_gate))).ok());
+  assert(silu_mul.value().copy_to_device(
+      ir::physical::BufferId{1}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(silu_value.data()), sizeof(silu_value))).ok());
+  assert(silu_mul.value().execute().ok());
+  assert(silu_mul.value().synchronize_for_test().ok());
+  std::array<float, 4> silu_output{};
+  assert(silu_mul.value().copy_from_device(
+      ir::physical::BufferId{2}, base::ByteView(
+          reinterpret_cast<std::byte*>(silu_output.data()), sizeof(silu_output))).ok());
+  for (std::size_t index = 0; index < silu_output.size(); ++index) {
+    const float expected = silu_gate[index] / (1.0F + std::exp(-silu_gate[index])) * 2.0F;
+    assert(std::abs(silu_output[index] - expected) < 1.0e-5F);
+  }
 
   const auto rejected_target = sm120::cuda_runtime::CudaPlanSession::create(plan, 89, "baseline-v1");
   assert(!rejected_target.has_value());

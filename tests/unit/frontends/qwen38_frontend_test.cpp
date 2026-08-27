@@ -24,9 +24,9 @@ std::vector<superinfer::compiler::SourceTensorRecord> source_tensors() {
     const std::string prefix = "model.language_model.layers." + std::to_string(layer) + ".";
     add(prefix + "input_layernorm.weight", "normalization");
     add(prefix + "post_attention_layernorm.weight", "normalization");
-    add(prefix + "mlp.gate_proj.weight", "feed_forward", "U8", {8, 8});
-    add(prefix + "mlp.up_proj.weight", "feed_forward", "U8", {8, 8});
-    add(prefix + "mlp.down_proj.weight", "feed_forward", "U8", {8, 8});
+    add(prefix + "mlp.gate_proj.weight", "feed_forward", "U8", {16, 2560});
+    add(prefix + "mlp.up_proj.weight", "feed_forward", "U8", {16, 2560});
+    add(prefix + "mlp.down_proj.weight", "feed_forward", "U8", {2560, 8});
     if (layer % 4U == 3U) {
       add(prefix + "self_attn.q_proj.weight", "attention", "U8", {8, 8});
       add(prefix + "self_attn.k_proj.weight", "attention", "U8", {8, 8});
@@ -147,15 +147,18 @@ int main() {
   assert(lowered.value().kernel_requirements().size() > module.value().operations().size());
   std::size_t lowered_casts = 0;
   std::size_t lowered_nvfp4_projections = 0;
+  std::size_t lowered_silu_mul = 0;
   for (const auto& requirement : lowered.value().kernel_requirements()) {
     lowered_casts += requirement.operation == "cast";
     if (requirement.operation == "nvfp4_linear") {
       ++lowered_nvfp4_projections;
       assert(requirement.operands.size() == 5);
     }
+    lowered_silu_mul += requirement.operation == "silu_mul";
   }
   assert(lowered_casts > 0);
-  assert(lowered_nvfp4_projections == 1);
+  assert(lowered_nvfp4_projections == 193);
+  assert(lowered_silu_mul == 64);
   bool saw_lm_head_block_scale = false;
   bool saw_lm_head_tensor_scale = false;
   for (const auto& tensor : lowered.value().tensors()) {

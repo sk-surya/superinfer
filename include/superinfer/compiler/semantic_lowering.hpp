@@ -2,8 +2,9 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <utility>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <superinfer/base/memory_space.hpp>
@@ -88,6 +89,16 @@ class SemanticLowering final {
       }
       return builder.add_kernel_requirement("cast", options.target_capability,
                                             {source, destination});
+    };
+
+    const auto add_named_f32_scratch = [&](ir::semantic::TensorId origin,
+                                           std::vector<std::uint64_t> shape,
+                                           std::string name)
+        -> base::Result<ir::lowered::LoweredTensorId> {
+      return builder.add_tensor(origin, std::move(shape), ir::lowered::LayoutKind::row_major,
+                                base::MemorySpace::device, options.required_alignment,
+                                ir::semantic::DType::f32, ir::semantic::DType::f32,
+                                ir::semantic::TensorRole::activation, std::move(name));
     };
 
     const auto add_nvfp4_sidecars = [&](ir::semantic::TensorId weight)
@@ -183,6 +194,81 @@ class SemanticLowering final {
 
       std::string lowered_operation{capability};
       std::vector<ir::lowered::LoweredTensorId> operands;
+      const bool quantized_ffn =
+          operation.kind == ir::semantic::OperationKind::gated_dense_ffn &&
+          operation.inputs.size() == 4 &&
+          semantic.tensors()[operation.inputs[1].value()].spec.dtype == ir::semantic::DType::int4 &&
+          semantic.tensors()[operation.inputs[2].value()].spec.dtype == ir::semantic::DType::int4 &&
+          semantic.tensors()[operation.inputs[3].value()].spec.dtype == ir::semantic::DType::int4;
+      if (quantized_ffn) {
+        const auto& gate_weight = semantic.tensors()[operation.inputs[1].value()];
+        const auto& up_weight = semantic.tensors()[operation.inputs[2].value()];
+        const auto& down_weight = semantic.tensors()[operation.inputs[3].value()];
+        if (gate_weight.spec.shape.size() != 2 || up_weight.spec.shape.size() != 2 ||
+            down_weight.spec.shape.size() != 2 || gate_weight.spec.shape[0].is_symbolic ||
+            gate_weight.spec.shape[1].is_symbolic || up_weight.spec.shape[0].is_symbolic ||
+            up_weight.spec.shape[1].is_symbolic || down_weight.spec.shape[0].is_symbolic ||
+            down_weight.spec.shape[1].is_symbolic ||
+            up_weight.spec.shape[0].value != gate_weight.spec.shape[0].value ||
+            up_weight.spec.shape[1].value != gate_weight.spec.shape[1].value ||
+            down_weight.spec.shape[1].value != gate_weight.spec.shape[0].value ||
+            gate_weight.spec.shape[1].value % 16U != 0 ||
+            down_weight.spec.shape[1].value % 16U != 0) {
+          return base::Status::invalid_argument(
+              "quantized gated FFN projection shapes are incompatible");
+        }
+        const std::uint64_t batch = semantic.tensors()[operation.inputs[0].value()].spec.shape[0].value;
+        const std::uint64_t intermediate = gate_weight.spec.shape[0].value;
+        const auto gate_projection = add_named_f32_scratch(
+            operation.outputs.front(), {batch, intermediate},
+            semantic.tensors()[operation.inputs[1].value()].name + "$projection");
+        const auto up_projection = add_named_f32_scratch(
+            operation.outputs.front(), {batch, intermediate},
+            semantic.tensors()[operation.inputs[2].value()].name + "$projection");
+        const auto gated_projection = add_named_f32_scratch(
+            operation.outputs.front(), {batch, intermediate},
+            semantic.tensors()[operation.inputs[3].value()].name + "$gated");
+        if (!gate_projection.has_value() || !up_projection.has_value() ||
+            !gated_projection.has_value()) {
+          return base::Status::resource_exhausted("quantized FFN scratch lowering failed");
+        }
+        const auto gate_sidecars = add_nvfp4_sidecars(operation.inputs[1]);
+        const auto up_sidecars = add_nvfp4_sidecars(operation.inputs[2]);
+        const auto down_sidecars = add_nvfp4_sidecars(operation.inputs[3]);
+        if (!gate_sidecars.has_value() || !up_sidecars.has_value() || !down_sidecars.has_value()) {
+          return base::Status::invalid_argument("quantized FFN sidecar lowering failed");
+        }
+        const auto emit_projection = [&](ir::semantic::TensorId weight,
+                                         const std::pair<ir::lowered::LoweredTensorId,
+                                                         ir::lowered::LoweredTensorId>& sidecars,
+                                         ir::lowered::LoweredTensorId destination) -> base::Status {
+          return builder.add_kernel_requirement(
+              "nvfp4_linear", options.target_capability,
+              {inputs[0], lowered_tensors[weight.value()], sidecars.first, sidecars.second,
+               destination});
+        };
+        base::Status gate_status = emit_projection(operation.inputs[1], gate_sidecars.value(),
+                                                   gate_projection.value());
+        base::Status up_status = emit_projection(operation.inputs[2], up_sidecars.value(),
+                                                 up_projection.value());
+        if (!gate_status.ok() || !up_status.ok()) {
+          return (!gate_status.ok() ? gate_status : up_status).with_context(
+              "quantized FFN projection lowering");
+        }
+        base::Status activation_status = builder.add_kernel_requirement(
+            "silu_mul", options.target_capability,
+            {gate_projection.value(), up_projection.value(), gated_projection.value()});
+        if (!activation_status.ok()) return activation_status.with_context("quantized FFN activation lowering");
+        base::Status down_status = emit_projection(operation.inputs[3], down_sidecars.value(),
+                                                   outputs.front());
+        if (!down_status.ok()) return down_status.with_context("quantized FFN down projection lowering");
+        if (cast_output) {
+          base::Status cast = emit_cast(ir::semantic::DType::f32, ir::semantic::DType::bf16,
+                                        output_target, lowered_tensors[operation.outputs.front().value()]);
+          if (!cast.ok()) return cast.with_context("activation output lowering");
+        }
+        continue;
+      }
       if (operation.kind == ir::semantic::OperationKind::lm_head && operation.inputs.size() == 2 &&
           semantic.tensors()[operation.inputs[1].value()].spec.dtype == ir::semantic::DType::int4) {
         const auto sidecars = add_nvfp4_sidecars(operation.inputs[1]);

@@ -232,6 +232,34 @@ int main() {
   assert(physical.has_value());
   assert(physical.value().plan.verify().ok());
   assert(physical.value().plan.commands().size() == lowered.value().kernel_requirements().size());
+  assert(physical.value().plan.commands().size() > 2000);
+  std::size_t cached_attention_commands = 0;
+  std::size_t recurrent_commands = 0;
+  for (const auto& command : physical.value().plan.commands()) {
+    cached_attention_commands += command.kernel.value() == 23;
+    if (command.kernel.value() == 15) {
+      ++recurrent_commands;
+      assert(command.attention.key_value_heads == 16);
+      assert(command.attention.value_heads == 48);
+      assert(command.attention.head_dimension == 128);
+      assert(command.attention.value_dimension == 128);
+      assert(command.attention.positions == 1);
+    }
+    if (command.kernel.value() == 23) {
+      assert(command.attention.query_heads == 24);
+      assert(command.attention.key_value_heads == 4);
+      assert(command.attention.head_dimension == 256);
+      assert(command.attention.positions == 1);
+    }
+    if (command.kernel.value() == 22) {
+      assert(command.cache_append.heads == 4);
+      assert(command.cache_append.head_dimension == 256);
+      assert(command.cache_append.position == 0);
+      assert(command.cache_append.capacity == 262144);
+    }
+  }
+  assert(cached_attention_commands == 16);
+  assert(recurrent_commands == 48);
 
   const auto rejected_inventory = frontend.validate({std::string{frontends::qwen38::kSourceIdentity}, 1,
                                                      std::string{frontends::qwen38::kTensorInventorySha256}, {}});

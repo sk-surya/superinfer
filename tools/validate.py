@@ -67,10 +67,13 @@ def main() -> int:
         "ctest", ("ctest", "--preset", "cpu-dev"), cwd=root, evidence=evidence, env=environment
     )
 
-    install_dir = Path("/tmp/superinfer-s00-validation-install")
+    validation_tmp = Path(
+        os.environ.get("SUPERINFER_VALIDATION_TMP", "/tmp/superinfer-validation")
+    )
+    install_dir = validation_tmp / "install"
     run_step("cmake-install", ("cmake", "--install", str(build_dir), "--prefix", str(install_dir)),
              cwd=root, evidence=evidence, env=environment)
-    consumer_binary = Path("/tmp/superinfer-s00-consumer")
+    consumer_binary = validation_tmp / "consumer"
     run_step(
         "install-consumer",
         (
@@ -98,7 +101,7 @@ def main() -> int:
             "ctest-sanitize", ("ctest", "--preset", "cpu-sanitize"), cwd=root, evidence=evidence,
             env=environment
         )
-        wheel_dir = Path("/tmp/superinfer-s00-wheel")
+        wheel_dir = validation_tmp / "wheel"
         wheel_dir.mkdir(parents=True, exist_ok=True)
         wheel_command = (
             "import setuptools.build_meta as backend; "

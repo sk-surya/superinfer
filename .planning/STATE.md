@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: S03
 status: autonomous_execution
-last_updated: "2026-08-27T02:00:00Z"
+last_updated: "2026-08-27T06:10:00Z"
 progress:
   total_phases: 10
   completed_phases: 3
@@ -41,7 +41,7 @@ s03f_01_status: blocked_missing_pinned_flash_next_source_and_reference_evidence
 
 ## Current Focus
 
-S03 remains the primary implementation lane. Quantized LM/FFN/attention/GDN projection lowering, explicit tensor-scale bindings, state-buffer aliasing, per-head RMSNorm, sigmoid gating, partial RoPE, BF16 KV append, cached GQA, Gated Delta parameter derivation, and causal convolution are covered by focused CPU/CUDA evidence. Real `.sinf` artifacts now drive a complete layer-3 full-attention path and a complete layer-0 Gated-DeltaNet path across two execution segments on GPU 0, both matching independent Transformers-based references within recorded contracts. S03-02 now also compiles and binds the complete 64-layer graph with liveness-aware physical ranges; the immediate boundary is S03-03 full token execution and logits differential.
+S03 remains the primary implementation lane. Quantized LM/FFN/attention/GDN projection lowering, explicit tensor-scale bindings, state-buffer aliasing, per-head RMSNorm, sigmoid gating, partial RoPE, BF16 KV append, cached GQA, Gated Delta parameter derivation, and causal convolution are covered by focused CPU/CUDA evidence. Real `.sinf` artifacts now drive a complete layer-3 full-attention path and a complete layer-0 Gated-DeltaNet path across two execution segments on GPU 0, both matching independent Transformers-based references within recorded contracts. S03-02 also compiles and binds the complete 64-layer graph with liveness-aware physical ranges. S03-03 now proves two-token greedy continuation and fresh-session determinism; broader prompt/prefill corpus execution and final acceptance packaging remain open.
 
 The approved S03F amendment adds Flash-Next after S03 and before S04. **Only S03F-01 may begin before S03 closes**, and it is research-only: pin reference/model revisions, inventory exact packed tensors, produce a capacity ledger, and evaluate quantization/residency recipes. S03F-01 must not modify Physical Plan, MemoryPlanner, runtime or kernels.
 
@@ -66,7 +66,7 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
 
 ## Next Commands
 
-**Primary lane:** execute `.planning/phases/S03-qwen38-e2e/S03-03-PLAN.md` for real prefill/decode/logits differential.
+**Primary lane:** continue `.planning/phases/S03-qwen38-e2e/S03-03-PLAN.md` for broader prefill/decode corpus and final acceptance report.
 
 **Parallel research lane:** execute `.planning/phases/S03F-flash-next/S03F-01-PLAN.md` only. Do not begin S03F-02 runtime changes until S03 is complete.
 

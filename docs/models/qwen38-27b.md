@@ -67,12 +67,12 @@ PY
 PYTHONPATH=python python3 -m superinfer inspect build/evidence/qwen38-payload-v1-final-a.sinf --json
 ```
 
-The final current-recipe checked local artifact is 18,766,778,520 bytes with SHA-256
-`a8d4b2b398cc3458349cd6daee09a6f8e3776bc729b893291d30f28f1fba1573`; this regeneration includes
-401 deterministic NVFP4 sidecar bindings in the manifest. Large-artifact inspection is
+The checked acceptance artifact is 18,766,674,736 bytes with SHA-256
+`e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5`; it includes the
+deterministic NVFP4 sidecar bindings in the manifest. Large-artifact inspection is
 section-streamed and uses bounded memory.
 Its manifest includes the validated NVFP4/FP8 quantization contract and reports layer-level
-physical differential evidence below; full-model token generation remains pending.
+physical differential evidence below.
 
 ## Layer differential checkpoints
 
@@ -84,4 +84,6 @@ The current branch has real-artifact CUDA evidence for both mixed attention fami
 
 These are layer correctness checkpoints, not full-model or token-generation acceptance. The
 fixtures intentionally retain explicit command boundaries and use GPU 0 only; full Qwen prefill,
-logits, and greedy continuation remain S03-03 work.
+logits, and greedy continuation are captured by the S03-03 two-token artifact evidence. The
+current frontend contract is still a one-token physical graph with a test-only continuation replay;
+full prompt prefill and broader corpus execution remain open work.

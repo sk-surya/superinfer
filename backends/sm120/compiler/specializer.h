@@ -176,6 +176,7 @@ class Specializer final {
       ir::physical::AttentionDimensions attention{};
       ir::physical::RopeDimensions rope{};
       ir::physical::CacheAppendDimensions cache_append{};
+      ir::physical::SplitDimensions split{};
       if (requirement.operation == "attention" ||
           requirement.operation == "attention_bf16_cache") {
         if (requirement.operands.size() < 4 || requirement.attributes.num_heads == 0 ||
@@ -253,6 +254,27 @@ class Specializer final {
         rope = {requirement.attributes.num_heads, requirement.attributes.head_dimension,
                 requirement.attributes.rope_dimension, requirement.attributes.rope_position};
       }
+      if (requirement.operation == "split_last") {
+        if (requirement.operands.size() != 3 || requirement.attributes.num_heads == 0 ||
+            requirement.attributes.head_dimension == 0) {
+          return base::Status::invalid_argument("last-dimension split lacks authored dimensions");
+        }
+        const auto& first = lowered.tensors()[requirement.operands[1].value()];
+        const auto& second = lowered.tensors()[requirement.operands[2].value()];
+        const std::uint64_t first_elements = first.physical_shape.empty()
+                                                 ? 0
+                                                 : first.physical_shape.back();
+        const std::uint64_t second_elements = second.physical_shape.empty()
+                                                  ? 0
+                                                  : second.physical_shape.back();
+        if (first_elements == 0 || second_elements == 0 || first_elements >
+                std::numeric_limits<std::uint32_t>::max() || second_elements >
+                std::numeric_limits<std::uint32_t>::max()) {
+          return base::Status::invalid_argument("last-dimension split output shape is invalid");
+        }
+        split = {requirement.attributes.num_heads, static_cast<std::uint32_t>(first_elements),
+                 static_cast<std::uint32_t>(second_elements)};
+      }
       workspace_bytes = std::max(workspace_bytes, candidate.value().workspace_bytes);
       const float epsilon = (requirement.operation == "rms_norm" ||
                              requirement.operation == "layer_norm")
@@ -265,7 +287,7 @@ class Specializer final {
       const auto command = plan_builder.add_command(
           candidate.value().id, std::move(operands), dependencies, 0, 0,
           candidate.value().workspace_bytes, epsilon, 1.0F, attention, add_one_to_scale, {}, rope,
-          cache_append, convolution);
+          cache_append, convolution, split);
       if (!command.has_value()) {
         base::Status error = command.error();
         return error.with_context("physical command");

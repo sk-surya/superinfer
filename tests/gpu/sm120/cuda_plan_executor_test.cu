@@ -1222,6 +1222,41 @@ int main() {
     assert(std::abs(compiled_output[index] - left[index] / denominator * scale[index]) < 1.0e-5F);
   }
 
+  ir::physical::PlanBuilder split_last_builder;
+  split_last_builder.set_resource_bounds({64, 0, 1});
+  assert(split_last_builder.add_buffer(
+             0, 32, 16, typed_tensor(ir::physical::PhysicalDType::f32, {2, 4})).has_value());
+  assert(split_last_builder.add_buffer(
+             32, 16, 16, typed_tensor(ir::physical::PhysicalDType::f32, {2, 2})).has_value());
+  assert(split_last_builder.add_buffer(
+             48, 16, 16, typed_tensor(ir::physical::PhysicalDType::f32, {2, 2})).has_value());
+  assert(split_last_builder.add_command(
+             base::KernelId{26}, {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                                  ir::physical::BufferId{2}}, {}, 0, 0, 0, 1.0e-5F, 1.0F, {},
+             false, {}, {}, {}, {}, {2, 2, 2}).has_value());
+  const auto split_last_plan = std::move(split_last_builder).finalize({120, "baseline-v1"});
+  assert(split_last_plan.has_value());
+  auto split_last = sm120::cuda_runtime::CudaPlanSession::create(
+      split_last_plan.value(), 120, "baseline-v1");
+  assert(split_last.has_value());
+  const std::array<float, 8> interleaved{0.0F, 1.0F, 2.0F, 3.0F,
+                                         4.0F, 5.0F, 6.0F, 7.0F};
+  assert(split_last.value().copy_to_device(
+      ir::physical::BufferId{0}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(interleaved.data()), sizeof(interleaved))).ok());
+  assert(split_last.value().execute().ok());
+  assert(split_last.value().synchronize_for_test().ok());
+  std::array<float, 4> first_split{};
+  std::array<float, 4> second_split{};
+  assert(split_last.value().copy_from_device(
+      ir::physical::BufferId{1}, base::ByteView(
+          reinterpret_cast<std::byte*>(first_split.data()), sizeof(first_split))).ok());
+  assert(split_last.value().copy_from_device(
+      ir::physical::BufferId{2}, base::ByteView(
+          reinterpret_cast<std::byte*>(second_split.data()), sizeof(second_split))).ok());
+  assert((first_split == std::array<float, 4>{0.0F, 1.0F, 4.0F, 5.0F}));
+  assert((second_split == std::array<float, 4>{2.0F, 3.0F, 6.0F, 7.0F}));
+
   if (std::getenv("SUPERINFER_INJECT_ASYNC_FAULT") != nullptr) {
     auto poisoned = sm120::cuda_runtime::CudaPlanSession::create(plan, 120, "baseline-v1");
     assert(poisoned.has_value());

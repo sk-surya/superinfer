@@ -1,5 +1,6 @@
 #include <superinfer/artifact/sinf.hpp>
 #include <superinfer/artifact/host_storage_policy.hpp>
+#include <superinfer/artifact/tensor_table.hpp>
 
 #include <cassert>
 #include <cstddef>
@@ -45,6 +46,31 @@ int main(int argc, char** argv) {
   assert(std::to_integer<unsigned char>(payload_slice.value()[1]) == 0x03);
   assert(!parsed.value().payload_range(3, 2).has_value());
   assert(parsed.value().validate_integrity().ok());
+
+  ArtifactSpec typed_spec;
+  typed_spec.manifest = "{}";
+  typed_spec.tensor_table =
+      "[{\"artifact_payload_end\":32,\"artifact_payload_offset\":8,"
+      "\"dtype\":\"U8\",\"layout\":\"row_major\",\"logical_shape\":[4,16],"
+      "\"name\":\"layer.weight\",\"physical_dtype\":\"u8\",\"role\":\"weight\","
+      "\"shape\":[4,8],\"storage_encoding\":\"nvfp4_packed\"}]";
+  typed_spec.physical_plan = "plan";
+  typed_spec.payload.resize(32);
+  const auto typed_bytes = ArtifactWriter::write(typed_spec);
+  assert(typed_bytes.has_value());
+  const auto typed_artifact = ArtifactReader::read({typed_bytes.value().data(), typed_bytes.value().size()});
+  assert(typed_artifact.has_value());
+  const auto table = artifact::parse_tensor_table(
+      typed_artifact.value().section(artifact::SectionKind::tensor_table).value());
+  assert(table.has_value() && table.value().size() == 1);
+  assert(table.value().front().name == "layer.weight");
+  assert(table.value().front().logical_shape == std::vector<std::uint64_t>({4, 16}));
+  assert(table.value().front().payload_end == 32);
+
+  const auto malformed_table = artifact::parse_tensor_table(
+      {reinterpret_cast<const std::byte*>("[{\"name\":1}]"), 13});
+  assert(!malformed_table.has_value());
+
   artifact::HostStoragePolicy storage;
   assert(storage.plan(4).has_value());
   assert(storage.package("fixture", parsed.value().section(artifact::SectionKind::payload).value()).ok());

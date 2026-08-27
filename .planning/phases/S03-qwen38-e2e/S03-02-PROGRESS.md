@@ -2,7 +2,7 @@
 phase: S03-qwen38-e2e
 plan: S03-02
 status: in_progress
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # S03-02 Progress Checkpoint
@@ -216,14 +216,19 @@ updated: 2026-08-26
   artifact-backed layer numerical evidence remains open.
 - After these changes, the full validation gate passes again: Python tests, CPU CTest 22/22,
   CUDA CTest 24/24 on RTX 5090, sanitizer CTest, install-consumer, and wheel validation.
+- A real `.sinf` artifact is now memory-mapped into a typed Physical Plan for a complete layer-3
+  full-attention path. The plan executes 20 generic CUDA commands on GPU 0, including artifact-bound
+  NVFP4 projections, Qwen's interleaved q/gate split, BF16 KV append/cached GQA, sigmoid output
+  gating, residuals, and the gated MLP. An independent packed-NVFP4 Python/Transformers reference
+  reports `max_abs=0.000198513`, `mean_abs=0.0000361938`; evidence is recorded in
+  `artifacts/S03/qwen38-layer3-artifact-differential.json`.
 
 ## Remaining S03-02 work
 
-- Carry the validated NVFP4 sidecar bindings through target lowering into artifact-backed physical
-  buffers for every quantized projection, including LM/FFN and attention/GDN numerical differential
-  fixtures. The lowered graph and synthetic Physical Plan are now complete; payload population remains open.
-- Add artifact-backed buffer population and compare the composed quantized FFN against the pinned
-  Transformers/reference implementation before promoting the lowered FFN to layer evidence.
-- Compare one complete full-attention layer and one two-segment Gated Delta layer against the
-  pinned Transformers implementation using artifact weights and retained intermediate tensors.
+- Carry the validated NVFP4 sidecar bindings through target lowering into reusable artifact-backed
+  physical buffers for LM/FFN and GDN numerical differential fixtures. The full-attention fixture
+  proves the manual binding path; generic lowering still needs to consume the same materialization
+  contract end to end.
+- Compare one complete two-segment Gated Delta layer against the pinned Transformers implementation
+  using artifact weights and retained intermediate tensors.
 - Complete conversion/runtime staged differential evidence before S03-03 acceptance.

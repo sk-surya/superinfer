@@ -59,6 +59,22 @@ __global__ inline void split_f32(const float* input, float* first, float* second
   }
 }
 
+__global__ inline void split_last_f32(const float* input, float* first, float* second,
+                                      std::size_t outer, std::size_t first_elements,
+                                      std::size_t second_elements) {
+  const std::size_t total_elements = outer * (first_elements + second_elements);
+  for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < total_elements;
+       index += blockDim.x * gridDim.x) {
+    const std::size_t group = index / (first_elements + second_elements);
+    const std::size_t inner = index % (first_elements + second_elements);
+    if (inner < first_elements) {
+      first[group * first_elements + inner] = input[index];
+    } else {
+      second[group * second_elements + inner - first_elements] = input[index];
+    }
+  }
+}
+
 __device__ inline float bf16_to_float_device(std::uint16_t value) {
   return __uint_as_float(static_cast<std::uint32_t>(value) << 16U);
 }
@@ -736,6 +752,22 @@ inline cudaError_t launch_split(const ir::physical::CommandDescriptor& command,
   return cudaGetLastError();
 }
 
+inline cudaError_t launch_split_last(const ir::physical::CommandDescriptor& command,
+                                     const ir::physical::Plan& plan, void* arena, void*,
+                                     cudaStream_t stream) {
+  if (command.buffers.size() != 3) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& first = plan.buffers()[command.buffers[1].value()];
+  const auto& second = plan.buffers()[command.buffers[2].value()];
+  const auto dimensions = command.split;
+  split_last_f32<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, first.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, second.id)), dimensions.outer,
+      dimensions.first, dimensions.second);
+  return cudaGetLastError();
+}
+
 inline cudaError_t launch_rope(const ir::physical::CommandDescriptor& command,
                                const ir::physical::Plan& plan, void* arena, void*,
                                cudaStream_t stream) {
@@ -1326,6 +1358,23 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       }
       return {};
     }
+    case 26: {
+      if (!exact_buffers(3) || !all_dtype(ir::physical::PhysicalDType::f32)) {
+        return base::Status::invalid_argument("CUDA last-dimension split requires f32 operands");
+      }
+      const auto dimensions = command.split;
+      const auto& input = plan.buffers()[command.buffers[0].value()];
+      const auto& first = plan.buffers()[command.buffers[1].value()];
+      const auto& second = plan.buffers()[command.buffers[2].value()];
+      if (dimensions.outer == 0 || dimensions.first == 0 || dimensions.second == 0 ||
+          input.size != static_cast<std::uint64_t>(dimensions.outer) *
+                            (dimensions.first + dimensions.second) * sizeof(float) ||
+          first.size != static_cast<std::uint64_t>(dimensions.outer) * dimensions.first * sizeof(float) ||
+          second.size != static_cast<std::uint64_t>(dimensions.outer) * dimensions.second * sizeof(float)) {
+        return base::Status::invalid_argument("CUDA last-dimension split sizes do not match dimensions");
+      }
+      return {};
+    }
     default:
       return base::Status::unsupported("CUDA kernel ID is not registered");
   }
@@ -1356,6 +1405,7 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 23: return &launch_attention_bf16_cache;
     case 24: return &launch_gated_delta_parameters;
     case 25: return &launch_causal_conv_silu;
+    case 26: return &launch_split_last;
     default: return nullptr;
   }
 }

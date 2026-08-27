@@ -13,7 +13,7 @@ This is the durable record of what the user understands, what evidence supports 
 | Outstanding L2 gates | Gate A — semantic IR/compiler boundaries; Gate B — one-token transformer execution |
 | Debt distance | 2 under explicit D-014 autonomous-execution override |
 | Allowed autonomous work | All approved roadmap plans; preserve packets and branch checkpoints for later study. |
-| Next user action | Optional: study Gate B packet and answer its five questions/experiment when convenient. |
+| Next user action | Optional: study Gate B or the S03-02 artifact-layer packet and answer its five questions/experiment when convenient. |
 | Last updated | S03-02 checkpoint; autonomous execution enabled by explicit user directive on 2026-08-26 |
 
 ## Status Vocabulary
@@ -151,6 +151,20 @@ in S03-01; the current packet uses a four-element executable fixture.
 
 **Agent assessment:** `in progress`, packet presented 2026-08-26; retained as an unpassed autonomous
 study checkpoint under D-014.
+
+## S03-02 artifact-bound full-attention checkpoint
+
+| Field | Value |
+|---|---|
+| Level | L1 implementation checkpoint with an L2-style packet retained for the physical artifact boundary |
+| Implementation status | Reached |
+| User status | Packet presented; not passed on the user's behalf |
+| Evidence | Layer-3 real `.sinf` differential on RTX 5090: max abs `1.98513e-4`, mean abs `3.61938e-5` |
+| Packet | [understanding-packets/S03-02-artifact-layer.md](understanding-packets/S03-02-artifact-layer.md) |
+
+This checkpoint explains the typed tensor-table to Physical Plan path, explicit q/gate layout,
+BF16 KV storage, and the independent quantized reference. It does not certify full Qwen model
+correctness or close the S03-02 plan; Gated-Delta state continuation and S03-03 remain open.
 
 ## Autonomous execution override
 

@@ -1,0 +1,34 @@
+{
+  "kind": "qwen38_nvfp4_full_attention_layer_differential",
+  "status": "pass",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "source": {
+    "model": "Qwen3.8-27B-NVFP4-RTX5090",
+    "derivative_revision": "0cc27958cefbbe231782ec8511de8c4eb5233348",
+    "reference_script": "tools/qwen38_nvfp4_layer_reference.py",
+    "layer": 3,
+    "position": 0,
+    "input": "deterministic hidden-size-5120 fixture"
+  },
+  "execution": {
+    "commands": 20,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "cuda_visible_devices": "0",
+    "path": "mmap .sinf -> typed artifact bindings -> Physical Plan -> CUDA executor",
+    "cache_contract": "BF16 key/value cache round-trip with FP32 compute"
+  },
+  "comparison": {
+    "reference": "independent quantized NVFP4 dequantization and Transformers equations",
+    "max_abs": 0.000198513,
+    "mean_abs": 0.0000361938,
+    "max_abs_threshold": 0.02,
+    "mean_abs_threshold": 0.0002
+  },
+  "notes": [
+    "This proves one complete full-attention layer, including residual and gated MLP, not full-model generation.",
+    "The external reference uses the same packed artifact weights but an independent Python execution path."
+  ]
+}

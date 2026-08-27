@@ -160,6 +160,7 @@ int main() {
   std::size_t lowered_silu_mul = 0;
   std::size_t lowered_sigmoid_mul = 0;
   std::size_t lowered_splits = 0;
+  std::size_t lowered_last_splits = 0;
   std::size_t lowered_rope = 0;
   std::size_t lowered_cache_appends = 0;
   std::size_t lowered_cached_attention = 0;
@@ -176,6 +177,7 @@ int main() {
     lowered_silu_mul += requirement.operation == "silu_mul";
     lowered_sigmoid_mul += requirement.operation == "sigmoid_mul";
     lowered_splits += requirement.operation == "split";
+    lowered_last_splits += requirement.operation == "split_last";
     lowered_rope += requirement.operation == "rope";
     lowered_cache_appends += requirement.operation == "cache_append";
     lowered_cached_attention += requirement.operation == "attention_bf16_cache";
@@ -188,7 +190,8 @@ int main() {
   assert(lowered_nvfp4_projections == 401);
   assert(lowered_silu_mul == 112);
   assert(lowered_sigmoid_mul == 16);
-  assert(lowered_splits == 112);
+  assert(lowered_splits == 96);
+  assert(lowered_last_splits == 16);
   assert(lowered_rope == 32);
   assert(lowered_cache_appends == 16);
   assert(lowered_cached_attention == 16);

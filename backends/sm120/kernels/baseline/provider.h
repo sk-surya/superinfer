@@ -225,6 +225,18 @@ class BaselineProvider final : public kernels::KernelProvider {
       }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{21}, "sm120.baseline", true, 0}};
     }
+    if (query.operation == "split_last") {
+      if (query.operand_count != 0 && query.operand_count != 3) {
+        return base::Status::unsupported("baseline last-dimension split requires input and two output operands");
+      }
+      if (!query.operand_dtypes.empty() &&
+          (query.operand_dtypes.size() != 3 ||
+           std::any_of(query.operand_dtypes.begin(), query.operand_dtypes.end(),
+                       [](std::string_view dtype) { return dtype != "f32"; }))) {
+        return base::Status::unsupported("baseline last-dimension split requires f32 operands");
+      }
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{26}, "sm120.baseline", true, 0}};
+    }
     if (query.operation == "cache_append") {
       if (query.operand_count != 0 && query.operand_count != 4) {
         return base::Status::unsupported("baseline cache append requires four typed operands");

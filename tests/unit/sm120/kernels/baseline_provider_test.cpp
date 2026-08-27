@@ -21,11 +21,12 @@ int main() {
   assert(!unsupported_operation.has_value());
   assert(unsupported_operation.error().code() == superinfer::base::StatusCode::unsupported);
 
-  constexpr std::array<std::pair<std::string_view, std::uint64_t>, 19> operations{{
+  constexpr std::array<std::pair<std::string_view, std::uint64_t>, 20> operations{{
       {"copy", 1}, {"residual", 4}, {"rms_norm", 5}, {"layer_norm", 6}, {"embedding", 7},
       {"nvfp4_dequantize", 9}, {"lm_head", 10}, {"gated_dense_ffn", 11},
       {"nvfp4_linear", 13}, {"attention", 14}, {"gated_delta_attention", 15}, {"linear", 10},
       {"silu_mul", 18}, {"sigmoid_mul", 19}, {"split", 21},
+      {"split_last", 26},
       {"cache_append", 22}, {"attention_bf16_cache", 23},
       {"gated_delta_parameters", 24}, {"causal_conv_silu", 25}}};
   for (const auto& operation : operations) {

@@ -344,8 +344,8 @@ class SemanticLowering final {
         base::Status status = emit_projection(3, q_sidecars.value(), q_projection.value());
         if (!status.ok()) return status.with_context("attention Q projection lowering");
         status = builder.add_kernel_requirement(
-            "split", options.target_capability,
-            {q_projection.value(), q_raw.value(), q_gate.value()});
+            "split_last", options.target_capability,
+            {q_projection.value(), q_raw.value(), q_gate.value()}, operation.attributes);
         if (!status.ok()) return status.with_context("attention Q/gate split lowering");
         status = emit_projection(4, k_sidecars.value(), k_projection.value());
         if (!status.ok()) return status.with_context("attention K projection lowering");

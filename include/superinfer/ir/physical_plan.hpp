@@ -102,6 +102,13 @@ struct ConvolutionDimensions final {
   std::uint32_t kernel_size{0};
 };
 
+/** Compile-time facts for splitting an interleaved outer x (first, second) tensor. */
+struct SplitDimensions final {
+  std::uint32_t outer{0};
+  std::uint32_t first{0};
+  std::uint32_t second{0};
+};
+
 struct CommandDescriptor final {
   CommandId id;
   base::KernelId kernel;
@@ -118,6 +125,7 @@ struct CommandDescriptor final {
   RopeDimensions rope{};
   CacheAppendDimensions cache_append{};
   ConvolutionDimensions convolution{};
+  SplitDimensions split{};
 };
 
 class PlanBuilder;
@@ -312,7 +320,8 @@ class PlanBuilder final {
                                       std::vector<PhysicalOperandDescriptor> operands = {},
                                       RopeDimensions rope = {},
                                       CacheAppendDimensions cache_append = {},
-                                      ConvolutionDimensions convolution = {}) {
+                                      ConvolutionDimensions convolution = {},
+                                      SplitDimensions split = {}) {
     if (operands.empty()) {
       operands.reserve(buffers.size());
       for (const BufferId buffer : buffers) {
@@ -331,7 +340,7 @@ class PlanBuilder final {
                          std::move(operands),
                          std::move(dependencies), stream, workspace_offset, workspace_size,
                          epsilon, scalar, attention, add_one_to_scale, rope, cache_append,
-                         convolution});
+                         convolution, split});
     return commands_.back().id;
   }
 

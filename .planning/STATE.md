@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: S03
 status: autonomous_execution
-last_updated: "2026-08-27T01:00:00Z"
+last_updated: "2026-08-27T02:00:00Z"
 progress:
   total_phases: 10
   completed_phases: 3
@@ -41,7 +41,7 @@ s03f_01_status: blocked_missing_pinned_flash_next_source_and_reference_evidence
 
 ## Current Focus
 
-S03 remains the primary implementation lane. Quantized LM/FFN/attention/GDN projection lowering, explicit tensor-scale bindings, state-buffer aliasing, per-head RMSNorm, sigmoid gating, partial RoPE, BF16 KV append, cached GQA, Gated Delta parameter derivation, and causal convolution are now covered by focused CPU/CUDA evidence. The synthetic Qwen graph compiles to a bounded Physical Plan and the full repository validation gate passes. The immediate engineering boundary is unchanged: populate that plan from the real `.sinf` payload and complete full-attention/Gated-Delta layer execution against Transformers, then close full Qwen generation through S03-03.
+S03 remains the primary implementation lane. Quantized LM/FFN/attention/GDN projection lowering, explicit tensor-scale bindings, state-buffer aliasing, per-head RMSNorm, sigmoid gating, partial RoPE, BF16 KV append, cached GQA, Gated Delta parameter derivation, and causal convolution are covered by focused CPU/CUDA evidence. A real `.sinf` artifact now drives a complete layer-3 full-attention Physical Plan on GPU 0 and matches the independent quantized reference within the recorded contract. The immediate engineering boundary is unchanged: complete the artifact-backed two-segment Gated-Delta layer differential, then close full Qwen generation through S03-03.
 
 The approved S03F amendment adds Flash-Next after S03 and before S04. **Only S03F-01 may begin before S03 closes**, and it is research-only: pin reference/model revisions, inventory exact packed tensors, produce a capacity ledger, and evaluate quantization/residency recipes. S03F-01 must not modify Physical Plan, MemoryPlanner, runtime or kernels.
 

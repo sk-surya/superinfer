@@ -31,6 +31,9 @@ broader corpus coverage and final acceptance closure remain open.
 - The corpus `special-tokens` fixture (`248045,846,248046`) also passes the same static-prefill
   differential and fresh-session repeatability check; see
   `artifacts/S03/qwen38-e2e-special-token-prefill-differential.json`.
+- The corpus `plain-short` fixture passes six decode-replay positions with matching greedy output
+  and byte-identical fresh-session captures; per-position metrics are recorded in
+  `artifacts/S03/qwen38-e2e-plain-short-decode-differential.json`.
 - Failure matrix passes artifact corruption/truncation, target mismatch, injected CUDA fault poisoning,
   and over-capacity continuation rejection; see `artifacts/S03/qwen38-e2e-failure-matrix.json`.
 

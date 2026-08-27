@@ -88,4 +88,6 @@ captures a statically unrolled three-token `prefill` entry from the real artifac
 compared against the independent reference and byte-identical fresh-session captures. This is a
 correctness checkpoint, not a performance claim. The corpus special-token fixture has the same
 independent token/logit and repeatability evidence; broader prompt corpus and near-boundary
-execution remain open until the final S03 acceptance report is closed.
+execution remain open until the final S03 acceptance report is closed. The plain-short corpus
+fixture also has six-position decode-replay evidence with matching greedy output and fresh-session
+capture identity.

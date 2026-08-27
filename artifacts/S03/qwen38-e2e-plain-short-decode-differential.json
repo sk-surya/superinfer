@@ -1,0 +1,47 @@
+{
+  "schema": "superinfer.qwen38.e2e.decode.differential.v1",
+  "status": "pass",
+  "mode": "decode_replay",
+  "case": {
+    "id": "plain-short",
+    "token_ids": [9419, 11, 7070, 623, 776, 13],
+    "token_ids_sha256": "0d807749a8af1082ce33dde2057ab580a72be144626e613d1b14ee3e2566dfdb"
+  },
+  "target": {
+    "gpu": 0,
+    "name": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a",
+    "gpu_1_used": false
+  },
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "reference": {
+    "implementation": "Transformers Qwen3_5TextConfig/Qwen3_5DecoderLayer streamed one layer at a time",
+    "version": "5.12.1",
+    "greedy_sequence": [11, 353, 2570, 36784, 2083, 353],
+    "capture_sha256": "6e26572b19bf35c68f25659bb53fcc3c80c35423d376d29a40d67f566ff56488"
+  },
+  "superinfer": {
+    "entry_point": "decode",
+    "commands": 14544,
+    "device_arena_bytes": 19191265792,
+    "state_buffers": 128,
+    "greedy_sequence": [11, 353, 2570, 36784, 2083, 353],
+    "capture_sha256": "1d94d2af96c040e606b27321663f0d816eca3e7679dfeef3e0545bf657132c03",
+    "fresh_session_repeat": "pass"
+  },
+  "rows": [
+    {"position": 0, "max_abs": 0.1857376099, "mean_abs": 0.0354821690, "rmse": 0.0436131700},
+    {"position": 1, "max_abs": 0.1290619969, "mean_abs": 0.0184693878, "rmse": 0.0233881040},
+    {"position": 2, "max_abs": 0.1020231247, "mean_abs": 0.0160212240, "rmse": 0.0200449780},
+    {"position": 3, "max_abs": 0.0893573761, "mean_abs": 0.0140565880, "rmse": 0.0177625030},
+    {"position": 4, "max_abs": 0.1297757626, "mean_abs": 0.0215402030, "rmse": 0.0271880210},
+    {"position": 5, "max_abs": 0.1119213104, "mean_abs": 0.0135364320, "rmse": 0.0170890490}
+  ],
+  "limitations": [
+    "This case uses the validated one-token physical plan with explicit state continuation.",
+    "This is correctness evidence, not a performance claim."
+  ]
+}

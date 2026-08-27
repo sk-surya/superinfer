@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: S03
 status: autonomous_execution
-last_updated: "2026-08-26T23:16:00Z"
+last_updated: "2026-08-27T00:00:00Z"
 progress:
   total_phases: 10
   completed_phases: 3
@@ -41,7 +41,7 @@ s03f_01_status: blocked_missing_pinned_flash_next_source_and_reference_evidence
 
 ## Current Focus
 
-S03 remains the primary implementation lane. The immediate engineering boundary is unchanged: materialize artifact-bound quantized Qwen projections and complete full-attention/Gated-Delta layer execution against Transformers, then close full Qwen generation through S03-03.
+S03 remains the primary implementation lane. Quantized LM/FFN projection lowering, explicit tensor-scale bindings, state-buffer aliasing, sigmoid gating, and partial RoPE primitives are now covered by focused CPU/CUDA evidence. The immediate engineering boundary is unchanged: materialize artifact-bound Qwen projections and complete full-attention/Gated-Delta layer execution against Transformers, then close full Qwen generation through S03-03.
 
 The approved S03F amendment adds Flash-Next after S03 and before S04. **Only S03F-01 may begin before S03 closes**, and it is research-only: pin reference/model revisions, inventory exact packed tensors, produce a capacity ledger, and evaluate quantization/residency recipes. S03F-01 must not modify Physical Plan, MemoryPlanner, runtime or kernels.
 

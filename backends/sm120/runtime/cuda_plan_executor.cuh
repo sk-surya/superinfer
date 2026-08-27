@@ -375,13 +375,21 @@ __global__ inline void gated_delta_attention_f32(
 }
 
 __global__ inline void rms_norm_f32(const float* input, const float* scale, float* output,
-                                    std::size_t elements, float epsilon, bool add_one_to_scale) {
+                                    std::size_t elements, std::size_t scale_elements,
+                                    float epsilon, bool add_one_to_scale) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
-  float sum_squares = 0.0F;
-  for (std::size_t index = 0; index < elements; ++index) sum_squares += input[index] * input[index];
-  const float denominator = sqrtf(sum_squares / static_cast<float>(elements) + epsilon);
-  for (std::size_t index = 0; index < elements; ++index) {
-    output[index] = input[index] / denominator * (scale[index] + (add_one_to_scale ? 1.0F : 0.0F));
+  for (std::size_t row = 0; row < elements / scale_elements; ++row) {
+    float sum_squares = 0.0F;
+    for (std::size_t index = 0; index < scale_elements; ++index) {
+      const float value = input[row * scale_elements + index];
+      sum_squares += value * value;
+    }
+    const float denominator = sqrtf(sum_squares / static_cast<float>(scale_elements) + epsilon);
+    for (std::size_t index = 0; index < scale_elements; ++index) {
+      output[row * scale_elements + index] =
+          input[row * scale_elements + index] / denominator *
+          (scale[index] + (add_one_to_scale ? 1.0F : 0.0F));
+    }
   }
 }
 
@@ -390,15 +398,22 @@ __device__ inline float bf16_to_float_device(std::uint16_t value) {
 }
 
 __global__ inline void rms_norm_f32_bf16_scale(const float* input, const std::uint16_t* scale,
-                                               float* output, std::size_t elements, float epsilon,
+                                               float* output, std::size_t elements,
+                                               std::size_t scale_elements, float epsilon,
                                                bool add_one_to_scale) {
   if (blockIdx.x != 0 || threadIdx.x != 0) return;
-  float sum_squares = 0.0F;
-  for (std::size_t index = 0; index < elements; ++index) sum_squares += input[index] * input[index];
-  const float denominator = sqrtf(sum_squares / static_cast<float>(elements) + epsilon);
-  for (std::size_t index = 0; index < elements; ++index) {
-    output[index] = input[index] / denominator *
-                    (bf16_to_float_device(scale[index]) + (add_one_to_scale ? 1.0F : 0.0F));
+  for (std::size_t row = 0; row < elements / scale_elements; ++row) {
+    float sum_squares = 0.0F;
+    for (std::size_t index = 0; index < scale_elements; ++index) {
+      const float value = input[row * scale_elements + index];
+      sum_squares += value * value;
+    }
+    const float denominator = sqrtf(sum_squares / static_cast<float>(scale_elements) + epsilon);
+    for (std::size_t index = 0; index < scale_elements; ++index) {
+      output[row * scale_elements + index] =
+          input[row * scale_elements + index] / denominator *
+          (bf16_to_float_device(scale[index]) + (add_one_to_scale ? 1.0F : 0.0F));
+    }
   }
 }
 
@@ -749,12 +764,15 @@ inline cudaError_t launch_rms_norm(const ir::physical::CommandDescriptor& comman
   const auto& output = plan.buffers()[command.buffers[1].value()];
   const auto& scale = plan.buffers()[command.buffers[2].value()];
   const std::uint64_t bytes = input.size;
-  if (bytes == 0 || bytes % sizeof(float) != 0) return cudaErrorInvalidValue;
+  const std::size_t elements = static_cast<std::size_t>(bytes / sizeof(float));
+  const std::size_t scale_elements = static_cast<std::size_t>(scale.size / sizeof(float));
+  if (bytes == 0 || bytes % sizeof(float) != 0 || output.size != bytes || scale_elements == 0 ||
+      elements % scale_elements != 0) return cudaErrorInvalidValue;
   rms_norm_f32<<<1, 1, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, scale.id)),
-      static_cast<float*>(buffer_pointer(plan, arena, output.id)),
-      static_cast<std::size_t>(bytes / sizeof(float)), command.epsilon, command.add_one_to_scale);
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), elements, scale_elements,
+      command.epsilon, command.add_one_to_scale);
   return cudaGetLastError();
 }
 
@@ -765,16 +783,18 @@ inline cudaError_t launch_rms_norm_bf16(const ir::physical::CommandDescriptor& c
   const auto& input = plan.buffers()[command.buffers[0].value()];
   const auto& output = plan.buffers()[command.buffers[1].value()];
   const auto& scale = plan.buffers()[command.buffers[2].value()];
+  const std::size_t elements = static_cast<std::size_t>(input.size / sizeof(float));
+  const std::size_t scale_elements = static_cast<std::size_t>(scale.size / sizeof(std::uint16_t));
   if (input.size == 0 || input.size % sizeof(float) != 0 || output.size != input.size ||
-      scale.size != input.size / sizeof(float) * sizeof(std::uint16_t)) {
+      scale.size == 0 || scale.size % sizeof(std::uint16_t) != 0 ||
+      elements % scale_elements != 0) {
     return cudaErrorInvalidValue;
   }
   rms_norm_f32_bf16_scale<<<1, 1, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, scale.id)),
-      static_cast<float*>(buffer_pointer(plan, arena, output.id)),
-      static_cast<std::size_t>(input.size / sizeof(float)), command.epsilon,
-      command.add_one_to_scale);
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), elements, scale_elements,
+      command.epsilon, command.add_one_to_scale);
   return cudaGetLastError();
 }
 
@@ -1080,8 +1100,21 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       }
       return {};
     case 5:
-      if (!same_sizes(3) || !all_dtype(ir::physical::PhysicalDType::f32)) {
+      if (!exact_buffers(3) || !has_dtype(0, ir::physical::PhysicalDType::f32) ||
+          !has_dtype(1, ir::physical::PhysicalDType::f32) ||
+          !has_dtype(2, ir::physical::PhysicalDType::f32)) {
         return base::Status::invalid_argument("CUDA RMSNorm requires input, output, and scale buffers");
+      }
+      if (plan.buffers()[command.buffers[0].value()].size == 0 ||
+          plan.buffers()[command.buffers[0].value()].size !=
+              plan.buffers()[command.buffers[1].value()].size ||
+          plan.buffers()[command.buffers[0].value()].size % sizeof(float) != 0 ||
+          plan.buffers()[command.buffers[2].value()].size == 0 ||
+          plan.buffers()[command.buffers[2].value()].size % sizeof(float) != 0 ||
+          (plan.buffers()[command.buffers[0].value()].size / sizeof(float)) %
+                  (plan.buffers()[command.buffers[2].value()].size / sizeof(float)) !=
+              0) {
+        return base::Status::invalid_argument("CUDA RMSNorm scale must tile complete f32 rows");
       }
       return {};
     case 12:
@@ -1092,9 +1125,11 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
           plan.buffers()[command.buffers[0].value()].size % sizeof(float) != 0 ||
           plan.buffers()[command.buffers[1].value()].size !=
               plan.buffers()[command.buffers[0].value()].size ||
-          plan.buffers()[command.buffers[2].value()].size !=
-              plan.buffers()[command.buffers[0].value()].size / sizeof(float) *
-                  sizeof(std::uint16_t)) {
+          plan.buffers()[command.buffers[2].value()].size == 0 ||
+          plan.buffers()[command.buffers[2].value()].size % sizeof(std::uint16_t) != 0 ||
+          (plan.buffers()[command.buffers[0].value()].size / sizeof(float)) %
+                  (plan.buffers()[command.buffers[2].value()].size /
+                   sizeof(std::uint16_t)) != 0) {
         return base::Status::invalid_argument(
             "CUDA BF16 RMSNorm requires f32 input/output and a BF16 scale buffer");
       }

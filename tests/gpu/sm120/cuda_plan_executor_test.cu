@@ -326,6 +326,24 @@ superinfer::ir::physical::Plan make_bf16_rms_norm_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_grouped_bf16_rms_norm_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({40, 0, 1});
+  assert(builder.add_buffer(0, 16, 16,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {2, 2})).has_value());
+  assert(builder.add_buffer(16, 16, 16,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {2, 2})).has_value());
+  assert(builder.add_buffer(32, 4, 4,
+                            typed_tensor(ir::physical::PhysicalDType::bf16, {2})).has_value());
+  assert(builder.add_command(base::KernelId{12},
+                             {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                              ir::physical::BufferId{2}}, {}, 0, 0, 0).has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 superinfer::ir::physical::Plan make_nvfp4_linear_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
@@ -912,6 +930,29 @@ int main() {
     const float scale = 1.0F + static_cast<float>(index) * 0.5F;
     assert(std::abs(norm_output[index] - norm_input[index] / norm_denominator * scale) < 1.0e-5F);
   }
+
+  const auto grouped_norm_plan = make_grouped_bf16_rms_norm_plan();
+  auto grouped_norm = sm120::cuda_runtime::CudaPlanSession::create(
+      grouped_norm_plan, 120, "baseline-v1");
+  assert(grouped_norm.has_value());
+  assert(grouped_norm.value().copy_to_device(
+      ir::physical::BufferId{0}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(norm_input.data()), sizeof(norm_input))).ok());
+  assert(grouped_norm.value().copy_to_device(
+      ir::physical::BufferId{2}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(norm_scale.data()), sizeof(std::uint16_t) * 2)).ok());
+  assert(grouped_norm.value().execute().ok());
+  assert(grouped_norm.value().synchronize_for_test().ok());
+  std::array<float, 4> grouped_norm_output{};
+  assert(grouped_norm.value().copy_from_device(
+      ir::physical::BufferId{1}, base::ByteView(
+          reinterpret_cast<std::byte*>(grouped_norm_output.data()), sizeof(grouped_norm_output))).ok());
+  const float first_row_denominator = std::sqrt((1.0F + 4.0F) / 2.0F + 1.0e-5F);
+  const float second_row_denominator = std::sqrt((9.0F + 16.0F) / 2.0F + 1.0e-5F);
+  assert(std::abs(grouped_norm_output[0] - 1.0F / first_row_denominator) < 1.0e-5F);
+  assert(std::abs(grouped_norm_output[1] - 2.0F / first_row_denominator * 1.5F) < 1.0e-5F);
+  assert(std::abs(grouped_norm_output[2] - 3.0F / second_row_denominator) < 1.0e-5F);
+  assert(std::abs(grouped_norm_output[3] - 4.0F / second_row_denominator * 1.5F) < 1.0e-5F);
 
   const auto nvfp4_linear_plan = make_nvfp4_linear_plan();
   auto nvfp4_linear = sm120::cuda_runtime::CudaPlanSession::create(

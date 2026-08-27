@@ -47,6 +47,18 @@ __global__ inline void sigmoid_mul_f32(const float* gate, const float* value, fl
   }
 }
 
+__global__ inline void split_f32(const float* input, float* first, float* second,
+                                std::size_t first_elements, std::size_t total_elements) {
+  for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < total_elements;
+       index += blockDim.x * gridDim.x) {
+    if (index < first_elements) {
+      first[index] = input[index];
+    } else {
+      second[index - first_elements] = input[index];
+    }
+  }
+}
+
 __global__ inline void rope_f32(const float* input, float* output, std::size_t heads,
                                 std::size_t head_dimension, std::size_t rotary_dimension,
                                 std::size_t position, float theta) {
@@ -70,6 +82,74 @@ __global__ inline void rope_f32(const float* input, float* output, std::size_t h
     const float second = input[base + pair + half];
     output[index] = dimension < half ? first * cosine - second * sine
                                      : second * cosine + first * sine;
+  }
+}
+
+__global__ inline void cache_append_f32_bf16(const float* keys, const float* values,
+                                             std::uint16_t* key_cache,
+                                             std::uint16_t* value_cache, std::size_t heads,
+                                             std::size_t head_dimension, std::size_t position,
+                                             std::size_t capacity) {
+  const std::size_t elements = heads * head_dimension;
+  for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < elements;
+       index += blockDim.x * gridDim.x) {
+    const std::size_t destination = position * elements + index;
+    if (position >= capacity) continue;
+    const std::uint32_t key_bits = __float_as_uint(keys[index]);
+    const std::uint32_t value_bits = __float_as_uint(values[index]);
+    key_cache[destination] = static_cast<std::uint16_t>(
+        (key_bits + (((key_bits >> 16U) & 1U) + 0x7FFFU)) >> 16U);
+    value_cache[destination] = static_cast<std::uint16_t>(
+        (value_bits + (((value_bits >> 16U) & 1U) + 0x7FFFU)) >> 16U);
+  }
+}
+
+__global__ inline void grouped_attention_bf16_cache(
+    const float* query, const std::uint16_t* keys, const std::uint16_t* values, float* output,
+    std::size_t query_heads, std::size_t kv_heads, std::size_t head_dimension,
+    std::size_t positions) {
+  const std::size_t group = query_heads / kv_heads;
+  const float scale = rsqrtf(static_cast<float>(head_dimension));
+  for (std::size_t query_head = blockIdx.x * blockDim.x + threadIdx.x;
+       query_head < query_heads; query_head += blockDim.x * gridDim.x) {
+    const std::size_t kv_head = query_head / group;
+    float maximum = -3.402823466e+38F;
+    for (std::size_t position = 0; position < positions; ++position) {
+      float score = 0.0F;
+      for (std::size_t dimension = 0; dimension < head_dimension; ++dimension) {
+        const std::size_t cache_index = (position * kv_heads + kv_head) * head_dimension + dimension;
+        score += query[query_head * head_dimension + dimension] *
+                 __uint_as_float(static_cast<std::uint32_t>(keys[cache_index]) << 16U);
+      }
+      maximum = fmaxf(maximum, score * scale);
+    }
+    float denominator = 0.0F;
+    for (std::size_t position = 0; position < positions; ++position) {
+      float score = 0.0F;
+      for (std::size_t dimension = 0; dimension < head_dimension; ++dimension) {
+        const std::size_t cache_index = (position * kv_heads + kv_head) * head_dimension + dimension;
+        score += query[query_head * head_dimension + dimension] *
+                 __uint_as_float(static_cast<std::uint32_t>(keys[cache_index]) << 16U);
+      }
+      denominator += expf(score * scale - maximum);
+    }
+    for (std::size_t dimension = 0; dimension < head_dimension; ++dimension) {
+      float result = 0.0F;
+      for (std::size_t position = 0; position < positions; ++position) {
+        float score = 0.0F;
+        for (std::size_t key_dimension = 0; key_dimension < head_dimension; ++key_dimension) {
+          const std::size_t cache_index =
+              (position * kv_heads + kv_head) * head_dimension + key_dimension;
+          score += query[query_head * head_dimension + key_dimension] *
+                   __uint_as_float(static_cast<std::uint32_t>(keys[cache_index]) << 16U);
+        }
+        const float probability = expf(score * scale - maximum) / denominator;
+        const std::size_t value_index = (position * kv_heads + kv_head) * head_dimension + dimension;
+        result += probability *
+                  __uint_as_float(static_cast<std::uint32_t>(values[value_index]) << 16U);
+      }
+      output[query_head * head_dimension + dimension] = result;
+    }
   }
 }
 
@@ -593,6 +673,23 @@ inline cudaError_t launch_sigmoid_mul(const ir::physical::CommandDescriptor& com
   return cudaGetLastError();
 }
 
+inline cudaError_t launch_split(const ir::physical::CommandDescriptor& command,
+                                const ir::physical::Plan& plan, void* arena, void*,
+                                cudaStream_t stream) {
+  if (command.buffers.size() != 3) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& first = plan.buffers()[command.buffers[1].value()];
+  const auto& second = plan.buffers()[command.buffers[2].value()];
+  const std::size_t first_elements = static_cast<std::size_t>(first.size / sizeof(float));
+  const std::size_t total_elements = static_cast<std::size_t>(input.size / sizeof(float));
+  split_f32<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, first.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, second.id)), first_elements,
+      total_elements);
+  return cudaGetLastError();
+}
+
 inline cudaError_t launch_rope(const ir::physical::CommandDescriptor& command,
                                const ir::physical::Plan& plan, void* arena, void*,
                                cudaStream_t stream) {
@@ -605,6 +702,42 @@ inline cudaError_t launch_rope(const ir::physical::CommandDescriptor& command,
       static_cast<float*>(buffer_pointer(plan, arena, output.id)), dimensions.heads,
       dimensions.head_dimension, dimensions.rotary_dimension, dimensions.position,
       command.scalar);
+  return cudaGetLastError();
+}
+
+inline cudaError_t launch_cache_append(const ir::physical::CommandDescriptor& command,
+                                       const ir::physical::Plan& plan, void* arena, void*,
+                                       cudaStream_t stream) {
+  if (command.buffers.size() != 4) return cudaErrorInvalidValue;
+  const auto dimensions = command.cache_append;
+  const auto& keys = plan.buffers()[command.buffers[0].value()];
+  const auto& values = plan.buffers()[command.buffers[1].value()];
+  const auto& key_cache = plan.buffers()[command.buffers[2].value()];
+  const auto& value_cache = plan.buffers()[command.buffers[3].value()];
+  cache_append_f32_bf16<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, keys.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, values.id)),
+      static_cast<std::uint16_t*>(buffer_pointer(plan, arena, key_cache.id)),
+      static_cast<std::uint16_t*>(buffer_pointer(plan, arena, value_cache.id)), dimensions.heads,
+      dimensions.head_dimension, dimensions.position, dimensions.capacity);
+  return cudaGetLastError();
+}
+
+inline cudaError_t launch_attention_bf16_cache(
+    const ir::physical::CommandDescriptor& command, const ir::physical::Plan& plan, void* arena,
+    void*, cudaStream_t stream) {
+  if (command.buffers.size() != 4) return cudaErrorInvalidValue;
+  const auto& query = plan.buffers()[command.buffers[0].value()];
+  const auto& keys = plan.buffers()[command.buffers[1].value()];
+  const auto& values = plan.buffers()[command.buffers[2].value()];
+  const auto& output = plan.buffers()[command.buffers[3].value()];
+  const auto dimensions = command.attention;
+  grouped_attention_bf16_cache<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, query.id)),
+      static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, keys.id)),
+      static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, values.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), dimensions.query_heads,
+      dimensions.key_value_heads, dimensions.head_dimension, dimensions.positions);
   return cudaGetLastError();
 }
 
@@ -995,6 +1128,69 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       }
       return {};
     }
+    case 21: {
+      if (!exact_buffers(3) || !all_dtype(ir::physical::PhysicalDType::f32)) {
+        return base::Status::invalid_argument("CUDA split requires three equal-type f32 buffers");
+      }
+      const auto& input = plan.buffers()[command.buffers[0].value()];
+      const auto& first = plan.buffers()[command.buffers[1].value()];
+      const auto& second = plan.buffers()[command.buffers[2].value()];
+      if (input.size == 0 || first.size == 0 || second.size == 0 ||
+          input.size != first.size + second.size || input.size % sizeof(float) != 0) {
+        return base::Status::invalid_argument("CUDA split buffer sizes do not form one f32 input");
+      }
+      return {};
+    }
+    case 22: {
+      if (!exact_buffers(4) || !has_dtype(0, ir::physical::PhysicalDType::f32) ||
+          !has_dtype(1, ir::physical::PhysicalDType::f32) ||
+          !has_dtype(2, ir::physical::PhysicalDType::bf16) ||
+          !has_dtype(3, ir::physical::PhysicalDType::bf16)) {
+        return base::Status::invalid_argument(
+            "CUDA cache append requires f32 K/V rows and BF16 cache buffers");
+      }
+      const auto dimensions = command.cache_append;
+      const std::uint64_t row_bytes = static_cast<std::uint64_t>(dimensions.heads) *
+                                      dimensions.head_dimension * sizeof(float);
+      const std::uint64_t cache_bytes = static_cast<std::uint64_t>(dimensions.capacity) *
+                                        dimensions.heads * dimensions.head_dimension *
+                                        sizeof(std::uint16_t);
+      if (dimensions.heads == 0 || dimensions.head_dimension == 0 || dimensions.capacity == 0 ||
+          dimensions.position >= dimensions.capacity || row_bytes == 0 ||
+          plan.buffers()[command.buffers[0].value()].size != row_bytes ||
+          plan.buffers()[command.buffers[1].value()].size != row_bytes ||
+          plan.buffers()[command.buffers[2].value()].size != cache_bytes ||
+          plan.buffers()[command.buffers[3].value()].size != cache_bytes) {
+        return base::Status::invalid_argument("CUDA cache append dimensions do not match buffers");
+      }
+      return {};
+    }
+    case 23: {
+      if (!exact_buffers(4) || !has_dtype(0, ir::physical::PhysicalDType::f32) ||
+          !has_dtype(1, ir::physical::PhysicalDType::bf16) ||
+          !has_dtype(2, ir::physical::PhysicalDType::bf16) ||
+          !has_dtype(3, ir::physical::PhysicalDType::f32)) {
+        return base::Status::invalid_argument(
+            "CUDA BF16-cache attention requires f32 query/output and BF16 caches");
+      }
+      const auto dimensions = command.attention;
+      const std::uint64_t query_bytes = static_cast<std::uint64_t>(dimensions.query_heads) *
+                                        dimensions.head_dimension * sizeof(float);
+      const std::uint64_t output_bytes = query_bytes;
+      const std::uint64_t cache_bytes = static_cast<std::uint64_t>(dimensions.positions) *
+                                        dimensions.key_value_heads * dimensions.head_dimension *
+                                        sizeof(std::uint16_t);
+      if (dimensions.query_heads == 0 || dimensions.key_value_heads == 0 ||
+          dimensions.head_dimension == 0 || dimensions.positions == 0 ||
+          dimensions.query_heads % dimensions.key_value_heads != 0 || query_bytes == 0 ||
+          plan.buffers()[command.buffers[0].value()].size != query_bytes ||
+          plan.buffers()[command.buffers[1].value()].size < cache_bytes ||
+          plan.buffers()[command.buffers[2].value()].size < cache_bytes ||
+          plan.buffers()[command.buffers[3].value()].size != output_bytes) {
+        return base::Status::invalid_argument("CUDA BF16-cache attention dimensions do not match buffers");
+      }
+      return {};
+    }
     default:
       return base::Status::unsupported("CUDA kernel ID is not registered");
   }
@@ -1020,6 +1216,9 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 18: return &launch_silu_mul;
     case 19: return &launch_sigmoid_mul;
     case 20: return &launch_rope;
+    case 21: return &launch_split;
+    case 22: return &launch_cache_append;
+    case 23: return &launch_attention_bf16_cache;
     default: return nullptr;
   }
 }

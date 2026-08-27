@@ -88,6 +88,14 @@ struct RopeDimensions final {
   std::uint32_t position{0};
 };
 
+/** Compile-time facts for appending one FP32 K/V row into a persistent BF16 cache. */
+struct CacheAppendDimensions final {
+  std::uint32_t heads{0};
+  std::uint32_t head_dimension{0};
+  std::uint32_t position{0};
+  std::uint32_t capacity{0};
+};
+
 struct CommandDescriptor final {
   CommandId id;
   base::KernelId kernel;
@@ -102,6 +110,7 @@ struct CommandDescriptor final {
   AttentionDimensions attention{};
   bool add_one_to_scale{false};
   RopeDimensions rope{};
+  CacheAppendDimensions cache_append{};
 };
 
 class PlanBuilder;
@@ -294,7 +303,8 @@ class PlanBuilder final {
                                       AttentionDimensions attention = {},
                                       bool add_one_to_scale = false,
                                       std::vector<PhysicalOperandDescriptor> operands = {},
-                                      RopeDimensions rope = {}) {
+                                      RopeDimensions rope = {},
+                                      CacheAppendDimensions cache_append = {}) {
     if (operands.empty()) {
       operands.reserve(buffers.size());
       for (const BufferId buffer : buffers) {
@@ -312,7 +322,7 @@ class PlanBuilder final {
     commands_.push_back({CommandId{commands_.size()}, kernel, std::move(buffers),
                          std::move(operands),
                          std::move(dependencies), stream, workspace_offset, workspace_size,
-                         epsilon, scalar, attention, add_one_to_scale, rope});
+                         epsilon, scalar, attention, add_one_to_scale, rope, cache_append});
     return commands_.back().id;
   }
 

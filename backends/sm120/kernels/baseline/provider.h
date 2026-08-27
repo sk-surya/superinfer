@@ -201,6 +201,42 @@ class BaselineProvider final : public kernels::KernelProvider {
       }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{20}, "sm120.baseline", true, 0}};
     }
+    if (query.operation == "split") {
+      if (query.operand_count != 0 && query.operand_count != 3) {
+        return base::Status::unsupported("baseline split requires input and two output operands");
+      }
+      if (!query.operand_dtypes.empty() &&
+          (query.operand_dtypes.size() != 3 ||
+           std::any_of(query.operand_dtypes.begin(), query.operand_dtypes.end(),
+                       [](std::string_view dtype) { return dtype != "f32"; }))) {
+        return base::Status::unsupported("baseline split requires f32 operands");
+      }
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{21}, "sm120.baseline", true, 0}};
+    }
+    if (query.operation == "cache_append") {
+      if (query.operand_count != 0 && query.operand_count != 4) {
+        return base::Status::unsupported("baseline cache append requires four typed operands");
+      }
+      if (!query.operand_dtypes.empty() &&
+          (query.operand_dtypes.size() != 4 || query.operand_dtypes[0] != "f32" ||
+           query.operand_dtypes[1] != "f32" || query.operand_dtypes[2] != "bf16" ||
+           query.operand_dtypes[3] != "bf16")) {
+        return base::Status::unsupported("baseline cache append requires f32 inputs and BF16 states");
+      }
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{22}, "sm120.baseline", true, 0}};
+    }
+    if (query.operation == "attention_bf16_cache") {
+      if (query.operand_count != 0 && query.operand_count != 4) {
+        return base::Status::unsupported("baseline BF16-cache attention requires four typed operands");
+      }
+      if (!query.operand_dtypes.empty() &&
+          (query.operand_dtypes.size() != 4 || query.operand_dtypes[0] != "f32" ||
+           query.operand_dtypes[1] != "bf16" || query.operand_dtypes[2] != "bf16" ||
+           query.operand_dtypes[3] != "f32")) {
+        return base::Status::unsupported("baseline BF16-cache attention requires f32 query/output and BF16 cache");
+      }
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{23}, "sm120.baseline", true, 0}};
+    }
     return base::Status::unsupported("no executable baseline candidate for operation");
   }
 };

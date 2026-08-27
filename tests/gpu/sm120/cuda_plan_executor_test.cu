@@ -121,6 +121,66 @@ superinfer::ir::physical::Plan make_rope_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_cache_append_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({48, 0, 1});
+  assert(builder.add_buffer(0, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {1, 2})).has_value());
+  assert(builder.add_buffer(8, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {1, 2})).has_value());
+  assert(builder.add_buffer(16, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::bf16, {2, 1, 2})).has_value());
+  assert(builder.add_buffer(32, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::bf16, {2, 1, 2})).has_value());
+  assert(builder.add_command(base::KernelId{22},
+                             {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                              ir::physical::BufferId{2}, ir::physical::BufferId{3}}, {}, 0, 0, 0,
+                             1.0e-5F, 1.0F, {}, false, {}, {}, {1, 2, 1, 2}).has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
+superinfer::ir::physical::Plan make_bf16_cache_attention_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({56, 0, 1});
+  assert(builder.add_buffer(0, 16, 16,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {2, 2})).has_value());
+  assert(builder.add_buffer(16, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::bf16, {2, 1, 2})).has_value());
+  assert(builder.add_buffer(24, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::bf16, {2, 1, 2})).has_value());
+  assert(builder.add_buffer(32, 16, 16,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {2, 2})).has_value());
+  assert(builder.add_command(base::KernelId{23},
+                             {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                              ir::physical::BufferId{2}, ir::physical::BufferId{3}}, {}, 0, 0, 0,
+                             1.0e-5F, 1.0F, {2, 1, 2, 2, 0, 0}).has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
+superinfer::ir::physical::Plan make_split_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({32, 0, 1});
+  assert(builder.add_buffer(0, 16, 16,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {4})).has_value());
+  assert(builder.add_buffer(16, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {2})).has_value());
+  assert(builder.add_buffer(24, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {2})).has_value());
+  assert(builder.add_command(base::KernelId{21},
+                             {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                              ir::physical::BufferId{2}}, {}, 0, 0, 0).has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 superinfer::ir::physical::Plan make_embedding_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
@@ -437,6 +497,79 @@ int main() {
   for (std::size_t index = 0; index < rope_output.size(); ++index) {
     assert(std::abs(rope_output[index] - expected_rope[index]) < 1.0e-5F);
   }
+
+  const auto cache_append_plan = make_cache_append_plan();
+  auto cache_append = sm120::cuda_runtime::CudaPlanSession::create(
+      cache_append_plan, 120, "baseline-v1");
+  assert(cache_append.has_value());
+  const std::array<float, 2> cache_keys{1.0F, 2.0F};
+  const std::array<float, 2> cache_values{3.0F, 4.0F};
+  for (const auto& upload : std::array<std::pair<ir::physical::BufferId, base::ConstByteView>, 2>{
+           {{ir::physical::BufferId{0}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(cache_keys.data()), sizeof(cache_keys))},
+            {ir::physical::BufferId{1}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(cache_values.data()), sizeof(cache_values))}}}) {
+    assert(cache_append.value().copy_to_device(upload.first, upload.second).ok());
+  }
+  assert(cache_append.value().execute().ok());
+  assert(cache_append.value().synchronize_for_test().ok());
+  std::array<std::uint16_t, 4> cache_key_bits{};
+  std::array<std::uint16_t, 4> cache_value_bits{};
+  assert(cache_append.value().copy_from_device(
+      ir::physical::BufferId{2}, base::ByteView(
+          reinterpret_cast<std::byte*>(cache_key_bits.data()), sizeof(cache_key_bits))).ok());
+  assert(cache_append.value().copy_from_device(
+      ir::physical::BufferId{3}, base::ByteView(
+          reinterpret_cast<std::byte*>(cache_value_bits.data()), sizeof(cache_value_bits))).ok());
+  assert(cache_key_bits[2] == 0x3f80 && cache_key_bits[3] == 0x4000);
+  assert(cache_value_bits[2] == 0x4040 && cache_value_bits[3] == 0x4080);
+
+  const auto split_plan = make_split_plan();
+  auto split = sm120::cuda_runtime::CudaPlanSession::create(split_plan, 120, "baseline-v1");
+  assert(split.has_value());
+  const std::array<float, 4> split_input{1.0F, 2.0F, 3.0F, 4.0F};
+  assert(split.value().copy_to_device(
+      ir::physical::BufferId{0}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(split_input.data()), sizeof(split_input))).ok());
+  assert(split.value().execute().ok());
+  assert(split.value().synchronize_for_test().ok());
+  std::array<float, 2> split_first{};
+  std::array<float, 2> split_second{};
+  assert(split.value().copy_from_device(
+      ir::physical::BufferId{1}, base::ByteView(
+          reinterpret_cast<std::byte*>(split_first.data()), sizeof(split_first))).ok());
+  assert(split.value().copy_from_device(
+      ir::physical::BufferId{2}, base::ByteView(
+          reinterpret_cast<std::byte*>(split_second.data()), sizeof(split_second))).ok());
+  assert((split_first == std::array<float, 2>{1.0F, 2.0F}));
+  assert((split_second == std::array<float, 2>{3.0F, 4.0F}));
+
+  const auto bf16_cache_attention_plan = make_bf16_cache_attention_plan();
+  auto bf16_cache_attention = sm120::cuda_runtime::CudaPlanSession::create(
+      bf16_cache_attention_plan, 120, "baseline-v1");
+  assert(bf16_cache_attention.has_value());
+  const std::array<float, 4> bf16_cache_query{1.0F, 0.0F, 0.0F, 1.0F};
+  const std::array<std::uint16_t, 4> bf16_cache_keys{0x3f80, 0x0000, 0x0000, 0x3f80};
+  const std::array<std::uint16_t, 4> bf16_cache_values{0x4000, 0x0000, 0x0000, 0x4080};
+  for (const auto& upload : std::array<std::pair<ir::physical::BufferId, base::ConstByteView>, 3>{
+           {{ir::physical::BufferId{0}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(bf16_cache_query.data()), sizeof(bf16_cache_query))},
+            {ir::physical::BufferId{1}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(bf16_cache_keys.data()), sizeof(bf16_cache_keys))},
+            {ir::physical::BufferId{2}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(bf16_cache_values.data()), sizeof(bf16_cache_values))}}}) {
+    assert(bf16_cache_attention.value().copy_to_device(upload.first, upload.second).ok());
+  }
+  assert(bf16_cache_attention.value().execute().ok());
+  assert(bf16_cache_attention.value().synchronize_for_test().ok());
+  std::array<float, 4> bf16_cache_output{};
+  assert(bf16_cache_attention.value().copy_from_device(
+      ir::physical::BufferId{3}, base::ByteView(
+          reinterpret_cast<std::byte*>(bf16_cache_output.data()), sizeof(bf16_cache_output))).ok());
+  const float bf16_attention_probability = std::exp(1.0F / std::sqrt(2.0F)) /
+                                           (std::exp(1.0F / std::sqrt(2.0F)) + 1.0F);
+  assert(std::abs(bf16_cache_output[0] - 2.0F * bf16_attention_probability) < 1.0e-5F);
+  assert(std::abs(bf16_cache_output[1] - 4.0F * (1.0F - bf16_attention_probability)) < 1.0e-5F);
 
   const auto rejected_target = sm120::cuda_runtime::CudaPlanSession::create(plan, 89, "baseline-v1");
   assert(!rejected_target.has_value());

@@ -59,6 +59,15 @@ __global__ inline void split_f32(const float* input, float* first, float* second
   }
 }
 
+__device__ inline float bf16_to_float_device(std::uint16_t value) {
+  return __uint_as_float(static_cast<std::uint32_t>(value) << 16U);
+}
+
+__device__ inline std::uint16_t float_to_bf16_device(float value) {
+  const std::uint32_t bits = __float_as_uint(value);
+  return static_cast<std::uint16_t>((bits + (((bits >> 16U) & 1U) + 0x7FFFU)) >> 16U);
+}
+
 __global__ inline void rope_f32(const float* input, float* output, std::size_t heads,
                                 std::size_t head_dimension, std::size_t rotary_dimension,
                                 std::size_t position, float theta) {
@@ -95,12 +104,38 @@ __global__ inline void cache_append_f32_bf16(const float* keys, const float* val
        index += blockDim.x * gridDim.x) {
     const std::size_t destination = position * elements + index;
     if (position >= capacity) continue;
-    const std::uint32_t key_bits = __float_as_uint(keys[index]);
-    const std::uint32_t value_bits = __float_as_uint(values[index]);
-    key_cache[destination] = static_cast<std::uint16_t>(
-        (key_bits + (((key_bits >> 16U) & 1U) + 0x7FFFU)) >> 16U);
-    value_cache[destination] = static_cast<std::uint16_t>(
-        (value_bits + (((value_bits >> 16U) & 1U) + 0x7FFFU)) >> 16U);
+    key_cache[destination] = float_to_bf16_device(keys[index]);
+    value_cache[destination] = float_to_bf16_device(values[index]);
+  }
+}
+
+__global__ inline void gated_delta_parameters_f32(
+    const float* a, const float* b, const float* a_log, const float* dt_bias,
+    float* log_decay, float* beta, std::size_t elements) {
+  for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < elements;
+       index += blockDim.x * gridDim.x) {
+    const float shifted = a[index] + dt_bias[index];
+    const float softplus = fmaxf(shifted, 0.0F) + log1pf(expf(-fabsf(shifted)));
+    log_decay[index] = -expf(a_log[index]) * softplus;
+    beta[index] = 1.0F / (1.0F + expf(-b[index]));
+  }
+}
+
+__global__ inline void causal_conv_silu_f32(const float* input, const float* weights,
+                                            std::uint16_t* state, float* output,
+                                            std::size_t channels, std::size_t kernel_size) {
+  for (std::size_t channel = blockIdx.x * blockDim.x + threadIdx.x; channel < channels;
+       channel += blockDim.x * gridDim.x) {
+    for (std::size_t tap = 0; tap + 1 < kernel_size; ++tap) {
+      state[tap * channels + channel] = state[(tap + 1) * channels + channel];
+    }
+    state[(kernel_size - 1U) * channels + channel] = float_to_bf16_device(input[channel]);
+    float sum = 0.0F;
+    for (std::size_t tap = 0; tap < kernel_size; ++tap) {
+      sum += weights[channel * kernel_size + tap] *
+             bf16_to_float_device(state[tap * channels + channel]);
+    }
+    output[channel] = sum / (1.0F + expf(-sum));
   }
 }
 
@@ -391,10 +426,6 @@ __global__ inline void rms_norm_f32(const float* input, const float* scale, floa
           (scale[index] + (add_one_to_scale ? 1.0F : 0.0F));
     }
   }
-}
-
-__device__ inline float bf16_to_float_device(std::uint16_t value) {
-  return __uint_as_float(static_cast<std::uint32_t>(value) << 16U);
 }
 
 __global__ inline void rms_norm_f32_bf16_scale(const float* input, const std::uint16_t* scale,
@@ -735,6 +766,45 @@ inline cudaError_t launch_cache_append(const ir::physical::CommandDescriptor& co
       static_cast<std::uint16_t*>(buffer_pointer(plan, arena, key_cache.id)),
       static_cast<std::uint16_t*>(buffer_pointer(plan, arena, value_cache.id)), dimensions.heads,
       dimensions.head_dimension, dimensions.position, dimensions.capacity);
+  return cudaGetLastError();
+}
+
+inline cudaError_t launch_gated_delta_parameters(
+    const ir::physical::CommandDescriptor& command, const ir::physical::Plan& plan, void* arena,
+    void*, cudaStream_t stream) {
+  if (command.buffers.size() != 6) return cudaErrorInvalidValue;
+  const auto& a = plan.buffers()[command.buffers[0].value()];
+  const auto& b = plan.buffers()[command.buffers[1].value()];
+  const auto& a_log = plan.buffers()[command.buffers[2].value()];
+  const auto& dt_bias = plan.buffers()[command.buffers[3].value()];
+  const auto& log_decay = plan.buffers()[command.buffers[4].value()];
+  const auto& beta = plan.buffers()[command.buffers[5].value()];
+  gated_delta_parameters_f32<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, a.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, b.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, a_log.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, dt_bias.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, log_decay.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, beta.id)),
+      static_cast<std::size_t>(a.size / sizeof(float)));
+  return cudaGetLastError();
+}
+
+inline cudaError_t launch_causal_conv_silu(const ir::physical::CommandDescriptor& command,
+                                           const ir::physical::Plan& plan, void* arena, void*,
+                                           cudaStream_t stream) {
+  if (command.buffers.size() != 4) return cudaErrorInvalidValue;
+  const auto dimensions = command.convolution;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& weights = plan.buffers()[command.buffers[1].value()];
+  const auto& state = plan.buffers()[command.buffers[2].value()];
+  const auto& output = plan.buffers()[command.buffers[3].value()];
+  causal_conv_silu_f32<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+      static_cast<const float*>(buffer_pointer(plan, arena, weights.id)),
+      static_cast<std::uint16_t*>(buffer_pointer(plan, arena, state.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), dimensions.channels,
+      dimensions.kernel_size);
   return cudaGetLastError();
 }
 
@@ -1226,6 +1296,36 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       }
       return {};
     }
+    case 24:
+      if (!same_sizes(6) || !all_dtype(ir::physical::PhysicalDType::f32)) {
+        return base::Status::invalid_argument(
+            "CUDA gated-delta parameters require six equal-sized f32 buffers");
+      }
+      return {};
+    case 25: {
+      if (!exact_buffers(4) || !has_dtype(0, ir::physical::PhysicalDType::f32) ||
+          !has_dtype(1, ir::physical::PhysicalDType::f32) ||
+          !has_dtype(2, ir::physical::PhysicalDType::bf16) ||
+          !has_dtype(3, ir::physical::PhysicalDType::f32)) {
+        return base::Status::invalid_argument(
+            "CUDA causal convolution requires f32 input/weights/output and BF16 state");
+      }
+      const auto dimensions = command.convolution;
+      const auto& input = plan.buffers()[command.buffers[0].value()];
+      const auto& weights = plan.buffers()[command.buffers[1].value()];
+      const auto& state = plan.buffers()[command.buffers[2].value()];
+      const auto& output = plan.buffers()[command.buffers[3].value()];
+      if (dimensions.channels == 0 || dimensions.kernel_size == 0 || input.size !=
+              static_cast<std::uint64_t>(dimensions.channels) * sizeof(float) ||
+          output.size != input.size || weights.size !=
+              static_cast<std::uint64_t>(dimensions.channels) * dimensions.kernel_size *
+                  sizeof(float) || state.size !=
+              static_cast<std::uint64_t>(dimensions.channels) * dimensions.kernel_size *
+                  sizeof(std::uint16_t)) {
+        return base::Status::invalid_argument("CUDA causal convolution dimensions do not match buffers");
+      }
+      return {};
+    }
     default:
       return base::Status::unsupported("CUDA kernel ID is not registered");
   }
@@ -1254,6 +1354,8 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 21: return &launch_split;
     case 22: return &launch_cache_append;
     case 23: return &launch_attention_bf16_cache;
+    case 24: return &launch_gated_delta_parameters;
+    case 25: return &launch_causal_conv_silu;
     default: return nullptr;
   }
 }

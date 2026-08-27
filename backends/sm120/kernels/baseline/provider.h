@@ -154,6 +154,18 @@ class BaselineProvider final : public kernels::KernelProvider {
       }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{10}, "sm120.baseline", true, 0}};
     }
+    if (query.operation == "linear") {
+      if (query.operand_count != 0 && query.operand_count != 3) {
+        return base::Status::unsupported("baseline linear requires input, weights, and output operands");
+      }
+      if (!query.operand_dtypes.empty() &&
+          (query.operand_dtypes.size() != 3 ||
+           std::any_of(query.operand_dtypes.begin(), query.operand_dtypes.end(),
+                       [](std::string_view dtype) { return dtype != "f32"; }))) {
+        return base::Status::unsupported("baseline linear requires f32 physical operands");
+      }
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{10}, "sm120.baseline", true, 0}};
+    }
     if (query.operation == "gated_dense_ffn") {
       if (query.storage_dtype != "f32") {
         return base::Status::unsupported("baseline gated FFN does not support the requested storage dtype");
@@ -236,6 +248,30 @@ class BaselineProvider final : public kernels::KernelProvider {
         return base::Status::unsupported("baseline BF16-cache attention requires f32 query/output and BF16 cache");
       }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{23}, "sm120.baseline", true, 0}};
+    }
+    if (query.operation == "gated_delta_parameters") {
+      if (query.operand_count != 0 && query.operand_count != 6) {
+        return base::Status::unsupported("baseline gated-delta parameters require six operands");
+      }
+      if (!query.operand_dtypes.empty() &&
+          (query.operand_dtypes.size() != 6 ||
+           std::any_of(query.operand_dtypes.begin(), query.operand_dtypes.end(),
+                       [](std::string_view dtype) { return dtype != "f32"; }))) {
+        return base::Status::unsupported("baseline gated-delta parameters require f32 operands");
+      }
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{24}, "sm120.baseline", true, 0}};
+    }
+    if (query.operation == "causal_conv_silu") {
+      if (query.operand_count != 0 && query.operand_count != 4) {
+        return base::Status::unsupported("baseline causal convolution requires four operands");
+      }
+      if (!query.operand_dtypes.empty() &&
+          (query.operand_dtypes.size() != 4 || query.operand_dtypes[0] != "f32" ||
+           query.operand_dtypes[1] != "f32" || query.operand_dtypes[2] != "bf16" ||
+           query.operand_dtypes[3] != "f32")) {
+        return base::Status::unsupported("baseline causal convolution requires f32/BF16/f32 operands");
+      }
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{25}, "sm120.baseline", true, 0}};
     }
     return base::Status::unsupported("no executable baseline candidate for operation");
   }

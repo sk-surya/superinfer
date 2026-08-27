@@ -181,6 +181,45 @@ superinfer::ir::physical::Plan make_split_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_gated_delta_parameters_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({48, 0, 1});
+  for (std::uint64_t offset = 0; offset < 48; offset += 8) {
+    assert(builder.add_buffer(offset, 8, 8,
+                              typed_tensor(ir::physical::PhysicalDType::f32, {2})).has_value());
+  }
+  assert(builder.add_command(base::KernelId{24},
+                             {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                              ir::physical::BufferId{2}, ir::physical::BufferId{3},
+                              ir::physical::BufferId{4}, ir::physical::BufferId{5}}, {}, 0, 0, 0)
+             .has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
+superinfer::ir::physical::Plan make_causal_conv_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({40, 0, 1});
+  assert(builder.add_buffer(0, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {2})).has_value());
+  assert(builder.add_buffer(8, 16, 8,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {2, 2})).has_value());
+  assert(builder.add_buffer(24, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::bf16, {2, 2})).has_value());
+  assert(builder.add_buffer(32, 8, 8,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {2})).has_value());
+  assert(builder.add_command(base::KernelId{25},
+                             {ir::physical::BufferId{0}, ir::physical::BufferId{1},
+                              ir::physical::BufferId{2}, ir::physical::BufferId{3}}, {}, 0, 0, 0,
+                             1.0e-5F, 1.0F, {}, false, {}, {}, {}, {2, 2}).has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 superinfer::ir::physical::Plan make_embedding_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
@@ -561,6 +600,72 @@ int main() {
           reinterpret_cast<std::byte*>(split_second.data()), sizeof(split_second))).ok());
   assert((split_first == std::array<float, 2>{1.0F, 2.0F}));
   assert((split_second == std::array<float, 2>{3.0F, 4.0F}));
+
+  const auto parameters_plan = make_gated_delta_parameters_plan();
+  auto parameters = sm120::cuda_runtime::CudaPlanSession::create(
+      parameters_plan, 120, "baseline-v1");
+  assert(parameters.has_value());
+  const float log_two = std::log(2.0F);
+  const std::array<float, 2> parameter_input_a{0.0F, 1.0F};
+  const std::array<float, 2> parameter_input_b{0.0F, 1.0F};
+  const std::array<float, 2> parameter_a_log{0.0F, log_two};
+  const std::array<float, 2> parameter_dt_bias{0.0F, 0.0F};
+  for (const auto& upload : std::array<std::pair<ir::physical::BufferId, base::ConstByteView>, 4>{
+           {{ir::physical::BufferId{0}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(parameter_input_a.data()), sizeof(parameter_input_a))},
+            {ir::physical::BufferId{1}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(parameter_input_b.data()), sizeof(parameter_input_b))},
+            {ir::physical::BufferId{2}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(parameter_a_log.data()), sizeof(parameter_a_log))},
+            {ir::physical::BufferId{3}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(parameter_dt_bias.data()), sizeof(parameter_dt_bias))}}}) {
+    assert(parameters.value().copy_to_device(upload.first, upload.second).ok());
+  }
+  assert(parameters.value().execute().ok());
+  assert(parameters.value().synchronize_for_test().ok());
+  std::array<float, 2> parameter_log_decay{};
+  std::array<float, 2> parameter_beta{};
+  assert(parameters.value().copy_from_device(
+      ir::physical::BufferId{4}, base::ByteView(
+          reinterpret_cast<std::byte*>(parameter_log_decay.data()), sizeof(parameter_log_decay))).ok());
+  assert(parameters.value().copy_from_device(
+      ir::physical::BufferId{5}, base::ByteView(
+          reinterpret_cast<std::byte*>(parameter_beta.data()), sizeof(parameter_beta))).ok());
+  assert(std::abs(parameter_log_decay[0] + std::log(2.0F)) < 1.0e-5F);
+  assert(std::abs(parameter_log_decay[1] + 2.0F *
+                 (1.0F + std::log1p(std::exp(-1.0F)))) < 1.0e-5F);
+  assert(std::abs(parameter_beta[0] - 0.5F) < 1.0e-5F);
+  assert(std::abs(parameter_beta[1] - 1.0F / (1.0F + std::exp(-1.0F))) < 1.0e-5F);
+
+  const auto convolution_plan = make_causal_conv_plan();
+  auto convolution = sm120::cuda_runtime::CudaPlanSession::create(
+      convolution_plan, 120, "baseline-v1");
+  assert(convolution.has_value());
+  const std::array<float, 2> convolution_input{5.0F, 6.0F};
+  const std::array<float, 4> convolution_weights{1.0F, 2.0F, 3.0F, 4.0F};
+  const std::array<std::uint16_t, 4> convolution_state{0x3f80, 0x4000, 0x4040, 0x4080};
+  assert(convolution.value().copy_to_device(
+      ir::physical::BufferId{0}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(convolution_input.data()), sizeof(convolution_input))).ok());
+  assert(convolution.value().copy_to_device(
+      ir::physical::BufferId{1}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(convolution_weights.data()), sizeof(convolution_weights))).ok());
+  assert(convolution.value().copy_to_device(
+      ir::physical::BufferId{2}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(convolution_state.data()), sizeof(convolution_state))).ok());
+  assert(convolution.value().execute().ok());
+  assert(convolution.value().synchronize_for_test().ok());
+  std::array<float, 2> convolution_output{};
+  std::array<std::uint16_t, 4> convolution_state_output{};
+  assert(convolution.value().copy_from_device(
+      ir::physical::BufferId{3}, base::ByteView(
+          reinterpret_cast<std::byte*>(convolution_output.data()), sizeof(convolution_output))).ok());
+  assert(convolution.value().copy_from_device(
+      ir::physical::BufferId{2}, base::ByteView(
+          reinterpret_cast<std::byte*>(convolution_state_output.data()), sizeof(convolution_state_output))).ok());
+  assert(std::abs(convolution_output[0] - 13.0F / (1.0F + std::exp(-13.0F))) < 1.0e-5F);
+  assert(std::abs(convolution_output[1] - 36.0F / (1.0F + std::exp(-36.0F))) < 1.0e-5F);
+  assert((convolution_state_output == std::array<std::uint16_t, 4>{0x4040, 0x4080, 0x40a0, 0x40c0}));
 
   const auto bf16_cache_attention_plan = make_bf16_cache_attention_plan();
   auto bf16_cache_attention = sm120::cuda_runtime::CudaPlanSession::create(

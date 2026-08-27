@@ -96,6 +96,12 @@ struct CacheAppendDimensions final {
   std::uint32_t capacity{0};
 };
 
+/** Compile-time facts for a depthwise causal convolution over one token row. */
+struct ConvolutionDimensions final {
+  std::uint32_t channels{0};
+  std::uint32_t kernel_size{0};
+};
+
 struct CommandDescriptor final {
   CommandId id;
   base::KernelId kernel;
@@ -111,6 +117,7 @@ struct CommandDescriptor final {
   bool add_one_to_scale{false};
   RopeDimensions rope{};
   CacheAppendDimensions cache_append{};
+  ConvolutionDimensions convolution{};
 };
 
 class PlanBuilder;
@@ -304,7 +311,8 @@ class PlanBuilder final {
                                       bool add_one_to_scale = false,
                                       std::vector<PhysicalOperandDescriptor> operands = {},
                                       RopeDimensions rope = {},
-                                      CacheAppendDimensions cache_append = {}) {
+                                      CacheAppendDimensions cache_append = {},
+                                      ConvolutionDimensions convolution = {}) {
     if (operands.empty()) {
       operands.reserve(buffers.size());
       for (const BufferId buffer : buffers) {
@@ -322,7 +330,8 @@ class PlanBuilder final {
     commands_.push_back({CommandId{commands_.size()}, kernel, std::move(buffers),
                          std::move(operands),
                          std::move(dependencies), stream, workspace_offset, workspace_size,
-                         epsilon, scalar, attention, add_one_to_scale, rope, cache_append});
+                         epsilon, scalar, attention, add_one_to_scale, rope, cache_append,
+                         convolution});
     return commands_.back().id;
   }
 

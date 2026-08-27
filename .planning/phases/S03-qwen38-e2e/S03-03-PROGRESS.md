@@ -34,6 +34,8 @@ broader corpus coverage and final acceptance closure remain open.
 - The corpus `plain-short` fixture passes six decode-replay positions with matching greedy output
   and byte-identical fresh-session captures; per-position metrics are recorded in
   `artifacts/S03/qwen38-e2e-plain-short-decode-differential.json`.
+- The real-artifact capacity guard rejects position `4096` before launch for the configured
+  `kv_capacity=4096`; this remains a boundary-rejection check rather than a full near-boundary run.
 - Failure matrix passes artifact corruption/truncation, target mismatch, injected CUDA fault poisoning,
   and over-capacity continuation rejection; see `artifacts/S03/qwen38-e2e-failure-matrix.json`.
 

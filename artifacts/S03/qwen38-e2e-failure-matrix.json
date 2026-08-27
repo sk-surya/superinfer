@@ -54,7 +54,7 @@
     }
   ],
   "known_limitations": [
-    "The full-model external reference used local Transformers 5.14.1; the planning packet records 5.12.1 as the pinned target.",
+    "The full-model external reference used local Transformers 5.12.1; the corpus records the same pinned runtime.",
     "Failure cases are contract/lifecycle checks; no claim is made that every possible CUDA fault is recoverable in-process."
   ]
 }

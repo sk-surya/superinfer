@@ -174,6 +174,10 @@ updated: 2026-08-26
   deliberately separate from FFN `silu_mul`. Its typed FP32 contract and CUDA fixture validate
   the sigmoid gate equation on RTX 5090; full-attention composition and causal/state semantics
   remain open.
+- A generic RoPE capability (provider/kernel ID 20) now carries explicit heads, head dimension,
+  rotary dimension, position, and theta facts in the Physical Plan. The CUDA implementation uses
+  the pinned half-rotation convention and has a nonzero-position RTX 5090 fixture against an
+  independent host oracle; aggregate Q/K lowering and cache append remain open.
   NVFP4 packed views retain their explicit packed encoding.
 - Lowered IR now retains 128 state slots with explicit read/write/commit transitions and carries
   semantic decode entry bindings. A state transition therefore survives into the representation

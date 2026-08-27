@@ -105,6 +105,22 @@ superinfer::ir::physical::Plan make_sigmoid_mul_plan() {
   return std::move(plan).value();
 }
 
+superinfer::ir::physical::Plan make_rope_plan() {
+  using namespace superinfer;
+  ir::physical::PlanBuilder builder;
+  builder.set_resource_bounds({32, 0, 1});
+  assert(builder.add_buffer(0, 16, 16,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {1, 4})).has_value());
+  assert(builder.add_buffer(16, 16, 16,
+                            typed_tensor(ir::physical::PhysicalDType::f32, {1, 4})).has_value());
+  assert(builder.add_command(base::KernelId{20},
+                             {ir::physical::BufferId{0}, ir::physical::BufferId{1}}, {}, 0, 0, 0,
+                             1.0e-5F, 10000.0F, {}, false, {}, {1, 4, 4, 1}).has_value());
+  const auto plan = std::move(builder).finalize({120, "baseline-v1"});
+  assert(plan.has_value());
+  return std::move(plan).value();
+}
+
 superinfer::ir::physical::Plan make_embedding_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
@@ -398,6 +414,28 @@ int main() {
   for (std::size_t index = 0; index < sigmoid_output.size(); ++index) {
     const float expected = 1.0F / (1.0F + std::exp(-silu_gate[index])) * 2.0F;
     assert(std::abs(sigmoid_output[index] - expected) < 1.0e-5F);
+  }
+
+  const auto rope_plan = make_rope_plan();
+  auto rope = sm120::cuda_runtime::CudaPlanSession::create(rope_plan, 120, "baseline-v1");
+  assert(rope.has_value());
+  const std::array<float, 4> rope_input{1.0F, 0.0F, 0.0F, 1.0F};
+  assert(rope.value().copy_to_device(
+      ir::physical::BufferId{0}, base::ConstByteView(
+          reinterpret_cast<const std::byte*>(rope_input.data()), sizeof(rope_input))).ok());
+  assert(rope.value().execute().ok());
+  assert(rope.value().synchronize_for_test().ok());
+  std::array<float, 4> rope_output{};
+  assert(rope.value().copy_from_device(
+      ir::physical::BufferId{1}, base::ByteView(
+          reinterpret_cast<std::byte*>(rope_output.data()), sizeof(rope_output))).ok());
+  const float cosine_one = std::cos(1.0F);
+  const float sine_one_hundredth = std::sin(0.01F);
+  const float cosine_one_hundredth = std::cos(0.01F);
+  const std::array<float, 4> expected_rope{cosine_one, -sine_one_hundredth,
+                                           std::sin(1.0F), cosine_one_hundredth};
+  for (std::size_t index = 0; index < rope_output.size(); ++index) {
+    assert(std::abs(rope_output[index] - expected_rope[index]) < 1.0e-5F);
   }
 
   const auto rejected_target = sm120::cuda_runtime::CudaPlanSession::create(plan, 89, "baseline-v1");

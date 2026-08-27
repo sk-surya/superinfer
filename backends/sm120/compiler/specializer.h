@@ -174,6 +174,7 @@ class Specializer final {
         std::swap(operands[2], operands[3]);
       }
       ir::physical::AttentionDimensions attention{};
+      ir::physical::RopeDimensions rope{};
       if (requirement.operation == "attention") {
         if (requirement.operands.size() < 4 || requirement.attributes.num_heads == 0 ||
             requirement.attributes.num_kv_heads == 0 || requirement.attributes.head_dimension == 0) {
@@ -188,6 +189,15 @@ class Specializer final {
                      requirement.attributes.head_dimension,
                      static_cast<std::uint32_t>(key_tensor.physical_shape[0])};
       }
+      if (requirement.operation == "rope") {
+        if (requirement.attributes.num_heads == 0 || requirement.attributes.head_dimension == 0 ||
+            requirement.attributes.rope_dimension == 0 ||
+            requirement.attributes.rope_dimension > requirement.attributes.head_dimension) {
+          return base::Status::invalid_argument("rope requirement lacks valid authored dimensions");
+        }
+        rope = {requirement.attributes.num_heads, requirement.attributes.head_dimension,
+                requirement.attributes.rope_dimension, requirement.attributes.rope_position};
+      }
       workspace_bytes = std::max(workspace_bytes, candidate.value().workspace_bytes);
       const float epsilon = (requirement.operation == "rms_norm" ||
                              requirement.operation == "layer_norm")
@@ -199,7 +209,7 @@ class Specializer final {
               ir::semantic::NormScaleConvention::one_plus_weight;
       const auto command = plan_builder.add_command(
           candidate.value().id, std::move(operands), dependencies, 0, 0,
-          candidate.value().workspace_bytes, epsilon, 1.0F, attention, add_one_to_scale);
+          candidate.value().workspace_bytes, epsilon, 1.0F, attention, add_one_to_scale, {}, rope);
       if (!command.has_value()) {
         base::Status error = command.error();
         return error.with_context("physical command");

@@ -82,6 +82,7 @@ struct OperationAttributes final {
   std::uint32_t convolution_kernel_dimension{0};
   std::uint32_t value_head_count{0};
   float epsilon{1.0e-5F};
+  std::uint32_t rope_position{0};
   NormScaleConvention norm_scale_convention{NormScaleConvention::direct_weight};
   AttentionOutputGate attention_output_gate{AttentionOutputGate::none};
 };

@@ -77,7 +77,7 @@ int main() {
   assert(cast_f32_to_bf16.value().front().id.value() == 17);
   const std::vector<std::string_view> invalid_cast{"bf16", "bf16"};
   assert(!provider.enumerate({"cast", 120, "f32", invalid_cast.size(), invalid_cast}).has_value());
-  for (const std::string_view operation : {"elementwise", "rope", "matmul", "moe_route",
+  for (const std::string_view operation : {"elementwise", "matmul", "moe_route",
                                             "activation", "sampling"}) {
     const auto candidates = provider.enumerate({operation, 120});
     assert(!candidates.has_value());

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -43,6 +44,32 @@ __global__ inline void sigmoid_mul_f32(const float* gate, const float* value, fl
   for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < elements;
        index += blockDim.x * gridDim.x) {
     output[index] = (1.0F / (1.0F + expf(-gate[index]))) * value[index];
+  }
+}
+
+__global__ inline void rope_f32(const float* input, float* output, std::size_t heads,
+                                std::size_t head_dimension, std::size_t rotary_dimension,
+                                std::size_t position, float theta) {
+  const std::size_t elements = heads * head_dimension;
+  for (std::size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < elements;
+       index += blockDim.x * gridDim.x) {
+    const std::size_t dimension = index % head_dimension;
+    if (dimension >= rotary_dimension) {
+      output[index] = input[index];
+      continue;
+    }
+    const std::size_t half = rotary_dimension / 2U;
+    const std::size_t pair = dimension < half ? dimension : dimension - half;
+    const float inverse_frequency = powf(theta, -2.0F * static_cast<float>(pair) /
+                                                  static_cast<float>(rotary_dimension));
+    const float angle = static_cast<float>(position) * inverse_frequency;
+    const float cosine = cosf(angle);
+    const float sine = sinf(angle);
+    const std::size_t base = index - dimension;
+    const float first = input[base + pair];
+    const float second = input[base + pair + half];
+    output[index] = dimension < half ? first * cosine - second * sine
+                                     : second * cosine + first * sine;
   }
 }
 
@@ -566,6 +593,21 @@ inline cudaError_t launch_sigmoid_mul(const ir::physical::CommandDescriptor& com
   return cudaGetLastError();
 }
 
+inline cudaError_t launch_rope(const ir::physical::CommandDescriptor& command,
+                               const ir::physical::Plan& plan, void* arena, void*,
+                               cudaStream_t stream) {
+  if (command.buffers.size() != 2) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& output = plan.buffers()[command.buffers[1].value()];
+  const auto dimensions = command.rope;
+  rope_f32<<<1, 256, 0, stream>>>(
+      static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), dimensions.heads,
+      dimensions.head_dimension, dimensions.rotary_dimension, dimensions.position,
+      command.scalar);
+  return cudaGetLastError();
+}
+
 inline cudaError_t launch_rms_norm(const ir::physical::CommandDescriptor& command,
                                    const ir::physical::Plan& plan, void* arena, void*,
                                    cudaStream_t stream) {
@@ -939,6 +981,20 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
         return base::Status::invalid_argument("CUDA sigmoid multiply requires three equal-sized f32 buffers");
       }
       return {};
+    case 20: {
+      if (!exact_buffers(2) || !all_dtype(ir::physical::PhysicalDType::f32)) {
+        return base::Status::invalid_argument("CUDA RoPE requires two equal-sized f32 buffers");
+      }
+      const auto dimensions = command.rope;
+      if (dimensions.heads == 0 || dimensions.head_dimension == 0 ||
+          dimensions.rotary_dimension == 0 || dimensions.rotary_dimension > dimensions.head_dimension ||
+          dimensions.rotary_dimension % 2 != 0 || !std::isfinite(command.scalar) ||
+          command.scalar <= 1.0F || plan.buffers()[command.buffers[0].value()].size !=
+              static_cast<std::uint64_t>(dimensions.heads) * dimensions.head_dimension * sizeof(float)) {
+        return base::Status::invalid_argument("CUDA RoPE dimensions or theta are invalid");
+      }
+      return {};
+    }
     default:
       return base::Status::unsupported("CUDA kernel ID is not registered");
   }
@@ -963,6 +1019,7 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 6: return &launch_layer_norm;
     case 18: return &launch_silu_mul;
     case 19: return &launch_sigmoid_mul;
+    case 20: return &launch_rope;
     default: return nullptr;
   }
 }

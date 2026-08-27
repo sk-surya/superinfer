@@ -190,6 +190,17 @@ class BaselineProvider final : public kernels::KernelProvider {
       }
       return std::vector<kernels::KernelCandidate>{{base::KernelId{19}, "sm120.baseline", true, 0}};
     }
+    if (query.operation == "rope") {
+      if (query.operand_count != 0 && query.operand_count != 2) {
+        return base::Status::unsupported("baseline RoPE requires input and output operands");
+      }
+      if (!query.operand_dtypes.empty() &&
+          (query.operand_dtypes.size() != 2 || query.operand_dtypes[0] != "f32" ||
+           query.operand_dtypes[1] != "f32")) {
+        return base::Status::unsupported("baseline RoPE requires f32 operands");
+      }
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{20}, "sm120.baseline", true, 0}};
+    }
     return base::Status::unsupported("no executable baseline candidate for operation");
   }
 };

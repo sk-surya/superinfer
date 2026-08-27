@@ -86,5 +86,6 @@ These are layer correctness checkpoints, not full-model or token-generation acce
 fixtures intentionally retain explicit command boundaries and use GPU 0 only. S03-03 now also
 captures a statically unrolled three-token `prefill` entry from the real artifact, with all logits
 compared against the independent reference and byte-identical fresh-session captures. This is a
-correctness checkpoint, not a performance claim; broader prompt corpus and near-boundary execution
-remain open until the final S03 acceptance report is closed.
+correctness checkpoint, not a performance claim. The corpus special-token fixture has the same
+independent token/logit and repeatability evidence; broader prompt corpus and near-boundary
+execution remain open until the final S03 acceptance report is closed.

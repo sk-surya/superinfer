@@ -1,0 +1,60 @@
+{
+  "kind": "qwen38_artifact_acceptance_failure_matrix",
+  "status": "pass",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "target": "GPU 0 NVIDIA GeForce RTX 5090 sm_120a",
+  "cases": [
+    {
+      "name": "artifact_corruption_and_truncation",
+      "test": "superinfer.artifact.binary",
+      "lane": "CPU",
+      "result": "pass",
+      "evidence": "tests/integration/artifact/artifact_test.cpp"
+    },
+    {
+      "name": "target_fingerprint_mismatch_and_invalid_kernel_plan",
+      "test": "superinfer.sm120.cuda_plan_executor",
+      "lane": "CUDA GPU0",
+      "result": "pass",
+      "evidence": "tests/gpu/sm120/cuda_plan_executor_test.cu"
+    },
+    {
+      "name": "controlled_async_cuda_fault_poisoning",
+      "command": "SUPERINFER_INJECT_ASYNC_FAULT=1 build/cuda-sm120a/tests/superinfer_sm120_cuda_plan_executor",
+      "lane": "CUDA GPU0",
+      "result": "pass",
+      "evidence": "tests/gpu/sm120/cuda_plan_executor_test.cu"
+    },
+    {
+      "name": "decode_position_at_capacity_rejected",
+      "command": "SUPERINFER_QWEN38_CAPACITY_REJECTION=1 .../superinfer_sm120_qwen38_e2e_artifact",
+      "lane": "CUDA GPU0",
+      "result": "pass",
+      "diagnostic": "capacity_rejection=pass; position 4096 rejected for capacity 4096 before launch"
+    },
+    {
+      "name": "fresh_session_repeatability",
+      "lane": "CUDA GPU0",
+      "result": "pass",
+      "diagnostic": "two-token step0 and step1 FP32 captures are byte-identical across two fresh sessions",
+      "sha256": {
+        "step0": "5ec2da93324f9eae293b469aab61b86048f5082824ca0c4e688a8743d0a90952",
+        "step1": "9ed969d317af8e18ac6cabbc968cff20b43eb6529ad61ce0e7c900fc5f48b2df"
+      }
+    },
+    {
+      "name": "artifact_bound_plan_capacity",
+      "command": "superinfer_qwen38_artifact_plan_compile",
+      "lane": "CPU/CUDA build plus artifact",
+      "result": "pass",
+      "diagnostic": "4826 lowered tensors, 2424 commands, 2001 artifact buffers, kv_capacity=4096"
+    }
+  ],
+  "known_limitations": [
+    "The full-model external reference used local Transformers 5.14.1; the planning packet records 5.12.1 as the pinned target.",
+    "Failure cases are contract/lifecycle checks; no claim is made that every possible CUDA fault is recoverable in-process."
+  ]
+}

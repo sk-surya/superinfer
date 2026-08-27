@@ -1,0 +1,63 @@
+{
+  "kind": "qwen38_artifact_full_graph_two_token_differential",
+  "status": "pass_token_alignment_with_quantized_logit_drift",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "workload": {
+    "tokens": [0, 49276],
+    "layers": 64,
+    "commands_per_segment": 2424,
+    "commands_total": 4848,
+    "state_buffers": 128,
+    "arena_bytes": 19190769152
+  },
+  "target": {
+    "gpu": 0,
+    "name": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a",
+    "cuda_visible_devices": "0",
+    "cuda_launch_blocking": true
+  },
+  "superinfer": {
+    "capture_step0": "build/evidence/qwen38-e2e-two.step0.f32",
+    "capture_step1": "build/evidence/qwen38-e2e-two.step1.f32",
+    "capture_sha256": {
+      "step0": "5ec2da93324f9eae293b469aab61b86048f5082824ca0c4e688a8743d0a90952",
+      "step1": "9ed969d317af8e18ac6cabbc968cff20b43eb6529ad61ce0e7c900fc5f48b2df"
+    },
+    "greedy_sequence": [49276, 2349],
+    "checksum_f32": [-792468.9452675581, -321057.8220139146]
+  },
+  "reference": {
+    "implementation": "streamed Qwen3_5DecoderLayer with shared DynamicCache",
+    "transformers_version": "5.14.1",
+    "pinned_source_contract": "Qwen3.8 qwen3_5 architecture; local Transformers version differs from planned 5.12.1",
+    "tokens": [0, 49276],
+    "capture": "build/evidence/qwen38-reference-two.logits.f32",
+    "capture_sha256": "b7d73779caf7faba067c158971265cc1bab0ab1656f94e329dc5dfb6c0187739",
+    "greedy_sequence": [49276, 2349],
+    "checksum_f32": [-792161.3291572034, -322603.0592730064]
+  },
+  "comparison": {
+    "greedy_token_match": true,
+    "steps": [
+      {
+        "step": 0,
+        "max_abs": 0.17594313621520996,
+        "mean_abs": 0.02742159980656483,
+        "rmse": 0.03465115864337397,
+        "max_abs_index": 61069
+      },
+      {
+        "step": 1,
+        "max_abs": 0.17780008912086487,
+        "mean_abs": 0.027897859724787887,
+        "rmse": 0.03540159111608695,
+        "max_abs_index": 11556
+      }
+    ],
+    "quality_claim": "two-token greedy alignment only; full S03 acceptance remains open until repeatability and failure matrix pass"
+  }
+}

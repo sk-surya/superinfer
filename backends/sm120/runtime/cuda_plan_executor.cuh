@@ -1563,6 +1563,50 @@ class CudaPlanSession final {
     return {};
   }
 
+  /**
+   * Executes one continuation segment with a supplied physical decode position.
+   *
+   * This test/profiling entry point reuses the validated command schedule and only updates the
+   * position fields of already-bound cache, RoPE, and full-attention commands. It performs no
+   * allocation or model dispatch; production execution uses execute() with compile-time position
+   * specialization.
+   */
+  base::Status execute_at_position_for_test(std::uint32_t position) noexcept {
+    if (poisoned_) return base::Status::failed_precondition("CUDA session is poisoned");
+    std::uint32_t cache_capacity = 0;
+    for (const auto& command : commands_plan_) {
+      if (command.cache_append.capacity != 0) {
+        cache_capacity = command.cache_append.capacity;
+        break;
+      }
+    }
+    if (cache_capacity == 0 || position >= cache_capacity) {
+      return base::Status::out_of_range("CUDA decode position exceeds physical cache capacity");
+    }
+    for (const std::size_t command_index : command_order_) {
+      ir::physical::CommandDescriptor command = commands_plan_[command_index];
+      if (command.cache_append.capacity != 0) command.cache_append.position = position;
+      if (command.rope.heads != 0) command.rope.position = position;
+      if (command.attention.positions != 0 && command.cache_append.capacity == 0 &&
+          command.attention.value_heads == 0) {
+        command.attention.positions = position + 1U;
+      }
+      cudaStream_t stream = streams_[command.stream].get();
+      for (const ir::physical::CommandId dependency : command.dependencies) {
+        const cudaError_t wait_error = cudaStreamWaitEvent(stream, events_[dependency.value()].get(), 0);
+        if (wait_error != cudaSuccess) return poison(wait_error, "cudaStreamWaitEvent");
+      }
+      const cudaError_t launch_error = launchers_[command_index](
+          command, plan_, device_arena_.data(), workspace_.data(), stream);
+      if (launch_error != cudaSuccess) return poison(launch_error, "baseline continuation launch");
+      const cudaError_t record_error = cudaEventRecord(events_[command_index].get(), stream);
+      if (record_error != cudaSuccess) return poison(record_error, "cudaEventRecord");
+      ++trace_.commands_executed;
+      ++trace_.launches;
+    }
+    return {};
+  }
+
   /** Explicit test/profiling synchronization; never called by execute(). */
   base::Status synchronize_for_test() noexcept {
     if (poisoned_) return base::Status::failed_precondition("CUDA session is poisoned");

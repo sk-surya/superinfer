@@ -72,6 +72,8 @@ def main() -> int:
     parser.add_argument("--boundaries-output", type=Path,
                         help="optional FP32 output path for the post-layer hidden rows")
     parser.add_argument("--token", type=int, default=0)
+    parser.add_argument("--tokens", type=str,
+                        help="comma-separated token IDs for a shared-cache continuation")
     parser.add_argument("--round-activations", action="store_true",
                         help="round layer outputs through BF16 to model the deployment contract")
     args = parser.parse_args()
@@ -85,58 +87,71 @@ def main() -> int:
     index = json.loads((args.model_dir / "model.safetensors.index.json").read_text())["weight_map"]
     torch.set_num_threads(max(1, min(32, torch.get_num_threads())))
 
+    tokens = ([int(value) for value in args.tokens.split(",") if value.strip()]
+              if args.tokens is not None else [args.token])
+    if not tokens:
+        raise ValueError("--tokens must contain at least one token ID")
     embedding = _tensor(args.model_dir, index, "model.language_model.embed_tokens.weight").to(torch.float32)
-    hidden = embedding[args.token].reshape(1, 1, -1)
     del embedding
     cache = DynamicCache(config=config)
-    position_ids = torch.zeros((1, 1), dtype=torch.long)
     rotary = Qwen3_5TextRotaryEmbedding(config)
-    position_embeddings = rotary(hidden, position_ids)
-    causal_mask = torch.zeros((1, 1, 1, 1), dtype=torch.float32)
+    logit_rows = []
+    hidden_rows = []
+    greedy_sequence = []
 
     with torch.inference_mode():
         boundaries = []
-        for layer_index in range(config.num_hidden_layers):
-            layer = _load_layer(args.model_dir, index, config, layer_index)
-            output = layer(hidden, position_embeddings=position_embeddings,
-                           attention_mask=causal_mask, position_ids=position_ids,
-                           past_key_values=cache)
-            hidden = output[0] if isinstance(output, tuple) else output
-            if args.round_activations:
-                hidden = hidden.to(torch.bfloat16).to(torch.float32)
-            if args.boundaries_output is not None:
-                boundaries.append(hidden.reshape(-1).contiguous().numpy().astype("float32"))
-            del layer
-            gc.collect()
+        for position, token in enumerate(tokens):
+            hidden = _tensor(args.model_dir, index,
+                             "model.language_model.embed_tokens.weight")[token].to(torch.float32)
+            hidden = hidden.reshape(1, 1, -1)
+            position_ids = torch.full((1, 1), position, dtype=torch.long)
+            position_embeddings = rotary(hidden, position_ids)
+            causal_mask = torch.zeros((1, 1, 1, position + 1), dtype=torch.float32)
+            for layer_index in range(config.num_hidden_layers):
+                layer = _load_layer(args.model_dir, index, config, layer_index)
+                output = layer(hidden, position_embeddings=position_embeddings,
+                               attention_mask=causal_mask, position_ids=position_ids,
+                               past_key_values=cache)
+                hidden = output[0] if isinstance(output, tuple) else output
+                if args.round_activations:
+                    hidden = hidden.to(torch.bfloat16).to(torch.float32)
+                if args.boundaries_output is not None:
+                    boundaries.append(hidden.reshape(-1).contiguous().numpy().astype("float32"))
+                del layer
+                gc.collect()
 
-        final_norm = _tensor(args.model_dir, index, "model.language_model.norm.weight").to(torch.float32)
-        hidden = _rms_norm(hidden, final_norm, config.rms_norm_eps)
-        del final_norm
-        if args.hidden_output is not None:
-            args.hidden_output.parent.mkdir(parents=True, exist_ok=True)
-            args.hidden_output.write_bytes(
-                hidden.reshape(-1).contiguous().numpy().astype("float32").tobytes())
-        lm_head = _nvfp4(args.model_dir, index, "lm_head.weight")
-        logits = F.linear(hidden.reshape(1, -1), lm_head)
+            final_norm = _tensor(args.model_dir, index, "model.language_model.norm.weight").to(torch.float32)
+            hidden = _rms_norm(hidden, final_norm, config.rms_norm_eps)
+            del final_norm
+            if args.hidden_output is not None:
+                hidden_rows.append(hidden.reshape(-1).contiguous().numpy().astype("float32"))
+            lm_head = _nvfp4(args.model_dir, index, "lm_head.weight")
+            logits = F.linear(hidden.reshape(1, -1), lm_head)
+            logit_rows.append(logits.reshape(-1).contiguous().numpy().astype("float32"))
+            greedy_sequence.append(int(torch.argmax(logits, dim=-1).item()))
 
     if args.boundaries_output is not None:
         args.boundaries_output.parent.mkdir(parents=True, exist_ok=True)
         args.boundaries_output.write_bytes(b"".join(row.tobytes() for row in boundaries))
 
-    values = logits.reshape(-1).contiguous().numpy().astype("float32")
+    if args.hidden_output is not None:
+        args.hidden_output.parent.mkdir(parents=True, exist_ok=True)
+        args.hidden_output.write_bytes(b"".join(row.tobytes() for row in hidden_rows))
+    values = b"".join(row.tobytes() for row in logit_rows)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_bytes(values.tobytes())
-    best = int(torch.argmax(logits, dim=-1).item())
+    args.output.write_bytes(values)
     diagnostics = {
         "model": "Qwen3.8-27B-NVFP4-RTX5090",
         "reference": "transformers Qwen3_5DecoderLayer streamed one layer at a time",
         "transformers_version": __import__("transformers").__version__,
-        "token": args.token,
+        "tokens": tokens,
         "layers": config.num_hidden_layers,
-        "logits": int(values.size),
-        "greedy": best,
-        "checksum": float(values.sum()),
-        "output_sha256": __import__("hashlib").sha256(values.tobytes()).hexdigest(),
+        "steps": len(tokens),
+        "logits_per_step": 248320,
+        "greedy_sequence": greedy_sequence,
+        "checksum": float(sum(float(row.sum()) for row in logit_rows)),
+        "output_sha256": __import__("hashlib").sha256(values).hexdigest(),
     }
     args.output.with_suffix(".json").write_text(json.dumps(diagnostics, indent=2) + "\n")
     return 0

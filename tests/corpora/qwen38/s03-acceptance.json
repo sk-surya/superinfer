@@ -1,0 +1,66 @@
+{
+  "schema": "superinfer.qwen38.s03.acceptance.v1",
+  "model": "Qwen3.8-27B-NVFP4-RTX5090",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "tokenizer": {
+    "class": "Qwen2Tokenizer",
+    "vocab_size": 248044,
+    "eos_token_id": 248046,
+    "files": {
+      "tokenizer.json": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+      "tokenizer_config.json": "c873857aae349387312ff4cb76d4a17a8d5ed79f89523146200a1570739132db",
+      "chat_template.jinja": "0a20a4673d45476ed88dcb4a60b6af35ca202ae470fee6fd2bd419758aabd9ab"
+    }
+  },
+  "reference": {
+    "implementation": "Transformers Qwen3_5TextConfig/Qwen3_5DecoderLayer with shared DynamicCache",
+    "local_version": "5.14.1",
+    "planned_version": "5.12.1",
+    "comparison_dtype": "FP32 logits after BF16 SuperInfer output conversion"
+  },
+  "cases": [
+    {
+      "id": "plain-short",
+      "text": "Hello, SuperInfer.",
+      "token_ids": [9419, 11, 7070, 623, 776, 13],
+      "token_count": 6,
+      "token_ids_sha256": "0d807749a8af1082ce33dde2057ab580a72be144626e613d1b14ee3e2566dfdb"
+    },
+    {
+      "id": "unicode",
+      "text": "こんにちは — RTX 5090 🚀",
+      "token_ids": [85951, 1892, 220497, 220, 20, 15, 24, 15, 10838, 248, 222],
+      "token_count": 11,
+      "token_ids_sha256": "34e1651fb743753f7bfad4bd3f8b4caf1a75c3de2ca3f970c688dba5db32611b"
+    },
+    {
+      "id": "special-tokens",
+      "text": "<|im_start|>user<|im_end|>",
+      "token_ids": [248045, 846, 248046],
+      "token_count": 3,
+      "token_ids_sha256": "805e3f755fda54d26870813f144648f28d578c224afee04ed1e497038c3c9f1c"
+    },
+    {
+      "id": "varied-length",
+      "text": "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. ",
+      "token_count": 81,
+      "token_ids_sha256": "e5b5d7c36daeff4116755647cb4b928e6e45262fca3f3b2f00c2cd5ae30d16fa"
+    },
+    {
+      "id": "chat-template",
+      "messages": [{"role": "user", "content": "Explain why state must be explicit."}],
+      "add_generation_prompt": true,
+      "token_count": 60,
+      "token_ids": [248045, 8678, 198, 24342, 286, 4879, 369, 716, 310, 830, 11553, 13, 5044, 1683, 15060, 1472, 279, 3274, 11, 9307, 1328, 30800, 11, 2814, 47675, 25605, 11, 321, 60445, 55404, 11, 27224, 11, 321, 30246, 303, 279, 1534, 4087, 13, 248046, 198, 248045, 846, 198, 814, 20139, 3069, 1528, 1902, 381, 11135, 13, 248046, 198, 248045, 74455, 198, 248068, 198],
+      "token_ids_sha256": "65b03bf61161b8988c9ff7c9235e4f2a7750fe103fee7be5de511504ed6252d7"
+    }
+  ],
+  "acceptance": {
+    "greedy": true,
+    "declared_kv_capacity": 4096,
+    "near_boundary_case": "reserved for static-plan rejection/continuation harness; full 4096-token GPU run is not claimed by S03 current evidence"
+  }
+}

@@ -1,6 +1,6 @@
 {
   "kind": "qwen38_artifact_full_graph_token_differential",
-  "status": "token_alignment_pass_vector_capture_pending",
+  "status": "pass_token_alignment_with_quantized_logit_drift",
   "artifact": {
     "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
     "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
@@ -21,7 +21,10 @@
   "superinfer": {
     "greedy": 49276,
     "top_logit_bf16": 11.6875,
-    "checksum_bf16": -792475.0
+    "checksum_bf16": -792475.0,
+    "capture_f32": "build/evidence/qwen38-e2e-two.step0.f32",
+    "capture_sha256": "5ec2da93324f9eae293b469aab61b86048f5082824ca0c4e688a8743d0a90952",
+    "checksum_f32": -792468.9452675581
   },
   "reference": {
     "implementation": "streamed Qwen3_5DecoderLayer with DynamicCache",
@@ -32,7 +35,12 @@
   },
   "comparison": {
     "greedy_token_match": true,
-    "vector_error": "not_recorded_until_completed_capture",
-    "quality_claim": "token alignment only; S03 is not complete"
+    "vector_error": {
+      "max_abs": 0.17594313621520996,
+      "mean_abs": 0.02742159980656483,
+      "rmse": 0.03465115864337397,
+      "max_abs_index": 61069
+    },
+    "quality_claim": "single-token alignment with quantized-logit drift; S03 is not complete"
   }
 }

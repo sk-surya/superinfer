@@ -17,6 +17,12 @@ repeatability, failure behavior, and the final machine-readable acceptance repor
   the local offline environment; the pinned source/model identities remain recorded by the artifact.
 - Token 0: SuperInfer greedy `49276`, logit `11.6875`, checksum `-792475`; reference greedy `49276`,
   checksum `-792161.3125`.
+- Two-token continuation: SuperInfer greedy sequence `49276, 2349`; reference sequence `49276, 2349`.
+- Full FP32 logits and per-step max/mean/RMSE are recorded in
+  `artifacts/S03/qwen38-e2e-two-token-differential.json`. Two fresh GPU sessions produced byte-identical
+  step captures.
+- Failure matrix passes artifact corruption/truncation, target mismatch, injected CUDA fault poisoning,
+  and over-capacity continuation rejection; see `artifacts/S03/qwen38-e2e-failure-matrix.json`.
 
 ## Debugging record
 
@@ -29,6 +35,13 @@ fallback only for tiny structural fixtures. A missing final RMSNorm and missing 
 
 ## Next boundary
 
-Add decode-position/state-continuation execution for at least two token segments, compare selected
-intermediates and final logits against the external reference, then add deterministic repeatability,
-capacity rejection, corruption/failure, and acceptance-report evidence.
+The two-token continuation now executes successfully on GPU 0. The test-only position replay path
+reuses the validated 2,424-command schedule, mutates only cache append/RoPE/full-attention position
+fields, and completes with 4,848 command launches. The greedy sequence is `49276, 2349`, matching
+the shared-cache Transformers reference. Full-vector drift is recorded per step in
+`artifacts/S03/qwen38-e2e-two-token-differential.json`; it is quantized-logit drift, not a token
+divergence. The local reference environment is Transformers 5.14.1 rather than the planned 5.12.1.
+
+The remaining acceptance work is the final reviewed corpus/report packaging and any additional prompt
+fixtures required by the plan (chat/Unicode/near-boundary coverage). S03F-02 remains blocked until
+that S03 acceptance is explicitly closed.

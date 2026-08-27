@@ -176,6 +176,16 @@ int main() {
   }
   auto session = std::move(session_result).value();
 
+  bool capacity_rejected = false;
+  if (std::getenv("SUPERINFER_QWEN38_CAPACITY_REJECTION") != nullptr) {
+    const auto rejection = session.execute_at_position_for_test(4096);
+    if (rejection.ok()) {
+      std::cerr << "over-capacity continuation was accepted\n";
+      return 1;
+    }
+    capacity_rejected = true;
+  }
+
   for (const auto& binding : resolved.value()) {
     const auto status = session.copy_to_device(binding.buffer, binding.payload);
     if (!status.ok()) {
@@ -261,6 +271,66 @@ int main() {
     }
     if (!capture.good()) return 1;
   }
+  std::size_t continuation_best = 0;
+  float continuation_best_value = 0.0F;
+  const char* continuation_capture_path =
+      std::getenv("SUPERINFER_QWEN38_CONTINUATION_LOGITS_F32");
+  if (std::getenv("SUPERINFER_QWEN38_CONTINUATION") != nullptr) {
+    std::cerr << "continuation: begin\n";
+    const std::uint32_t continuation_token = static_cast<std::uint32_t>(best);
+    const auto token_status = session.copy_to_device(
+        entry.inputs.front(), {reinterpret_cast<const std::byte*>(&continuation_token),
+                               sizeof(continuation_token)});
+    if (!token_status.ok()) {
+      std::cerr << "continuation token upload failed: " << token_status.message() << '\n';
+      return 1;
+    }
+    std::cerr << "continuation: token uploaded\n";
+    const auto continuation_status = session.execute_at_position_for_test(1);
+    if (!continuation_status.ok()) {
+      std::cerr << "Qwen continuation launch failed: " << continuation_status.message() << '\n';
+      return 1;
+    }
+    std::cerr << "continuation: commands launched\n";
+    const auto continuation_sync = session.synchronize_for_test();
+    if (!continuation_sync.ok()) {
+      std::cerr << "Qwen continuation synchronization failed: "
+                << continuation_sync.message() << '\n';
+      return 1;
+    }
+    std::cerr << "continuation: synchronized\n";
+    std::vector<std::uint16_t> continuation_logits(logits.size());
+    const auto continuation_copy = session.copy_from_device(
+        entry.outputs.front(), {reinterpret_cast<std::byte*>(continuation_logits.data()),
+                                output.size});
+    if (!continuation_copy.ok()) {
+      std::cerr << "continuation logits download failed: " << continuation_copy.message() << '\n';
+      return 1;
+    }
+    std::cerr << "continuation: logits downloaded\n";
+    continuation_best_value = bf16_to_float(continuation_logits.front());
+    for (std::size_t index = 0; index < continuation_logits.size(); ++index) {
+      const float value = bf16_to_float(continuation_logits[index]);
+      if (!std::isfinite(value)) {
+        std::cerr << "continuation logits contain non-finite value at " << index << '\n';
+        return 1;
+      }
+      if (value > continuation_best_value) {
+        continuation_best = index;
+        continuation_best_value = value;
+      }
+    }
+    if (continuation_capture_path != nullptr) {
+      std::ofstream continuation_capture{continuation_capture_path,
+                                         std::ios::binary | std::ios::trunc};
+      if (!continuation_capture.good()) return 1;
+      for (const std::uint16_t value : continuation_logits) {
+        const float converted = bf16_to_float(value);
+        continuation_capture.write(reinterpret_cast<const char*>(&converted), sizeof(converted));
+      }
+      if (!continuation_capture.good()) return 1;
+    }
+  }
   const char* hidden_capture_path = std::getenv("SUPERINFER_QWEN38_HIDDEN_F32");
   if (hidden_capture_path != nullptr) {
     const auto& commands = specialized.value().plan.commands();
@@ -294,6 +364,12 @@ int main() {
   std::cout << "qwen38 e2e token=0 greedy=" << best << " logit=" << best_value
             << " checksum=" << checksum << " state_buffers=" << state_buffers
             << " commands=" << session.trace().commands_executed
-            << " arena_bytes=" << session.device_arena_bytes() << '\n';
+            << " arena_bytes=" << session.device_arena_bytes();
+  if (std::getenv("SUPERINFER_QWEN38_CONTINUATION") != nullptr) {
+    std::cout << " token=1 greedy=" << continuation_best
+              << " logit=" << continuation_best_value;
+  }
+  if (capacity_rejected) std::cout << " capacity_rejection=pass";
+  std::cout << '\n';
   return 0;
 }

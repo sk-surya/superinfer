@@ -1,12 +1,15 @@
+import hashlib
 import json
 import struct
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from superinfer.convert.flash_next import (
     FlashNextContract,
     FlashNextValidationError,
+    TensorRecord,
     build_residency_options,
     blocked_source_evidence,
     classify_tensor_bytes,
@@ -100,6 +103,26 @@ class FlashNextContractTests(unittest.TestCase):
             self.assertEqual(len(first.tensors), 3)
             self.assertEqual(first.tensors[0].nbytes, 32)
 
+    def test_rejects_shard_path_traversal_and_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_source(root)
+            index_path = root / "model.safetensors.index.json"
+            index = json.loads(index_path.read_text())
+            index["weight_map"]["ple.table"] = "../outside.safetensors"
+            index_path.write_text(json.dumps(index))
+            with self.assertRaisesRegex(FlashNextValidationError, "path"):
+                validate_source(root, _contract())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_source(root)
+            with self.assertRaisesRegex(FlashNextValidationError, "hash"):
+                validate_source(root, _contract(expected_config_sha256="0" * 64,
+                                                expected_index_sha256=hashlib.sha256(
+                                                    (root / "model.safetensors.index.json").read_bytes()).hexdigest(),
+                                                expected_shard_count=1,
+                                                expected_tensor_count=3))
+
 
 class FlashNextLedgerTests(unittest.TestCase):
     def test_categories_reconcile_and_order_deterministically(self) -> None:
@@ -114,6 +137,17 @@ class FlashNextLedgerTests(unittest.TestCase):
             ])
             self.assertEqual(sum(ledger.values()), sum(t.nbytes for t in inventory.tensors))
 
+    def test_unknown_tensor_family_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_source(root)
+            source = validate_source(root, _contract())
+            unknown = replace(source, tensors=source.tensors + (
+                TensorRecord("mystery.tensor", "U8", (1,), "model-00001-of-00001.safetensors", 0, 1),
+            ))
+            with self.assertRaisesRegex(FlashNextValidationError, "unclassified"):
+                classify_tensor_bytes(unknown)
+
     def test_official_contract_is_pinned_to_observed_metadata(self) -> None:
         contract = official_contract()
         self.assertEqual(contract.model_type, "qwen4_exp")
@@ -125,6 +159,7 @@ class FlashNextLedgerTests(unittest.TestCase):
         evidence = blocked_source_evidence()
         self.assertEqual(evidence["status"], "blocked")
         self.assertEqual(evidence["official_identity"]["expected_safetensors_shards"], 131)
+        self.assertEqual(evidence["official_identity"]["expected_tensor_entries"], 1658)
         self.assertFalse(evidence["local_candidate"]["usable_for_full_ledger"])
 
     def test_residency_rejects_over_budget_and_partitions_contiguously(self) -> None:
@@ -134,11 +169,21 @@ class FlashNextLedgerTests(unittest.TestCase):
             recipes={"fidelity_first": {"routed_experts": 1.0, "ple": 1.0, "non_expert_text": 1.0}},
             device_budget_bytes=100, headroom_bytes=0,
         )
-        self.assertEqual(options[0]["partition"], [{"device": 0, "first_layer": 0, "last_layer": 1},
-                                                       {"device": 1, "first_layer": 2, "last_layer": 2}])
+        self.assertEqual(
+            [(item["device"], item["first_layer"], item["last_layer"], item["projected_bytes"])
+             for item in options[0]["partition"]],
+            [(0, 0, 1, 100), (1, 2, 2, 40)],
+        )
         with self.assertRaisesRegex(FlashNextValidationError, "budget"):
             build_residency_options(
                 layers, {"routed_experts": 100, "ple": 10, "non_expert_text": 30},
                 recipes={"too_big": {"routed_experts": 2.0, "ple": 1.0, "non_expert_text": 1.0}},
+                device_budget_bytes=100, headroom_bytes=0,
+            )
+        with self.assertRaisesRegex(FlashNextValidationError, "layer"):
+            build_residency_options(
+                [("layer.0", 150), ("layer.1", 50)],
+                {"routed_experts": 200},
+                recipes={"oversized_layer": {"routed_experts": 1.0}},
                 device_budget_bytes=100, headroom_bytes=0,
             )

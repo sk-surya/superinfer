@@ -22,6 +22,18 @@ if str(REPO_ROOT) not in sys.path:
 from tools.qwen38_s03_acceptance import parse_superinfer_output
 
 
+NUMERICAL_TOLERANCES = {
+    "max_abs": 0.5,
+    "mean_abs": 0.1,
+    "rmse": 0.15,
+}
+
+
+def canonical_token_hash(token_ids: Sequence[int]) -> str:
+    payload = json.dumps(list(token_ids), separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -40,6 +52,8 @@ def floats(path: Path) -> list[float]:
 def metrics(reference: Sequence[float], candidate: Sequence[float]) -> dict[str, float | int]:
     if len(reference) != len(candidate):
         raise ValueError(f"capture lengths differ: {len(reference)} != {len(candidate)}")
+    if not all(math.isfinite(float(value)) for value in (*reference, *candidate)):
+        raise ValueError("logit captures contain non-finite values")
     errors = [abs(float(left) - float(right)) for left, right in zip(reference, candidate)]
     return {
         "count": len(errors),
@@ -47,6 +61,40 @@ def metrics(reference: Sequence[float], candidate: Sequence[float]) -> dict[str,
         "mean_abs": sum(errors) / len(errors),
         "rmse": math.sqrt(sum(error * error for error in errors) / len(errors)),
     }
+
+
+def compare_row_against_contract(reference: Sequence[float], candidate: Sequence[float]) -> dict[str, Any]:
+    result = metrics(reference, candidate)
+    failed_metrics = [
+        name for name, limit in NUMERICAL_TOLERANCES.items()
+        if float(result[name]) > limit
+    ]
+    return {**result, "passed": not failed_metrics, "failed_metrics": failed_metrics}
+
+
+def validate_reference_capture(token_ids: Sequence[int], diagnostics: dict[str, Any],
+                               values: Sequence[float]) -> None:
+    """Fail closed if a cached oracle capture or sidecar is stale or internally inconsistent."""
+    if diagnostics.get("tokens") != list(token_ids):
+        raise ValueError("reference sidecar tokens do not match corpus")
+    if diagnostics.get("steps") != len(token_ids):
+        raise ValueError("reference sidecar step count does not match corpus")
+    vocab = diagnostics.get("logits_per_step")
+    if not isinstance(vocab, int) or vocab <= 0 or len(values) != len(token_ids) * vocab:
+        raise ValueError("reference sidecar logits shape is invalid")
+    if not all(math.isfinite(float(value)) for value in values):
+        raise ValueError("reference capture contains non-finite values")
+    if diagnostics.get("token_ids_sha256") != canonical_token_hash(token_ids):
+        raise ValueError("reference sidecar token hash does not match corpus")
+    payload = struct.pack(f"<{len(values)}f", *values)
+    if diagnostics.get("output_sha256") != hashlib.sha256(payload).hexdigest():
+        raise ValueError("reference sidecar output hash does not match capture")
+    greedy = [
+        max(range(vocab), key=lambda index: values[row * vocab + index])
+        for row in range(len(token_ids))
+    ]
+    if diagnostics.get("greedy_sequence") != greedy:
+        raise ValueError("reference sidecar greedy sequence does not match capture")
 
 
 def run_case(executable: Path, artifact: Path, reference_dir: Path, case: dict[str, Any],
@@ -57,8 +105,9 @@ def run_case(executable: Path, artifact: Path, reference_dir: Path, case: dict[s
     reference_diagnostics = json.loads(reference_path.with_suffix(".json").read_text())
     reference_values = floats(reference_path)
     vocab = int(reference_diagnostics["logits_per_step"])
-    if len(reference_values) != len(token_ids) * vocab:
-        raise ValueError(f"reference rows are malformed for {case_id}")
+    if case.get("token_ids_sha256") != canonical_token_hash(token_ids):
+        raise ValueError(f"corpus token hash is invalid for {case_id}")
+    validate_reference_capture(token_ids, reference_diagnostics, reference_values)
     case_output = output_dir / case_id
     case_output.mkdir(parents=True, exist_ok=True)
     runs: list[dict[str, Any]] = []
@@ -66,6 +115,9 @@ def run_case(executable: Path, artifact: Path, reference_dir: Path, case: dict[s
         base_capture = case_output / f"run-{iteration}-base.f32"
         continuation_capture = case_output / f"run-{iteration}-continuation.f32"
         environment = os.environ.copy()
+        for key in list(environment):
+            if key.startswith("SUPERINFER_QWEN38_"):
+                environment.pop(key)
         environment.update({
             "SUPERINFER_QWEN38_ARTIFACT": str(artifact),
             "SUPERINFER_QWEN38_INITIAL_TOKEN": str(token_ids[0]),
@@ -89,8 +141,9 @@ def run_case(executable: Path, artifact: Path, reference_dir: Path, case: dict[s
         if len(candidate_values) != len(reference_values):
             raise ValueError(f"candidate rows are malformed for {case_id}")
         row_metrics = [
-            metrics(reference_values[position * vocab : (position + 1) * vocab],
-                    candidate_values[position * vocab : (position + 1) * vocab])
+                    compare_row_against_contract(
+                        reference_values[position * vocab : (position + 1) * vocab],
+                        candidate_values[position * vocab : (position + 1) * vocab])
             for position in range(len(token_ids))
         ]
         runs.append({
@@ -103,6 +156,8 @@ def run_case(executable: Path, artifact: Path, reference_dir: Path, case: dict[s
             "state_buffers": parsed["state_buffers"],
             "stdout": process.stdout.strip(),
         })
+        runs[-1]["numerical_match"] = all(row["passed"] for row in runs[-1]["metrics"])
+        runs[-1]["accepted"] = runs[-1]["token_match"] and runs[-1]["numerical_match"]
     return {
         "id": case_id,
         "token_ids": token_ids,
@@ -111,6 +166,8 @@ def run_case(executable: Path, artifact: Path, reference_dir: Path, case: dict[s
         "reference_greedy_sequence": reference_diagnostics["greedy_sequence"],
         "runs": runs,
         "token_match": all(run["token_match"] for run in runs),
+        "numerical_match": all(run["numerical_match"] for run in runs),
+        "accepted": all(run["accepted"] for run in runs),
         "repeatable": len({run["capture_sha256"] for run in runs}) == 1,
     }
 
@@ -132,11 +189,12 @@ def main() -> int:
              for case in corpus["cases"]]
     report = {
         "schema": "superinfer.qwen38.s03.batched.acceptance.v1",
-        "status": "pass" if all(case["token_match"] and case["repeatable"] for case in cases) else "fail",
+        "status": "pass" if all(case["accepted"] and case["repeatable"] for case in cases) else "fail",
         "mode": "decode_replay_against_batched_reference",
-        "artifact": {"path": str(args.artifact), "sha256": sha256(args.artifact)},
-        "corpus": {"path": str(args.corpus), "sha256": sha256(args.corpus)},
+        "artifact": {"name": args.artifact.name, "sha256": sha256(args.artifact)},
+        "corpus": {"name": args.corpus.name, "sha256": sha256(args.corpus)},
         "repeat": args.repeat,
+        "numerical_contract": NUMERICAL_TOLERANCES,
         "cases": cases,
         "limitations": [
             "Runtime corpus execution uses the validated one-token physical plan with explicit state continuation.",

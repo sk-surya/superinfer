@@ -183,7 +183,9 @@ if(SUPERINFER_CUDA_AVAILABLE)
     CUDA_ARCHITECTURES "120a")
   add_test(NAME superinfer.sm120.qwen38.e2e_artifact
     COMMAND superinfer_sm120_qwen38_e2e_artifact)
-  set_tests_properties(superinfer.sm120.qwen38.e2e_artifact PROPERTIES SKIP_RETURN_CODE 77)
+  set_tests_properties(superinfer.sm120.qwen38.e2e_artifact PROPERTIES
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "SUPERINFER_QWEN38_CAPACITY_REJECTION=1;SUPERINFER_QWEN38_BOUNDARY_EXECUTION=1")
 endif()
 
 if(SUPERINFER_ENABLE_SANITIZERS)

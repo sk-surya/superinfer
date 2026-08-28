@@ -25,11 +25,12 @@ excluded as non-matches.
 
 ## Evidence and verification
 
-- `PYTHONPATH=python python -m unittest -v tests/unit/test_flash_next.py` — 7 tests passed.
+- `PYTHONPATH=python python -m unittest -v tests/unit/test_flash_next.py` — 9 tests passed after
+  fail-closed hash/path/category/capacity fixes.
 - Canonical serialization check for `artifacts/S03F/flash-next-source-evidence.json` — passed.
 - `pytest tests/unit/test_flash_next.py -q` could not run because `pytest` is not installed in this
   environment.
-- `python tools/validate.py --full` — passed before this research update; rerun at integration.
+- `SUPERINFER_VALIDATION_TMP=/srv/repos/superinfer/build/validation-tmp TMPDIR=/srv/repos/superinfer/build/superinfer-tmp CMAKE_BUILD_PARALLEL_LEVEL=2 python3 tools/validate.py --full` — all validation stages passed after the final research/tooling changes.
 
 ## Exact blockers
 

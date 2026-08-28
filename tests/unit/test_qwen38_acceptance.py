@@ -1,5 +1,12 @@
+import hashlib
+import struct
 import unittest
 
+from tools.qwen38_s03_batched_acceptance import (
+    NUMERICAL_TOLERANCES,
+    compare_row_against_contract,
+    validate_reference_capture,
+)
 from tools.qwen38_s03_acceptance import compare_logits, parse_superinfer_output
 
 
@@ -21,6 +28,26 @@ class Qwen38AcceptanceHarnessTests(unittest.TestCase):
         self.assertEqual(result["count"], 2)
         self.assertEqual(result["max_abs"], 0.25)
         self.assertGreater(result["rmse"], 0.0)
+
+    def test_numerical_contract_rejects_large_drift_even_when_tokens_match(self) -> None:
+        result = compare_row_against_contract([0.0, 1.0], [0.0, 1.0 + NUMERICAL_TOLERANCES["max_abs"] + 1.0])
+        self.assertFalse(result["passed"])
+        self.assertIn("max_abs", result["failed_metrics"])
+
+    def test_reference_validation_recomputes_hash_and_greedy_sequence(self) -> None:
+        values = [0.0, 2.0, 1.0, 3.0]
+        payload = struct.pack("<4f", *values)
+        diagnostics = {
+            "tokens": [7, 8],
+            "token_ids_sha256": hashlib.sha256(b"[7,8]").hexdigest(),
+            "steps": 2,
+            "logits_per_step": 2,
+            "output_sha256": hashlib.sha256(payload).hexdigest(),
+            "greedy_sequence": [1, 1],
+        }
+        validate_reference_capture([7, 8], diagnostics, values)
+        with self.assertRaisesRegex(ValueError, "greedy"):
+            validate_reference_capture([7, 8], {**diagnostics, "greedy_sequence": [0, 1]}, values)
 
 
 if __name__ == "__main__":

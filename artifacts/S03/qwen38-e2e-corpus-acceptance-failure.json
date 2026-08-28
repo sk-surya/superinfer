@@ -22,6 +22,12 @@
     "gpu_1": "occupied by an unrelated sglang process; not used",
     "mode": "one-token decode replay with explicit fixed-token continuation"
   },
+  "numerical_contract": {
+    "max_abs": 0.5,
+    "mean_abs": 0.1,
+    "rmse": 0.15,
+    "comparison": "every FP32 logit row must satisfy all limits and contain finite values"
+  },
   "cases": [
     {"id": "plain-short", "token_match": true, "repeatable": true, "first_divergent_rows": [], "capture_sha256": "1d94d2af96c040e606b27321663f0d816eca3e7679dfeef3e0545bf657132c03"},
     {"id": "unicode", "token_match": true, "repeatable": true, "first_divergent_rows": [], "capture_sha256": "4f1664b561186e3a2427d7adfabc7aefcf84e74a1cd269411f21ef1ea66fd1e4"},

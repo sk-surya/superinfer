@@ -162,11 +162,11 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
         }
         diagnostics_path = output.with_suffix(".json")
         diagnostics_path.write_text(json.dumps(diagnostics, indent=2) + "\n")
-        results.append({"id": case_id, "output": str(output), **diagnostics})
+        results.append({"id": case_id, "output_name": output.name, **diagnostics})
     return {
         "schema": "superinfer.qwen38.reference.corpus.v1",
         "status": "pass",
-        "model_dir": str(model_dir),
+        "model": model_dir.name,
         "cases": results,
     }
 

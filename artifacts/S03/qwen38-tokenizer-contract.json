@@ -1,7 +1,7 @@
 {
   "schema": "superinfer.qwen38.tokenizer.contract.v1",
   "status": "pass",
-  "model_dir": "/srv/models/hf/Qwen3.8-27B-NVFP4-RTX5090-LMHead4",
+  "model": "Qwen3.8-27B-NVFP4-RTX5090-LMHead4",
   "transformers_version": "5.12.1",
   "tokenizer_class": "Qwen2Tokenizer",
   "tokenizer_files": {

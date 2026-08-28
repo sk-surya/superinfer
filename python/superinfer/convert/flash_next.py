@@ -37,6 +37,10 @@ class FlashNextContract:
     reference_repository: str
     reference_revision: str
     qsa_config: Mapping[str, Any]
+    expected_config_sha256: str | None = None
+    expected_index_sha256: str | None = None
+    expected_shard_count: int | None = None
+    expected_tensor_count: int | None = None
 
 
 def official_contract() -> FlashNextContract:
@@ -57,6 +61,10 @@ def official_contract() -> FlashNextContract:
             "indexer_kv_heads": 1,
             "indexer_n_heads": 4,
         },
+        expected_config_sha256=OFFICIAL_CONFIG_SHA256,
+        expected_index_sha256=OFFICIAL_INDEX_SHA256,
+        expected_shard_count=131,
+        expected_tensor_count=1658,
     )
 
 
@@ -121,6 +129,29 @@ def _header(path: Path) -> tuple[Mapping[str, Any], int]:
     return header, payload_size
 
 
+def _safe_shard_path(model_root: Path, shard: str) -> Path:
+    relative = Path(shard)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise FlashNextValidationError(f"invalid_shard_path [{shard}]")
+    resolved = (model_root / relative).resolve()
+    try:
+        resolved.relative_to(model_root)
+    except ValueError as error:
+        raise FlashNextValidationError(f"invalid_shard_path [{shard}]") from error
+    return resolved
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(chunk)
+    except (FileNotFoundError, OSError) as error:
+        raise FlashNextValidationError(f"missing_file [{path.name}]") from error
+    return digest.hexdigest()
+
+
 def validate_source(model_dir: Path, contract: FlashNextContract) -> FlashNextInventory:
     """Validate config/index/header metadata and return a deterministic inventory.
 
@@ -131,8 +162,14 @@ def validate_source(model_dir: Path, contract: FlashNextContract) -> FlashNextIn
         revision = getattr(contract, field)
         if len(revision) != 40 or any(char not in "0123456789abcdef" for char in revision):
             raise FlashNextValidationError(f"invalid_revision [{field}]")
-    config = _read_json(model_dir / "config.json", "config")
-    provenance = _read_json(model_dir / "provenance.json", "provenance")
+    model_root = model_dir.resolve()
+    config_path = model_root / "config.json"
+    index_path = model_root / "model.safetensors.index.json"
+    config = _read_json(config_path, "config")
+    provenance = _read_json(model_root / "provenance.json", "provenance")
+    if contract.expected_config_sha256 is not None:
+        if _sha256_file(config_path) != contract.expected_config_sha256:
+            raise FlashNextValidationError("hash_mismatch [config]")
     for field in ("upstream_repository", "upstream_revision", "reference_repository", "reference_revision"):
         if provenance.get(field) != getattr(contract, field):
             raise FlashNextValidationError(f"revision_mismatch [{field}]")
@@ -157,17 +194,26 @@ def validate_source(model_dir: Path, contract: FlashNextContract) -> FlashNextIn
         qsa_values = {key: text_config.get(key) for key in contract.qsa_config}
     if qsa_values != dict(contract.qsa_config):
         raise FlashNextValidationError("unexpected_configuration [qsa]")
-    index = _read_json(model_dir / "model.safetensors.index.json", "tensor_index")
+    index = _read_json(index_path, "tensor_index")
+    if contract.expected_index_sha256 is not None:
+        if _sha256_file(index_path) != contract.expected_index_sha256:
+            raise FlashNextValidationError("hash_mismatch [tensor_index]")
     weight_map = index.get("weight_map")
     if not isinstance(weight_map, dict) or not weight_map:
         raise FlashNextValidationError("invalid_mapping [weight_map]")
+    if not all(isinstance(name, str) and isinstance(shard, str)
+               for name, shard in weight_map.items()):
+        raise FlashNextValidationError("invalid_mapping [weight_map]")
+    shard_paths = {shard: _safe_shard_path(model_root, shard) for shard in set(weight_map.values())}
+    if contract.expected_shard_count is not None and len(shard_paths) != contract.expected_shard_count:
+        raise FlashNextValidationError("count_mismatch [shards]")
+    if contract.expected_tensor_count is not None and len(weight_map) != contract.expected_tensor_count:
+        raise FlashNextValidationError("count_mismatch [tensors]")
     tensors: list[TensorRecord] = []
     shard_headers: dict[str, tuple[Mapping[str, Any], int]] = {}
     for name, shard_value in sorted(weight_map.items()):
-        if not isinstance(name, str) or not isinstance(shard_value, str):
-            raise FlashNextValidationError("invalid_mapping [weight_map]")
         if shard_value not in shard_headers:
-            shard_headers[shard_value] = _header(model_dir / shard_value)
+            shard_headers[shard_value] = _header(shard_paths[shard_value])
         header, payload_size = shard_headers[shard_value]
         descriptor = header.get(name)
         if not isinstance(descriptor, dict):
@@ -179,8 +225,11 @@ def validate_source(model_dir: Path, contract: FlashNextContract) -> FlashNextIn
         if not all(isinstance(value, int) for value in (*shape, start, end)) or start < 0 or end < start or end > payload_size:
             raise FlashNextValidationError(f"invalid_tensor_record [{name}]")
         tensors.append(TensorRecord(name, dtype, tuple(shape), shard_value, start, end))
-    files = {name: hashlib.sha256((model_dir / name).read_bytes()).hexdigest()
-             for name in sorted({"config.json", "provenance.json", "model.safetensors.index.json", *weight_map.values()})}
+    files = {
+        name: _sha256_file(model_root / name)
+        for name in ("config.json", "provenance.json", "model.safetensors.index.json")
+    }
+    files.update({name: _sha256_file(path) for name, path in sorted(shard_paths.items())})
     return FlashNextInventory(contract, config, tuple(tensors), files)
 
 
@@ -200,14 +249,16 @@ def classify_tensor_bytes(inventory: FlashNextInventory) -> dict[str, int]:
             category = "ple"
         elif "shared_expert" in name:
             category = "shared_experts"
-        elif ".experts." in name or "expert" in name:
+        elif ".experts." in name or ".expert." in name or name.startswith("experts."):
             category = "routed_experts"
         elif "router" in name or "indexer" in name:
             category = "router_indexer"
         elif "embed" in name or "lm_head" in name:
             category = "embedding_lm_head"
-        else:
+        elif name.startswith(("model.", "language_model.", "transformer.")) or name == "lm_head.weight":
             category = "non_expert_text"
+        else:
+            raise FlashNextValidationError(f"unclassified_tensor [{tensor.name}]")
         totals[category] += tensor.nbytes
     return {key: totals[key] for key in sorted(totals)}
 
@@ -223,30 +274,56 @@ def build_residency_options(
     results: list[dict[str, Any]] = []
     for name in sorted(recipes):
         recipe = recipes[name]
+        if any(value < 0 for value in category_bytes.values()):
+            raise FlashNextValidationError(f"invalid_ledger [{name}]")
         total = sum(int(category_bytes[key] * recipe.get(key, 1.0)) for key in category_bytes)
         capacity = device_budget_bytes - headroom_bytes
         if total > 2 * capacity:
             raise FlashNextValidationError(f"budget_exceeded [{name}]")
+        if any(not isinstance(size, int) or size < 0 for _, size in layers):
+            raise FlashNextValidationError(f"invalid_layers [{name}]")
+        oversized = next((index for index, (_, size) in enumerate(layers) if size > capacity), None)
+        if oversized is not None:
+            raise FlashNextValidationError(f"layer_exceeds_capacity [{name}:{oversized}]")
+        layer_total = sum(size for _, size in layers)
+        if total < layer_total:
+            raise FlashNextValidationError(f"ledger_understates_layers [{name}]")
+        global_bytes = total - layer_total
         layer_partition: list[dict[str, int]] = []
+        layer_partition_bytes: list[int] = []
         running = 0
         first = 0
         for index, (_, size) in enumerate(layers):
             if running and running + size > capacity:
                 layer_partition.append({"device": len(layer_partition), "first_layer": first, "last_layer": index - 1})
+                layer_partition_bytes.append(running)
                 first, running = index, 0
             running += size
         if layers:
             layer_partition.append({"device": len(layer_partition), "first_layer": first, "last_layer": len(layers) - 1})
+            layer_partition_bytes.append(running)
         if len(layer_partition) != 2:
             raise FlashNextValidationError(f"budget_exceeded [{name}]")
+        device_bytes = [layer_partition_bytes[0] + (global_bytes + 1) // 2,
+                        layer_partition_bytes[1] + global_bytes // 2]
+        if any(value > capacity for value in device_bytes):
+            raise FlashNextValidationError(f"budget_exceeded [{name}]")
+        for partition, bytes_used in zip(layer_partition, device_bytes):
+            partition["layer_bytes"] = bytes_used - ((global_bytes + 1) // 2 if partition["device"] == 0 else global_bytes // 2)
+            partition["projected_bytes"] = bytes_used
         results.append({"name": name, "projected_bytes": total, "headroom_bytes": headroom_bytes,
                         "full_expert_residency_feasible": True, "partition": layer_partition,
+                        "per_device_bytes": device_bytes,
+                        "projected_category_bytes": {
+                            key: int(category_bytes[key] * recipe.get(key, 1.0))
+                            for key in sorted(category_bytes)
+                        },
                         "quality_evidence": "not_available"})
     return results
 
 
 def blocked_source_evidence() -> dict[str, Any]:
-    """Return canonical evidence for a checkout without the pinned Flash-Next inputs."""
+    """Return canonical evidence for a checkout missing complete Flash-Next inputs."""
     return {
         "schema": "superinfer.s03f.flash-next-source-evidence.v1",
         "status": "blocked",
@@ -262,6 +339,8 @@ def blocked_source_evidence() -> dict[str, Any]:
             "config_sha256": OFFICIAL_CONFIG_SHA256,
             "index_sha256": OFFICIAL_INDEX_SHA256,
             "expected_safetensors_shards": 131,
+            "expected_tensor_entries": 1658,
+            "reported_bf16_payload_bytes": 359999963128,
         },
         "local_candidate": {
             "path": "/srv/models/hf/Qwen3.8-Flash-Next-NVFP4",
@@ -277,7 +356,7 @@ def blocked_source_evidence() -> dict[str, Any]:
             "/srv/models/hf/Qwen3.8-27B-DFlash2",
             "/srv/ai/models/gguf/qwen3-coder-next",
         ],
-        "claims_withheld": ["pinned revisions", "tensor counts", "packed byte totals", "quality equivalence", "residency feasibility"],
+        "claims_withheld": ["complete packed byte totals", "quality equivalence", "residency feasibility"],
     }
 
 

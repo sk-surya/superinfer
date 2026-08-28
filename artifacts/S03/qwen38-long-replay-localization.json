@@ -1,0 +1,41 @@
+{
+  "schema": "superinfer.qwen38.s03.long_replay_localization.v1",
+  "status": "in_progress",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "target": {
+    "gpu": "GPU 0 NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a",
+    "gpu_1_used": false
+  },
+  "prefixes": {
+    "chat_tokens": [
+      248045, 8678, 198, 24342, 286, 4879, 369, 716, 310, 830, 11553, 13,
+      5044, 1683, 15060, 1472, 279, 3274, 11, 9307
+    ],
+    "prefix_13": {
+      "rows": 13,
+      "capture_bytes": 12912640,
+      "normal_run_0_sha256": "fed38ce6ad1406cc398ed77d1cc7db347119dbbbe99d6b9fc648d0a5ae947818",
+      "normal_run_1_sha256": "fed38ce6ad1406cc398ed77d1cc7db347119dbbbe99d6b9fc648d0a5ae947818",
+      "poison_00_sha256": "fed38ce6ad1406cc398ed77d1cc7db347119dbbbe99d6b9fc648d0a5ae947818",
+      "poison_a5_sha256": "fed38ce6ad1406cc398ed77d1cc7db347119dbbbe99d6b9fc648d0a5ae947818",
+      "no_alias_sha256": "fed38ce6ad1406cc398ed77d1cc7db347119dbbbe99d6b9fc648d0a5ae947818",
+      "normal_arena_bytes": 19191265792,
+      "no_alias_arena_bytes": 19343845636,
+      "first_byte_difference": null
+    },
+    "prefix_20": {
+      "rows": 20,
+      "capture_bytes": 19865600,
+      "current_sha256": "156a6e026a5aefdc410f4797d8466fbc9df20868992e39f36680ee4b80994739",
+      "prior_sha256": "156a6e026a5aefdc410f4797d8466fbc9df20868992e39f36680ee4b80994739",
+      "first_byte_difference": null
+    }
+  },
+  "controls": {
+    "arena_poison": "SUPERINFER_QWEN38_ARENA_POISON=00 and a5, before artifact/state uploads",
+    "activation_reuse": "SUPERINFER_QWEN38_DISABLE_ACTIVATION_REUSE=1",
+    "compute_sanitizer": "unavailable on qualified host"
+  },
+  "conclusion": "Historical 60-token/81-token non-repeatability is not reproduced by fresh 13-token or 20-token prefixes. S03 remains blocked pending a long-prefix reproduction and root-cause localization."
+}

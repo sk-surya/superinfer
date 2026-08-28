@@ -41,6 +41,8 @@
       "first_row_difference_vs_historical_run_1": 43,
       "full_poison_a5_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99",
       "full_no_alias_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99",
+      "standard_repeat_2_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99",
+      "standard_repeat_equal": true,
       "full_poison_first_difference_vs_current": null,
       "full_no_alias_first_difference_vs_current": null,
       "state_trace": {

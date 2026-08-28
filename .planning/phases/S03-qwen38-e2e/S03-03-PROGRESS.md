@@ -77,6 +77,12 @@ activation liveness reuse are therefore ruled out for the current replay path. T
 diagnostic boundary is replay/state-command localization, followed by a fresh standard acceptance
 rerun; the historical non-repeatability and Transformers divergence still prevent S03 closure.
 
+A second fully standard fresh 60-token session also produced `9d588484...` with all rows equal to
+the first standard session. The current replay is therefore reproducible across two standard
+sessions and the two diagnostic controls; the historical failure is not presently reproducible.
+The current capture matches all 60 reference greedy tokens, but four rows exceed the pinned `max_abs`
+logit contract (first at row 23, maximum `0.6116333`), so this is not acceptance closure.
+
 ## Debugging record
 
 The initial full-graph differential diverged at layer 3, the first full-attention layer. The

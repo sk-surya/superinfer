@@ -105,6 +105,15 @@ int skip(const char* message) {
   return 77;
 }
 
+std::uint64_t fnv1a64(superinfer::base::ConstByteView bytes) {
+  std::uint64_t hash = 1469598103934665603ULL;
+  for (std::size_t index = 0; index < bytes.size(); ++index) {
+    hash ^= std::to_integer<std::uint8_t>(bytes[index]);
+    hash *= 1099511628211ULL;
+  }
+  return hash;
+}
+
 }  // namespace
 
 int main() {
@@ -288,6 +297,39 @@ int main() {
     std::cerr << "Qwen full graph synchronization failed: " << sync_status.message() << '\n';
     return 1;
   }
+  std::ofstream state_trace;
+  std::vector<superinfer::ir::physical::BufferId> state_trace_ids;
+  std::vector<std::vector<std::byte>> state_trace_storage;
+  if (const char* state_trace_path = std::getenv("SUPERINFER_QWEN38_STATE_TRACE");
+      state_trace_path != nullptr) {
+    state_trace.open(state_trace_path, std::ios::trunc);
+    if (!state_trace.good()) {
+      std::cerr << "state trace open failed: " << state_trace_path << '\n';
+      return 1;
+    }
+    for (const auto& buffer : specialized.value().plan.buffers()) {
+      if (!buffer.tensor.artifact_name.empty() || !is_state_shape(buffer)) continue;
+      state_trace_ids.push_back(buffer.id);
+      state_trace_storage.emplace_back(buffer.size);
+    }
+    state_trace << "step buffer_id fnv1a64\n";
+  }
+  const auto capture_state_trace = [&](std::uint32_t step) -> bool {
+    if (!state_trace.is_open()) return true;
+    for (std::size_t index = 0; index < state_trace_ids.size(); ++index) {
+      const auto id = state_trace_ids[index];
+      auto& storage = state_trace_storage[index];
+      const auto status = session.copy_from_device(id, {storage.data(), storage.size()});
+      if (!status.ok()) {
+        std::cerr << "state trace download failed: " << status.message() << '\n';
+        return false;
+      }
+      state_trace << step << ' ' << id.value() << ' '
+                  << fnv1a64({storage.data(), storage.size()}) << '\n';
+    }
+    return state_trace.good();
+  };
+  if (!capture_state_trace(0)) return 1;
   bool boundary_executed = false;
   if (std::getenv("SUPERINFER_QWEN38_BOUNDARY_EXECUTION") != nullptr) {
     const std::uint64_t allocations_before = session.lifecycle_trace().device_allocations;
@@ -440,6 +482,7 @@ int main() {
                   << continuation_sync.message() << '\n';
         return 1;
       }
+      if (!capture_state_trace(static_cast<std::uint32_t>(step + 1))) return 1;
       std::vector<std::uint16_t> continuation_logits(logits.size());
       const auto continuation_copy = session.copy_from_device(
           entry.outputs.front(), {reinterpret_cast<std::byte*>(continuation_logits.data()),

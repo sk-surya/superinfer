@@ -39,7 +39,14 @@
       "historical_run_1_sha256": "fae3d233b605b97e369ea26a7cf84629f2d19fd51837d86c5f6fd56da2df0e2e",
       "first_row_difference_vs_historical_run_0": 12,
       "first_row_difference_vs_historical_run_1": 43,
-      "state_trace": "pending"
+      "state_trace": {
+        "sha256": "f8ec35807780353ccb22d74c94daece57a2ab3d9d82d6f23eaf506b34790ba70",
+        "records": 7680,
+        "steps": "0..59",
+        "buffers_per_step": 128,
+        "first_fingerprint_change": "step 1 for all 128 buffers",
+        "instrumented_logits_match_current": true
+      }
     }
   },
   "controls": {
@@ -47,5 +54,5 @@
     "activation_reuse": "SUPERINFER_QWEN38_DISABLE_ACTIVATION_REUSE=1",
     "compute_sanitizer": "unavailable on qualified host"
   },
-  "conclusion": "Historical 60-token/81-token non-repeatability is not reproduced by fresh 13-token or 20-token prefixes. S03 remains blocked pending a long-prefix reproduction and root-cause localization."
+  "conclusion": "Historical 60-token/81-token non-repeatability is not reproduced by fresh 13-token or 20-token prefixes. A current 60-token replay matches an independently run state-traced 60-token replay, but the historical failure remains unexplained; S03 remains blocked pending a standard fresh-session repeat and root-cause localization."
 }

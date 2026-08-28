@@ -63,6 +63,14 @@ remains valid and S03 remains open. The diagnostic hooks are opt-in only:
 normal acceptance behavior. Compute Sanitizer is not installed on the qualified host, so
 initcheck/memcheck evidence is unavailable until that tooling is provisioned.
 
+A current full 60-token one-token replay completed in 20 minutes with capture hash
+`9d588484faff80567136daf86cf31118fa54a2e2da07c9b25e6da1318ff3a99`. An independently instrumented
+60-token replay produced the identical logits hash and 7,680 state fingerprints (128 buffers at
+each step 0..59); every state buffer changed at step 1. This establishes repeatability for the
+current pair, but does not explain the historical captures, which differ from the current run at
+rows 12 and 43. The machine-readable localization record is
+`artifacts/S03/qwen38-long-replay-localization.json`.
+
 ## Debugging record
 
 The initial full-graph differential diverged at layer 3, the first full-attention layer. The

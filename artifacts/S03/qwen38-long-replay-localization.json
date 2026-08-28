@@ -39,6 +39,10 @@
       "historical_run_1_sha256": "fae3d233b605b97e369ea26a7cf84629f2d19fd51837d86c5f6fd56da2df0e2e",
       "first_row_difference_vs_historical_run_0": 12,
       "first_row_difference_vs_historical_run_1": 43,
+      "full_poison_a5_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99",
+      "full_no_alias_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99",
+      "full_poison_first_difference_vs_current": null,
+      "full_no_alias_first_difference_vs_current": null,
       "state_trace": {
         "sha256": "f8ec35807780353ccb22d74c94daece57a2ab3d9d82d6f23eaf506b34790ba70",
         "records": 7680,
@@ -54,5 +58,5 @@
     "activation_reuse": "SUPERINFER_QWEN38_DISABLE_ACTIVATION_REUSE=1",
     "compute_sanitizer": "unavailable on qualified host"
   },
-  "conclusion": "Historical 60-token/81-token non-repeatability is not reproduced by fresh 13-token or 20-token prefixes. A current 60-token replay matches an independently run state-traced 60-token replay, but the historical failure remains unexplained; S03 remains blocked pending a standard fresh-session repeat and root-cause localization."
+  "conclusion": "Historical 60-token/81-token non-repeatability is not reproduced by fresh 13-token or 20-token prefixes or by the current 60-token controls. Normal, full-arena-0xA5, state-traced, and activation-no-alias 60-token sessions all produce the same current hash. Initial arena contents and activation liveness reuse are ruled out for the current path; the historical failure remains unexplained, so S03 remains blocked pending replay/state-command localization and standard acceptance reruns."
 }

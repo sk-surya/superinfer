@@ -71,6 +71,12 @@ current pair, but does not explain the historical captures, which differ from th
 rows 12 and 43. The machine-readable localization record is
 `artifacts/S03/qwen38-long-replay-localization.json`.
 
+Full-length controls now also match the same hash: arena poison `0xA5` and activation-reuse-disabled
+physical planning both produce `9d588484...` with no differing row. Initial arena contents and
+activation liveness reuse are therefore ruled out for the current replay path. The remaining
+diagnostic boundary is replay/state-command localization, followed by a fresh standard acceptance
+rerun; the historical non-repeatability and Transformers divergence still prevent S03 closure.
+
 ## Debugging record
 
 The initial full-graph differential diverged at layer 3, the first full-attention layer. The

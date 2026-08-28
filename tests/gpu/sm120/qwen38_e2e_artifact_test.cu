@@ -187,10 +187,12 @@ int main() {
     return 1;
   }
   superinfer::sm120::BaselineProvider provider;
+  const bool disable_activation_reuse =
+      std::getenv("SUPERINFER_QWEN38_DISABLE_ACTIVATION_REUSE") != nullptr;
   const auto specialized = superinfer::sm120::Specializer{}.compile(
       lowered.value(),
       {superinfer::compiler::TargetProfile::offline_sm120a(32ULL << 30U, "baseline-v1"),
-       0, 10000},
+       0, 10000, disable_activation_reuse},
       provider);
   if (!specialized.has_value()) {
     std::cerr << "specialization failed: " << specialized.error().message() << '\n';
@@ -212,6 +214,22 @@ int main() {
     return 1;
   }
   auto session = std::move(session_result).value();
+
+  if (const char* encoded_poison = std::getenv("SUPERINFER_QWEN38_ARENA_POISON");
+      encoded_poison != nullptr) {
+    char* end = nullptr;
+    errno = 0;
+    const unsigned long parsed = std::strtoul(encoded_poison, &end, 16);
+    if (errno != 0 || end == encoded_poison || *end != '\0' || parsed > 0xFFU) {
+      std::cerr << "invalid SUPERINFER_QWEN38_ARENA_POISON\n";
+      return 1;
+    }
+    const auto poison_status = session.fill_device_for_test(static_cast<std::uint8_t>(parsed));
+    if (!poison_status.ok()) {
+      std::cerr << "arena poison failed: " << poison_status.message() << '\n';
+      return 1;
+    }
+  }
 
   bool capacity_rejected = false;
   if (std::getenv("SUPERINFER_QWEN38_CAPACITY_REJECTION") != nullptr) {

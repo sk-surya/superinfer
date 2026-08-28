@@ -52,6 +52,17 @@ broader corpus coverage and final acceptance closure remain open.
 - Failure matrix passes artifact corruption/truncation, target mismatch, injected CUDA fault poisoning,
   and over-capacity continuation rejection; see `artifacts/S03/qwen38-e2e-failure-matrix.json`.
 
+The first nondeterminism-localization round did not reproduce the historical failure in shorter
+prefixes: two fresh 13-token chat sessions and two fresh 20-token chat sessions were byte-identical.
+The 13-token prefix was also byte-identical after filling the full device arena with both `0x00` and
+`0xA5` before artifact uploads, and after compiling with activation reuse disabled. These controls
+therefore do not yet distinguish the long-replay failure; the historical 60-token/81-token evidence
+remains valid and S03 remains open. The diagnostic hooks are opt-in only:
+`SUPERINFER_QWEN38_ARENA_POISON` fills the device arena before uploads, and
+`SUPERINFER_QWEN38_DISABLE_ACTIVATION_REUSE` compiles a no-alias control plan. Neither changes
+normal acceptance behavior. Compute Sanitizer is not installed on the qualified host, so
+initcheck/memcheck evidence is unavailable until that tooling is provisioned.
+
 ## Debugging record
 
 The initial full-graph differential diverged at layer 3, the first full-attention layer. The

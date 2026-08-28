@@ -1627,6 +1627,21 @@ class CudaPlanSession final {
     return {};
   }
 
+  /**
+   * Fills the device arena with a byte pattern for memory-initialization diagnostics.
+   *
+   * This is test/profiling-only API. It is intentionally not called by execute() and does not
+   * change production initialization policy. Callers must invoke it before uploading the
+   * artifact/state or after synchronizing prior work on the session streams.
+   */
+  base::Status fill_device_for_test(std::uint8_t value) noexcept {
+    if (poisoned_) return base::Status::failed_precondition("CUDA session is poisoned");
+    const cudaError_t error = cudaMemset(device_arena_.data(), static_cast<int>(value),
+                                         static_cast<std::size_t>(device_arena_.bytes()));
+    if (error != cudaSuccess) return poison(error, "test device arena fill");
+    return {};
+  }
+
   base::Status copy_to_device(ir::physical::BufferId id, base::ConstByteView source) noexcept {
     if (poisoned_) return base::Status::failed_precondition("CUDA session is poisoned");
     const auto validation = validate_copy(id, source.size());

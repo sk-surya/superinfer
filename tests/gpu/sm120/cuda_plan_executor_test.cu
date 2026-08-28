@@ -499,17 +499,23 @@ int main() {
   auto session = sm120::cuda_runtime::CudaPlanSession::create(plan, 120, "baseline-v1");
   assert(session.has_value());
   assert(session.value().device_arena_bytes() == 48);
+  assert(session.value().fill_device_for_test(0xA5).ok());
+  std::array<std::byte, 16> filled_bytes{};
+  assert(session.value().copy_from_device(
+             ir::physical::BufferId{0}, {filled_bytes.data(), filled_bytes.size()})
+             .ok());
+  for (const std::byte value : filled_bytes) assert(value == std::byte{0xA5});
   assert(session.value().lifecycle_trace().device_allocations == 1);
   assert(session.value().lifecycle_trace().stream_creations == 1);
   assert(session.value().lifecycle_trace().event_creations == 0);
   assert(session.value().lifecycle_trace().kernel_bindings == 2);
-  assert(session.value().lifecycle_trace().device_synchronizations == 0);
-  assert(session.value().execute().ok());
-  assert(session.value().execute().ok());
-  assert(session.value().execute().ok());
-  assert(session.value().lifecycle_trace().device_synchronizations == 0);
-  assert(session.value().synchronize_for_test().ok());
   assert(session.value().lifecycle_trace().device_synchronizations == 1);
+  assert(session.value().execute().ok());
+  assert(session.value().execute().ok());
+  assert(session.value().execute().ok());
+  assert(session.value().lifecycle_trace().device_synchronizations == 1);
+  assert(session.value().synchronize_for_test().ok());
+  assert(session.value().lifecycle_trace().device_synchronizations == 2);
   assert(session.value().trace().commands_executed == 6);
   assert(session.value().trace().launches == 6);
 

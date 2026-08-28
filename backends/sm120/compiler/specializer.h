@@ -20,6 +20,7 @@ struct CompileOptions final {
   compiler::TargetProfile target;
   std::uint64_t max_device_memory_bytes{0};
   std::uint32_t max_commands{0};
+  bool disable_activation_reuse{false};
 };
 
 struct SpecializationResult final {
@@ -73,7 +74,8 @@ class Specializer final {
     }
     std::vector<compiler::AllocationRequest> requests;
     requests.reserve(lowered.tensors().size());
-    const std::vector<compiler::Lifetime> lifetimes = compute_lifetimes(lowered);
+    const std::vector<compiler::Lifetime> lifetimes =
+        compute_lifetimes(lowered, options.disable_activation_reuse);
     for (const ir::lowered::Tensor& tensor : lowered.tensors()) {
       if (state_alias[tensor.id.value()] != no_alias) continue;
       const auto bytes = tensor_bytes(tensor);
@@ -379,7 +381,7 @@ class Specializer final {
   }
 
   static std::vector<compiler::Lifetime> compute_lifetimes(
-      const ir::lowered::Module& lowered) {
+      const ir::lowered::Module& lowered, bool disable_activation_reuse) {
     const std::uint64_t command_count =
         std::max<std::uint64_t>(1, lowered.kernel_requirements().size());
     std::vector<compiler::Lifetime> lifetimes(lowered.tensors().size(), {command_count, 0});
@@ -398,6 +400,8 @@ class Specializer final {
       if (kind == compiler::AllocationClass::persistent_weight ||
           kind == compiler::AllocationClass::kv_state ||
           kind == compiler::AllocationClass::decode_state) {
+        lifetimes[tensor.id.value()] = {0, command_count};
+      } else if (disable_activation_reuse) {
         lifetimes[tensor.id.value()] = {0, command_count};
       } else if (lifetimes[tensor.id.value()].first == command_count) {
         // Entry-bound tensors that are not consumed by a command still need a valid allocation.

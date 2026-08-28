@@ -421,6 +421,13 @@ int main() {
          sequential_result.value().memory.allocations[2].offset);
   assert(sequential_result.value().memory.device_arena_bytes == 32);
 
+  const auto no_alias_result = specializer.compile(
+      make_sequential_activation_fixture(), {target, 256, 64, true}, provider);
+  assert(no_alias_result.has_value());
+  assert(no_alias_result.value().memory.device_arena_bytes == 48);
+  assert(no_alias_result.value().memory.allocations[0].offset !=
+         no_alias_result.value().memory.allocations[2].offset);
+
   const auto multi_entry_result = specializer.compile(
       make_multi_entry_fixture(), {target, 256, 64}, provider);
   assert(multi_entry_result.has_value());

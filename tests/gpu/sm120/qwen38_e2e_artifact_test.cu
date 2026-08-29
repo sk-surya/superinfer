@@ -356,6 +356,36 @@ int main() {
   if (hidden_capture_step.has_value() && hidden_capture_step.value() == 0 &&
       !capture_hidden(0)) return 1;
 
+  const char* layer_trace_path = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_F32");
+  std::optional<std::uint32_t> layer_trace_step;
+  std::vector<superinfer::ir::physical::CommandId> layer_trace_commands;
+  std::vector<std::vector<std::byte>> layer_trace_captures;
+  if (layer_trace_path != nullptr) {
+    const char* encoded_step = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_STEP");
+    if (encoded_step == nullptr) {
+      std::cerr << "SUPERINFER_QWEN38_LAYER_TRACE_F32 requires SUPERINFER_QWEN38_LAYER_TRACE_STEP\n";
+      return 1;
+    }
+    std::uint32_t parsed_step = 0;
+    const auto parsed = std::from_chars(encoded_step,
+                                        encoded_step + std::strlen(encoded_step), parsed_step);
+    if (parsed.ec != std::errc{} || parsed.ptr != encoded_step + std::strlen(encoded_step)) {
+      std::cerr << "invalid SUPERINFER_QWEN38_LAYER_TRACE_STEP\n";
+      return 1;
+    }
+    layer_trace_step = parsed_step;
+    std::size_t residual_index = 0;
+    for (const auto& command : specialized.value().plan.commands()) {
+      if (command.kernel.value() != 4) continue;
+      // Kernel 4 is emitted once after attention and once after the MLP. Capture the latter.
+      if ((residual_index++ % 2U) == 1U) layer_trace_commands.push_back(command.id);
+    }
+    if (layer_trace_commands.size() != 64) {
+      std::cerr << "Qwen layer trace expected 64 post-MLP residual commands\n";
+      return 1;
+    }
+  }
+
   std::ofstream state_trace;
   std::vector<superinfer::ir::physical::BufferId> state_trace_ids;
   std::vector<std::vector<std::byte>> state_trace_storage;
@@ -529,8 +559,12 @@ int main() {
         std::cerr << "continuation token upload failed: " << token_status.message() << '\n';
         return 1;
       }
-      const auto continuation_status = session.execute_at_position_for_test(
-          static_cast<std::uint32_t>(step + 1));
+      const std::uint32_t position = static_cast<std::uint32_t>(step + 1);
+      const auto continuation_status =
+          layer_trace_step.has_value() && layer_trace_step.value() == position
+              ? session.execute_at_position_for_test(position, layer_trace_commands,
+                                                      layer_trace_captures)
+              : session.execute_at_position_for_test(position);
       if (!continuation_status.ok()) {
         std::cerr << "Qwen continuation launch failed: " << continuation_status.message() << '\n';
         return 1;
@@ -586,6 +620,29 @@ int main() {
       std::cerr << "hidden capture step was not executed: " << hidden_capture_step.value() << '\n';
       return 1;
     }
+  }
+  if (layer_trace_path != nullptr) {
+    if (!layer_trace_step.has_value() || layer_trace_captures.size() != layer_trace_commands.size()) {
+      std::cerr << "layer trace step was not executed\n";
+      return 1;
+    }
+    std::ofstream capture{layer_trace_path, std::ios::binary | std::ios::trunc};
+    if (!capture.good()) return 1;
+    for (const auto& bytes : layer_trace_captures) {
+      if (bytes.size() != 5120U * sizeof(float)) {
+        std::cerr << "layer trace output is not F32[5120]\n";
+        return 1;
+      }
+      capture.write(reinterpret_cast<const char*>(bytes.data()),
+                    static_cast<std::streamsize>(bytes.size()));
+    }
+    if (!capture.good()) return 1;
+    std::ofstream metadata{std::string{layer_trace_path} + ".meta", std::ios::trunc};
+    if (!metadata.good()) return 1;
+    metadata << "step " << layer_trace_step.value() << " layers " << layer_trace_captures.size()
+             << " contract post_mlp_residual\n";
+    for (const auto command : layer_trace_commands) metadata << command.value() << '\n';
+    if (!metadata.good()) return 1;
   }
   std::cout << "qwen38 e2e token=" << token << " greedy=" << best << " logit=" << best_value
             << " checksum=" << checksum << " state_buffers=" << state_buffers

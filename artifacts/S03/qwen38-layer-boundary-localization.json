@@ -1,0 +1,47 @@
+{
+  "schema": "superinfer.qwen38.s03.layer_boundary_localization.v1",
+  "status": "accumulated_pre_lm_head_drift",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": {
+    "case": "chat-template",
+    "tokens": 60,
+    "selected_zero_based_step": 29,
+    "target_gpu": "GPU 0 NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a",
+    "target_boundary_contract": "post_mlp_residual",
+    "elements_per_layer": 5120,
+    "layers": 64
+  },
+  "target": {
+    "boundary_capture": "build/evidence/debug-chat-prefix30-layer/target-boundaries.f32",
+    "boundary_capture_sha256": "98bd8a1a605c9faaa6ad7ec07a62412135ecffdd362823cbb777af3de9afab59"
+  },
+  "reference": {
+    "implementation": "Transformers Qwen3_5DecoderLayer streamed one layer at a time",
+    "transformers_version": "5.12.1",
+    "torch_version": "2.13.0+cu130",
+    "standard_boundary_capture": "build/evidence/reference-chat-boundaries29/chat-boundaries29.f32",
+    "standard_boundary_capture_sha256": "039c4cd633b0996bad73711f4cf3a07bf99a7b1495fb8963962766f53f6a306e",
+    "bf16_kv_linear_state_capture": "build/evidence/reference-chat-boundaries29-bf16-linear/chat-boundaries29.f32",
+    "bf16_kv_linear_state_capture_sha256": "e2dc0f951cae6ab55713d44764b22b0364b03c2803c949132a1952b1949677a2"
+  },
+  "metrics": {
+    "standard_reference": {
+      "layer_0": {"max_abs": 0.0258694, "mean_abs": 0.0000916, "rmse": 0.0003813},
+      "layer_11": {"max_abs": 0.2082062, "mean_abs": 0.0012060, "rmse": 0.0033145},
+      "layer_31": {"max_abs": 0.0689690, "mean_abs": 0.0049560, "rmse": 0.0067757},
+      "layer_47": {"max_abs": 0.1392290, "mean_abs": 0.0163840, "rmse": 0.0208288},
+      "layer_55": {"max_abs": 0.3377300, "mean_abs": 0.0403760, "rmse": 0.0504620},
+      "layer_63": {"max_abs": 0.3559446, "mean_abs": 0.0821569, "rmse": 0.1032561}
+    },
+    "bf16_kv_and_linear_state_reference": {
+      "layer_0": {"max_abs": 0.0259510, "mean_abs": 0.0000920, "rmse": 0.0003830},
+      "layer_11": {"max_abs": 0.2072180, "mean_abs": 0.0012130, "rmse": 0.0033060},
+      "layer_31": {"max_abs": 0.0692210, "mean_abs": 0.0049610, "rmse": 0.0067790},
+      "layer_47": {"max_abs": 0.1382830, "mean_abs": 0.0163040, "rmse": 0.0207060},
+      "layer_55": {"max_abs": 0.2665480, "mean_abs": 0.0399730, "rmse": 0.0499730},
+      "layer_63": {"max_abs": 0.3749161, "mean_abs": 0.0811156, "rmse": 0.1019827}
+    }
+  },
+  "conclusion": "The hidden discrepancy accumulates across decoder layers before final normalization and LM-head projection. BF16 KV plus BF16 linear-attention convolution-state emulation changes final RMSE only from 0.1032561 to 0.1019827 and does not remove the drift. No tolerance or acceptance criterion was changed. The next diagnostic boundary is an operation/state comparison at the first affected layer."
+}

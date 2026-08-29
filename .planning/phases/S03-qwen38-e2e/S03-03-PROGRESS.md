@@ -98,6 +98,15 @@ from the FP32-KV oracle by max `0.2152066` / RMSE `0.0627003`, and from the BF16
 the next diagnostic boundary is per-layer output/state comparison. Evidence is recorded in
 `artifacts/S03/qwen38-hidden-row29-localization.json`.
 
+The per-layer diagnostic captured the post-MLP residual after every one of the 64 decoder layers
+at the same row-29 continuation step. Error grows gradually from layer 0 RMSE `0.0003813` to
+layer 63 RMSE `0.1032561`; attention-layer jumps occur, but no single layer is catastrophic. A
+reference variant that rounds both BF16 KV and linear-attention convolution state changes the
+final RMSE only to `0.1019827`. This rules out those storage choices as the sole explanation and
+localizes the remaining issue to accumulated operation/state numerical behavior before the final
+norm and LM head. The target and both reference boundary hashes plus selected layer metrics are
+recorded in `artifacts/S03/qwen38-layer-boundary-localization.json`.
+
 ## Debugging record
 
 The initial full-graph differential diverged at layer 3, the first full-attention layer. The

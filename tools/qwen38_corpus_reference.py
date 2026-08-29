@@ -61,19 +61,30 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--round-kv", action="store_true",
         help="store every DynamicCache K/V update as BF16, then read it as FP32",
     )
+    parser.add_argument(
+        "--round-linear-state", action="store_true",
+        help="store linear-attention convolution state as BF16, while retaining FP32 recurrent state",
+    )
     parser.add_argument("--hidden-output", type=Path,
                         help="optional FP32 output for one final-normalized hidden row")
     parser.add_argument("--hidden-case",
                         help="corpus case whose normalized hidden row should be captured")
     parser.add_argument("--hidden-step", type=int,
                         help="zero-based token position to capture from --hidden-case")
+    parser.add_argument("--boundaries-output", type=Path,
+                        help="optional FP32 output for post-layer hidden rows")
+    parser.add_argument("--boundary-case",
+                        help="corpus case whose post-layer rows should be captured")
+    parser.add_argument("--boundary-step", type=int,
+                        help="zero-based token position whose post-layer rows should be captured")
     return parser
 
 
 def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Path,
-               round_activations: bool, round_kv: bool,
+               round_activations: bool, round_kv: bool, round_linear_state: bool,
                hidden_output: Path | None = None, hidden_case: str | None = None,
-               hidden_step: int | None = None) -> dict[str, Any]:
+               hidden_step: int | None = None, boundaries_output: Path | None = None,
+               boundary_case: str | None = None, boundary_step: int | None = None) -> dict[str, Any]:
     import torch
     import torch.nn.functional as F
     from safetensors import safe_open
@@ -86,13 +97,24 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
         sys.path.insert(0, repository_root)
     reference = __import__("tools.qwen38_nvfp4_e2e_reference", fromlist=["_nvfp4", "_rms_norm", "_tensor"])
 
-    class Bf16StorageDynamicCache(DynamicCache):
-        """DynamicCache that models the runtime's BF16 K/V storage and FP32 reads."""
+    class DeploymentStorageDynamicCache(DynamicCache):
+        """DynamicCache with explicit deployment storage contracts for diagnostic qualification."""
+
+        def __init__(self, *args, round_kv: bool, round_linear_state: bool, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._round_kv = round_kv
+            self._round_linear_state = round_linear_state
 
         def update(self, key_states, value_states, layer_idx, *args, **kwargs):
-            key_states = key_states.to(torch.bfloat16).to(torch.float32)
-            value_states = value_states.to(torch.bfloat16).to(torch.float32)
+            if self._round_kv:
+                key_states = key_states.to(torch.bfloat16).to(torch.float32)
+                value_states = value_states.to(torch.bfloat16).to(torch.float32)
             return super().update(key_states, value_states, layer_idx, *args, **kwargs)
+
+        def update_conv_state(self, conv_states, layer_idx, *args, **kwargs):
+            if self._round_linear_state:
+                conv_states = conv_states.to(torch.bfloat16).to(torch.float32)
+            return super().update_conv_state(conv_states, layer_idx, *args, **kwargs)
 
     root = json.loads((model_dir / "config.json").read_text())
     config = Qwen3_5TextConfig.from_dict(root["text_config"])
@@ -120,8 +142,9 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "id": case_id,
             "tokens": token_ids,
             "hidden": [embedding[token].reshape(1, 1, -1) for token in token_ids],
-            "cache": (Bf16StorageDynamicCache(config=config) if round_kv
-                      else DynamicCache(config=config)),
+            "cache": (DeploymentStorageDynamicCache(
+                config=config, round_kv=round_kv, round_linear_state=round_linear_state
+            ) if round_kv or round_linear_state else DynamicCache(config=config)),
         }
         for case_id, token_ids in normalized_cases
     ]
@@ -129,6 +152,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
     rotary = Qwen3_5TextRotaryEmbedding(config)
     output_rows: dict[str, list[bytes]] = {case_id: [] for case_id, _ in normalized_cases}
     greedy: dict[str, list[int]] = {case_id: [] for case_id, _ in normalized_cases}
+    boundary_payload = bytearray()
+    boundary_count = 0
 
     with torch.inference_mode():
         for layer_index in range(config.num_hidden_layers):
@@ -159,6 +184,11 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                     updated = output[0] if isinstance(output, tuple) else output
                     if round_activations:
                         updated = updated.to(torch.bfloat16).to(torch.float32)
+                    if (boundaries_output is not None and state["id"] == boundary_case and
+                            (boundary_step is None or position == boundary_step)):
+                        row = updated.reshape(-1).contiguous().cpu().numpy().astype("float32")
+                        boundary_payload.extend(row.tobytes())
+                        boundary_count += 1
                     next_hidden.append(updated)
                 state["hidden"] = next_hidden
             del layer
@@ -195,6 +225,19 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
         hidden_output.with_suffix(".json").write_text(
             json.dumps(hidden_capture_metadata, indent=2) + "\n"
         )
+    if boundaries_output is not None:
+        if not boundary_payload or boundary_count != config.num_hidden_layers:
+            raise ValueError("requested boundary capture did not match one complete model step")
+        boundaries_output.parent.mkdir(parents=True, exist_ok=True)
+        boundaries_output.write_bytes(boundary_payload)
+        boundaries_output.with_suffix(".json").write_text(json.dumps({
+            "case": boundary_case,
+            "step": boundary_step,
+            "layers": boundary_count,
+            "elements_per_layer": config.hidden_size,
+            "dtype": "float32",
+            "sha256": _sha256(bytes(boundary_payload)),
+        }, indent=2) + "\n")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
@@ -216,6 +259,7 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "token_ids_sha256": canonical_token_hash(token_ids),
             "round_activations": round_activations,
             "round_kv": round_kv,
+            "round_linear_state": round_linear_state,
             "evaluation_order": "one checkpoint layer across all selected cases, then next layer",
         }
         diagnostics_path = output.with_suffix(".json")
@@ -236,10 +280,16 @@ def main() -> int:
         parser.error("--hidden-output requires --hidden-case")
     if args.hidden_step is not None and args.hidden_step < 0:
         parser.error("--hidden-step must be non-negative")
+    if args.boundaries_output is not None and args.boundary_case is None:
+        parser.error("--boundaries-output requires --boundary-case")
+    if args.boundary_step is not None and args.boundary_step < 0:
+        parser.error("--boundary-step must be non-negative")
     corpus = json.loads(args.corpus.read_text())
     report = _run_cases(args.model_dir, select_cases(corpus, args.case_ids), args.output_dir,
-                        args.round_activations, args.round_kv, args.hidden_output,
-                        args.hidden_case, args.hidden_step)
+                        args.round_activations, args.round_kv, args.round_linear_state,
+                        args.hidden_output,
+                        args.hidden_case, args.hidden_step, args.boundaries_output,
+                        args.boundary_case, args.boundary_step)
     (args.output_dir / "corpus-reference.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({"status": report["status"], "cases": [case["id"] for case in report["cases"]]}, indent=2))
     return 0

@@ -1579,7 +1579,30 @@ class CudaPlanSession final {
    * specialization.
    */
   base::Status execute_at_position_for_test(std::uint32_t position) noexcept {
+    const std::vector<ir::physical::CommandId> no_trace;
+    std::vector<std::vector<std::byte>> ignored;
+    return execute_at_position_for_test(position, no_trace, ignored);
+  }
+
+  /**
+   * Executes one continuation segment and copies selected command output buffers after launch.
+   *
+   * This is a diagnostic-only entry point. It synchronizes at each selected command and may
+   * allocate host vectors, so it must never be used by production execution. Each captured
+   * command contributes the bytes of its final declared buffer in command order.
+   */
+  base::Status execute_at_position_for_test(
+      std::uint32_t position, const std::vector<ir::physical::CommandId>& trace_commands,
+      std::vector<std::vector<std::byte>>& trace_captures) noexcept {
     if (poisoned_) return base::Status::failed_precondition("CUDA session is poisoned");
+    trace_captures.clear();
+    trace_captures.reserve(trace_commands.size());
+    for (std::size_t index = 0; index < trace_commands.size(); ++index) {
+      if (trace_commands[index].value() >= commands_plan_.size() ||
+          (index != 0 && trace_commands[index - 1].value() >= trace_commands[index].value())) {
+        return base::Status::invalid_argument("CUDA trace commands must be unique and ordered");
+      }
+    }
     std::uint32_t cache_capacity = 0;
     for (const auto& command : commands_plan_) {
       if (command.cache_append.capacity != 0) {
@@ -1590,6 +1613,7 @@ class CudaPlanSession final {
     if (cache_capacity == 0 || position >= cache_capacity) {
       return base::Status::out_of_range("CUDA decode position exceeds physical cache capacity");
     }
+    std::size_t next_trace = 0;
     for (const std::size_t command_index : command_order_) {
       ir::physical::CommandDescriptor command = commands_plan_[command_index];
       if (command.cache_append.capacity != 0) command.cache_append.position = position;
@@ -1612,8 +1636,32 @@ class CudaPlanSession final {
         const cudaError_t record_error = cudaEventRecord(events_[command_index].get(), stream);
         if (record_error != cudaSuccess) return poison(record_error, "cudaEventRecord");
       }
+      if (next_trace < trace_commands.size() &&
+          trace_commands[next_trace].value() == command.id.value()) {
+        ++lifecycle_trace_->device_synchronizations;
+        const cudaError_t sync_error = cudaDeviceSynchronize();
+        if (sync_error != cudaSuccess) return poison(sync_error, "diagnostic command trace synchronization");
+        if (command.buffers.empty()) {
+          return base::Status::failed_precondition("diagnostic command has no output buffer");
+        }
+        const ir::physical::BufferId output_id = command.buffers.back();
+        if (output_id.value() >= plan_.buffers().size()) {
+          return base::Status::out_of_range("diagnostic command output buffer is undefined");
+        }
+        const auto& output = plan_.buffers()[output_id.value()];
+        trace_captures.emplace_back(output.size);
+        const cudaError_t copy_error = cudaMemcpy(
+            trace_captures.back().data(),
+            detail::buffer_pointer(plan_, device_arena_.data(), output.id), output.size,
+            cudaMemcpyDeviceToHost);
+        if (copy_error != cudaSuccess) return poison(copy_error, "diagnostic command trace copy");
+        ++next_trace;
+      }
       ++trace_.commands_executed;
       ++trace_.launches;
+    }
+    if (next_trace != trace_commands.size()) {
+      return base::Status::failed_precondition("diagnostic command was not scheduled");
     }
     return {};
   }

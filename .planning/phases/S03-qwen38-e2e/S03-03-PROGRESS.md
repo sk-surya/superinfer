@@ -115,6 +115,12 @@ drift. This capture used physical GPU 1 because GPU 0 was occupied by an unrelat
 process; both are RTX 5090 `sm_120a`. The corrected comparison is included in the same localization
 artifact.
 
+Repeating the post-token-mixer capture against a CUDA Transformers oracle produced the same
+boundary shape: layer-63 RMSE `0.0876815` and max error `0.3370228`, with no traced boundary over
+`0.5`. This is effectively the same result as the CPU oracle and confirms that the remaining
+acceptance outliers are not caused by host/device placement of the independent reference. The
+CUDA capture identity is recorded in `artifacts/S03/qwen38-layer-boundary-localization.json`.
+
 An independent Transformers oracle was also run on physical GPU 1 with the same BF16 KV and
 linear-attention state emulation. Its greedy sequence is byte-for-byte token-equivalent to the
 current SuperInfer replay, while logit comparison still has rows 23 and 29 over the unchanged

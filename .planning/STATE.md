@@ -82,7 +82,7 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
   per-boundary `0.5` diagnostic ceiling but insufficient to close the logit contract. See
   `artifacts/S03/qwen38-layer-boundary-localization.json`. A CUDA Transformers oracle with the
   same storage emulation matches greedy tokens but retains the logit outliers, so the remaining
-  cause is not simply CPU-vs-CUDA reference math.
+  cause is not simply CPU-vs-CUDA reference math; its post-token-mixer layer-63 RMSE is `0.0876815`.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
 - S03F-01 has pinned immutable Flash-Next model/reference revisions, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.

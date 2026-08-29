@@ -58,7 +58,10 @@
       "layer_31": {"max_abs": 0.0673600, "mean_abs": 0.0048460, "rmse": 0.0066390},
       "layer_47": {"max_abs": 0.1380650, "mean_abs": 0.0148080, "rmse": 0.0189590},
       "layer_55": {"max_abs": 0.3656850, "mean_abs": 0.0369050, "rmse": 0.0465820},
-      "layer_63": {"max_abs": 0.3383808, "mean_abs": 0.0707338, "rmse": 0.0885137}
+      "layer_63": {"max_abs": 0.3383808, "mean_abs": 0.0707338, "rmse": 0.0885137},
+      "cuda_reference_capture": "build/evidence/reference-chat-attention29-cuda/chat-attention29.f32",
+      "cuda_reference_capture_sha256": "a5b2de77d1846de3ca024a4db3451091169685e82cac0d9a1a9297ab28c69065",
+      "cuda_reference_layer_63": {"max_abs": 0.3370228, "mean_abs": 0.0699587, "rmse": 0.0876815}
     },
     "cuda_oracle_full_replay": {
       "target_capture_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99",
@@ -72,5 +75,5 @@
       "reference_storage": "BF16 KV and BF16 linear-attention convolution state"
     }
   },
-  "conclusion": "The hidden discrepancy accumulates across decoder layers before final normalization and LM-head projection. The corrected BF16 KV plus BF16 linear-attention convolution-state emulation models the in-place single-token decode update and changes post-MLP final RMSE from 0.1032561 to 0.1028437; it does not remove the drift. Post-token-mixer tracing shows the same gradual accumulation, from layer 0 RMSE 0.0002270 to layer 63 RMSE 0.0885137, while the post-MLP boundary reaches 0.1028437. An independent CUDA Transformers oracle with the same storage emulation matches all greedy tokens but retains nearly identical logit drift, ruling out host-vs-device reference math as the primary cause. No tolerance or acceptance criterion was changed. The next diagnostic boundary is an operation/state comparison at the first affected layer."
+  "conclusion": "The hidden discrepancy accumulates across decoder layers before final normalization and LM-head projection. The corrected BF16 KV plus BF16 linear-attention convolution-state emulation models the in-place single-token decode update and changes post-MLP final RMSE from 0.1032561 to 0.1028437; it does not remove the drift. Post-token-mixer tracing shows the same gradual accumulation, from layer 0 RMSE 0.0002270 to layer 63 RMSE 0.0885137 on the CPU oracle and 0.0876815 on the CUDA oracle, while no traced boundary exceeds max error 0.5. Independent CUDA Transformers logits match all greedy tokens but retain nearly identical outliers, ruling out host-vs-device reference math and the tested cache-storage choices as the primary cause. No tolerance or acceptance criterion was changed. The next diagnostic boundary is an operation/state comparison at the first affected layer."
 }

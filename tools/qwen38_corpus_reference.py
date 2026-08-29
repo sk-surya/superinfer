@@ -47,8 +47,25 @@ def _sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def build_argument_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-dir", type=Path, required=True)
+    parser.add_argument("--corpus", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--case", action="append", dest="case_ids")
+    parser.add_argument(
+        "--round-activations", action="store_true",
+        help="round each layer output through BF16 before the next layer",
+    )
+    parser.add_argument(
+        "--round-kv", action="store_true",
+        help="store every DynamicCache K/V update as BF16, then read it as FP32",
+    )
+    return parser
+
+
 def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Path,
-               round_activations: bool) -> dict[str, Any]:
+               round_activations: bool, round_kv: bool) -> dict[str, Any]:
     import torch
     import torch.nn.functional as F
     from safetensors import safe_open
@@ -60,6 +77,15 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
     if repository_root not in sys.path:
         sys.path.insert(0, repository_root)
     reference = __import__("tools.qwen38_nvfp4_e2e_reference", fromlist=["_nvfp4", "_rms_norm", "_tensor"])
+
+    class Bf16StorageDynamicCache(DynamicCache):
+        """DynamicCache that models the runtime's BF16 K/V storage and FP32 reads."""
+
+        def update(self, key_states, value_states, layer_idx, *args, **kwargs):
+            key_states = key_states.to(torch.bfloat16).to(torch.float32)
+            value_states = value_states.to(torch.bfloat16).to(torch.float32)
+            return super().update(key_states, value_states, layer_idx, *args, **kwargs)
+
     root = json.loads((model_dir / "config.json").read_text())
     config = Qwen3_5TextConfig.from_dict(root["text_config"])
     index = json.loads((model_dir / "model.safetensors.index.json").read_text())["weight_map"]
@@ -86,7 +112,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "id": case_id,
             "tokens": token_ids,
             "hidden": [embedding[token].reshape(1, 1, -1) for token in token_ids],
-            "cache": DynamicCache(config=config),
+            "cache": (Bf16StorageDynamicCache(config=config) if round_kv
+                      else DynamicCache(config=config)),
         }
         for case_id, token_ids in normalized_cases
     ]
@@ -158,6 +185,7 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "output_sha256": _sha256(payload),
             "token_ids_sha256": canonical_token_hash(token_ids),
             "round_activations": round_activations,
+            "round_kv": round_kv,
             "evaluation_order": "one checkpoint layer across all selected cases, then next layer",
         }
         diagnostics_path = output.with_suffix(".json")
@@ -172,16 +200,11 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model-dir", type=Path, required=True)
-    parser.add_argument("--corpus", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--case", action="append", dest="case_ids")
-    parser.add_argument("--round-activations", action="store_true")
+    parser = build_argument_parser()
     args = parser.parse_args()
     corpus = json.loads(args.corpus.read_text())
     report = _run_cases(args.model_dir, select_cases(corpus, args.case_ids), args.output_dir,
-                        args.round_activations)
+                        args.round_activations, args.round_kv)
     (args.output_dir / "corpus-reference.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({"status": report["status"], "cases": [case["id"] for case in report["cases"]]}, indent=2))
     return 0

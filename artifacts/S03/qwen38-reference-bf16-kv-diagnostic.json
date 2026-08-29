@@ -1,0 +1,36 @@
+{
+  "schema": "superinfer.qwen38.s03.reference_bf16_kv_diagnostic.v1",
+  "status": "diagnostic_only",
+  "purpose": "Test whether target BF16 KV storage explains the remaining long-replay logit outliers.",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "target_capture": {
+    "description": "Current stable 60-token chat replay, two target sessions equal",
+    "sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99",
+    "gpu": "GPU 0 NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a"
+  },
+  "reference": {
+    "implementation": "Transformers Qwen3_5DecoderLayer streamed one layer at a time",
+    "transformers_version": "5.12.1",
+    "torch_version": "2.13.0+cu130",
+    "tokens": "chat-template corpus case",
+    "baseline_fp32_kv_capture_sha256": "71f932c8b53a86a256c4b6e423461d5ab371ce95813d38a8f7f2c082e10abbfc",
+    "bf16_kv_capture_sha256": "ddf73d7053825f3f3208b336e73006915e88d35995d30aba883c8cee2bc6ece7"
+  },
+  "contract": {
+    "max_abs": 0.5,
+    "mean_abs": 0.1,
+    "rmse": 0.15
+  },
+  "results": {
+    "fp32_kv_failed_rows": [23, 28, 29, 35],
+    "bf16_kv_failed_rows": [23, 28, 29],
+    "bf16_kv_selected_max_abs": {
+      "row_23": 0.5165205,
+      "row_28": 0.5129104,
+      "row_29": 0.5689898,
+      "row_35": 0.4988298
+    }
+  },
+  "conclusion": "BF16 KV storage changes the drift but does not account for the remaining contract failures. Do not loosen tolerances or close S03 from this diagnostic."
+}

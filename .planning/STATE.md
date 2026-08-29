@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: S03
 status: autonomous_execution
-last_updated: "2026-08-28T00:01:33Z"
+last_updated: "2026-08-29T00:00:00Z"
 progress:
   total_phases: 10
   completed_phases: 3
@@ -73,6 +73,8 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
 ## Known Blockers / Decision Boundaries
 
 - S03 requires real RTX 5090 model-level differential and end-to-end evidence; primitive-only tests are insufficient.
+- A BF16-KV reference diagnostic changes but does not explain the remaining long-replay logit outliers;
+  no numerical tolerance was loosened and S03 remains open.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
 - S03F-01 has pinned immutable Flash-Next model/reference revisions, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.

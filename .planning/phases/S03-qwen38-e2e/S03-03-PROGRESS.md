@@ -83,6 +83,13 @@ sessions and the two diagnostic controls; the historical failure is not presentl
 The current capture matches all 60 reference greedy tokens, but four rows exceed the pinned `max_abs`
 logit contract (first at row 23, maximum `0.6116333`), so this is not acceptance closure.
 
+An explicit reference diagnostic now models the target's BF16 KV storage by quantizing every
+Transformers DynamicCache update to BF16 and reading it back as FP32. Against the stable current
+target capture, the original FP32-KV oracle fails rows 23, 28, 29, and 35; the BF16-KV oracle still
+fails rows 23, 28, and 29. This changes but does not explain the remaining numerical drift, so no
+tolerance or acceptance criterion was changed. The machine-readable result is
+`artifacts/S03/qwen38-reference-bf16-kv-diagnostic.json`.
+
 ## Debugging record
 
 The initial full-graph differential diverged at layer 3, the first full-attention layer. The
@@ -102,7 +109,8 @@ the shared-cache Transformers reference. Full-vector drift is recorded per step 
 divergence. The qualified corpus reference environment is Transformers 5.12.1 with torch
 2.13.0+cu130.
 
-The remaining acceptance work is to resolve the long-replay reproducibility failure, then produce
+The remaining acceptance work is to localize the residual numerical drift and historical replay
+discrepancy, then produce
 the reviewed passing report and second complete target-session corpus run. The legal boundary proof
 is complete for positions 4095/4096, but the numerical model contract is not yet closed for all
 declared corpus cases. S03F-02 remains blocked until that S03 acceptance is explicitly closed.

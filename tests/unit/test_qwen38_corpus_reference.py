@@ -1,6 +1,10 @@
 import unittest
 
-from tools.qwen38_corpus_reference import canonical_token_hash, select_cases
+from tools.qwen38_corpus_reference import (
+    build_argument_parser,
+    canonical_token_hash,
+    select_cases,
+)
 
 
 class Qwen38CorpusReferenceTests(unittest.TestCase):
@@ -21,6 +25,18 @@ class Qwen38CorpusReferenceTests(unittest.TestCase):
         self.assertEqual([case["id"] for case in select_cases(corpus, ["b"])], ["b"])
         with self.assertRaises(ValueError):
             select_cases(corpus, ["missing"])
+
+    def test_reference_cli_exposes_explicit_bf16_kv_diagnostic(self) -> None:
+        parser = build_argument_parser()
+        args = parser.parse_args(
+            [
+                "--model-dir", "/model",
+                "--corpus", "/corpus.json",
+                "--output-dir", "/output",
+                "--round-kv",
+            ]
+        )
+        self.assertTrue(args.round_kv)
 
 
 if __name__ == "__main__":

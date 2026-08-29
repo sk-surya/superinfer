@@ -27,7 +27,10 @@
     "standard_boundary_capture_sha256": "039c4cd633b0996bad73711f4cf3a07bf99a7b1495fb8963962766f53f6a306e",
     "bf16_kv_linear_state_capture": "build/evidence/reference-chat-boundaries29-bf16-linear-v2/chat-boundaries29.f32",
     "bf16_kv_linear_state_capture_sha256": "3668ef69f857dd3e12b21938a97f357ada84c705321161e29e3337b5cdc5bf4f",
-    "bf16_linear_state_diagnostic": "corrected to round the in-place single-token causal_conv1d_update state after each decoder layer"
+    "bf16_linear_state_diagnostic": "corrected to round the in-place single-token causal_conv1d_update state after each decoder layer",
+    "cuda_oracle_capture": "build/evidence/reference-chat-cuda-gpu1/chat-template.f32",
+    "cuda_oracle_capture_sha256": "f5c0e8588e7b2a63c9ac24e8700d71b7bb69cdfebeca571f4325ef9bb3085746",
+    "cuda_oracle_device": "physical GPU 1 NVIDIA GeForce RTX 5090"
   },
   "metrics": {
     "standard_reference": {
@@ -56,7 +59,18 @@
       "layer_47": {"max_abs": 0.1380650, "mean_abs": 0.0148080, "rmse": 0.0189590},
       "layer_55": {"max_abs": 0.3656850, "mean_abs": 0.0369050, "rmse": 0.0465820},
       "layer_63": {"max_abs": 0.3383808, "mean_abs": 0.0707338, "rmse": 0.0885137}
+    },
+    "cuda_oracle_full_replay": {
+      "target_capture_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99",
+      "reference_capture_sha256": "f5c0e8588e7b2a63c9ac24e8700d71b7bb69cdfebeca571f4325ef9bb3085746",
+      "greedy_tokens_match": true,
+      "rows_over_max_abs_0_5": [23, 29],
+      "max_abs": 0.5977492,
+      "mean_abs": 0.0387242,
+      "rmse": 0.0518031,
+      "reference_device": "cuda",
+      "reference_storage": "BF16 KV and BF16 linear-attention convolution state"
     }
   },
-  "conclusion": "The hidden discrepancy accumulates across decoder layers before final normalization and LM-head projection. The corrected BF16 KV plus BF16 linear-attention convolution-state emulation models the in-place single-token decode update and changes post-MLP final RMSE from 0.1032561 to 0.1028437; it does not remove the drift. Post-token-mixer tracing shows the same gradual accumulation, from layer 0 RMSE 0.0002270 to layer 63 RMSE 0.0885137, while the post-MLP boundary reaches 0.1028437. No tolerance or acceptance criterion was changed. The next diagnostic boundary is an operation/state comparison at the first affected layer."
+  "conclusion": "The hidden discrepancy accumulates across decoder layers before final normalization and LM-head projection. The corrected BF16 KV plus BF16 linear-attention convolution-state emulation models the in-place single-token decode update and changes post-MLP final RMSE from 0.1032561 to 0.1028437; it does not remove the drift. Post-token-mixer tracing shows the same gradual accumulation, from layer 0 RMSE 0.0002270 to layer 63 RMSE 0.0885137, while the post-MLP boundary reaches 0.1028437. An independent CUDA Transformers oracle with the same storage emulation matches all greedy tokens but retains nearly identical logit drift, ruling out host-vs-device reference math as the primary cause. No tolerance or acceptance criterion was changed. The next diagnostic boundary is an operation/state comparison at the first affected layer."
 }

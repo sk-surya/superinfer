@@ -52,6 +52,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--device", default="cpu",
+                        help="Transformers oracle device, for example cpu or cuda")
     parser.add_argument("--case", action="append", dest="case_ids")
     parser.add_argument(
         "--round-activations", action="store_true",
@@ -93,7 +95,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                boundary_case: str | None = None, boundary_step: int | None = None,
                attention_boundaries_output: Path | None = None,
                attention_boundary_case: str | None = None,
-               attention_boundary_step: int | None = None) -> dict[str, Any]:
+               attention_boundary_step: int | None = None,
+               device_name: str = "cpu") -> dict[str, Any]:
     import torch
     import torch.nn.functional as F
     from safetensors import safe_open
@@ -105,6 +108,9 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
     if repository_root not in sys.path:
         sys.path.insert(0, repository_root)
     reference = __import__("tools.qwen38_nvfp4_e2e_reference", fromlist=["_nvfp4", "_rms_norm", "_tensor"])
+    device = torch.device(device_name)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("requested CUDA reference device but CUDA is unavailable")
 
     class DeploymentStorageDynamicCache(DynamicCache):
         """DynamicCache with explicit deployment storage contracts for diagnostic qualification."""
@@ -154,7 +160,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
     # still owns an independent cache and hidden-state list.
     with safe_open(str(model_dir / index["model.language_model.embed_tokens.weight"]),
                    framework="pt", device="cpu") as handle:
-        embedding = handle.get_tensor("model.language_model.embed_tokens.weight").to(torch.float32)
+        embedding = handle.get_tensor("model.language_model.embed_tokens.weight").to(
+            device=device, dtype=torch.float32)
     states = [
         {
             "id": case_id,
@@ -177,7 +184,7 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
 
     with torch.inference_mode():
         for layer_index in range(config.num_hidden_layers):
-            layer = Qwen3_5DecoderLayer(config, layer_index).eval()
+            layer = Qwen3_5DecoderLayer(config, layer_index).eval().to(device)
             prefix = f"model.language_model.layers.{layer_index}."
             state_dict: dict[str, torch.Tensor] = {}
             for key in layer.state_dict():
@@ -185,10 +192,11 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                 if source_name not in index:
                     raise KeyError(source_name)
                 if source_name.endswith(".weight") and source_name + "_scale" in index:
-                    state_dict[key] = reference._nvfp4(model_dir, index, source_name)
+                    state_dict[key] = reference._nvfp4(model_dir, index, source_name).to(device)
                 else:
                     with safe_open(str(model_dir / index[source_name]), framework="pt", device="cpu") as handle:
-                        state_dict[key] = handle.get_tensor(source_name).to(torch.float32)
+                        state_dict[key] = handle.get_tensor(source_name).to(
+                            device=device, dtype=torch.float32)
             layer.load_state_dict(state_dict, strict=True)
             del state_dict
 
@@ -206,9 +214,10 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             for state in states:
                 next_hidden: list[torch.Tensor] = []
                 for position, hidden in enumerate(state["hidden"]):
-                    position_ids = torch.full((1, 1), position, dtype=torch.long)
+                    position_ids = torch.full((1, 1), position, dtype=torch.long, device=device)
                     position_embeddings = rotary(hidden, position_ids)
-                    causal_mask = torch.zeros((1, 1, 1, position + 1), dtype=torch.float32)
+                    causal_mask = torch.zeros((1, 1, 1, position + 1), dtype=torch.float32,
+                                              device=device)
                     output = layer(hidden, position_embeddings=position_embeddings,
                                    attention_mask=causal_mask, position_ids=position_ids,
                                    past_key_values=state["cache"])
@@ -237,8 +246,9 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             del layer
             gc.collect()
 
-        final_norm = reference._tensor(model_dir, index, "model.language_model.norm.weight").to(torch.float32)
-        lm_head = reference._nvfp4(model_dir, index, "lm_head.weight")
+        final_norm = reference._tensor(model_dir, index, "model.language_model.norm.weight").to(
+            device=device, dtype=torch.float32)
+        lm_head = reference._nvfp4(model_dir, index, "lm_head.weight").to(device)
         hidden_payload = bytearray()
         hidden_capture_metadata: dict[str, Any] | None = None
         for state in states:
@@ -317,6 +327,7 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "round_activations": round_activations,
             "round_kv": round_kv,
             "round_linear_state": round_linear_state,
+            "device": str(device),
             "evaluation_order": "one checkpoint layer across all selected cases, then next layer",
         }
         diagnostics_path = output.with_suffix(".json")
@@ -352,7 +363,7 @@ def main() -> int:
                         args.hidden_case, args.hidden_step, args.boundaries_output,
                         args.boundary_case, args.boundary_step,
                         args.attention_boundaries_output, args.attention_boundary_case,
-                        args.attention_boundary_step)
+                        args.attention_boundary_step, args.device)
     (args.output_dir / "corpus-reference.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({"status": report["status"], "cases": [case["id"] for case in report["cases"]]}, indent=2))
     return 0

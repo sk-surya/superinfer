@@ -95,6 +95,18 @@ class Qwen38CorpusReferenceTests(unittest.TestCase):
         self.assertEqual(args.attention_boundary_case, "chat-template")
         self.assertEqual(args.attention_boundary_step, 29)
 
+    def test_reference_cli_accepts_explicit_device(self) -> None:
+        parser = build_argument_parser()
+        args = parser.parse_args(
+            [
+                "--model-dir", "/model",
+                "--corpus", "/corpus.json",
+                "--output-dir", "/output",
+                "--device", "cuda",
+            ]
+        )
+        self.assertEqual(args.device, "cuda")
+
 
 if __name__ == "__main__":
     unittest.main()

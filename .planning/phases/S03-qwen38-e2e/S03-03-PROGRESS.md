@@ -115,6 +115,13 @@ drift. This capture used physical GPU 1 because GPU 0 was occupied by an unrelat
 process; both are RTX 5090 `sm_120a`. The corrected comparison is included in the same localization
 artifact.
 
+An independent Transformers oracle was also run on physical GPU 1 with the same BF16 KV and
+linear-attention state emulation. Its greedy sequence is byte-for-byte token-equivalent to the
+current SuperInfer replay, while logit comparison still has rows 23 and 29 over the unchanged
+`max_abs=0.5` threshold (`max_abs=0.5977492`, RMSE `0.0518031`). This rules out the CPU oracle's
+host-vs-device math as the primary explanation. The CUDA-oracle hash and environment are recorded
+in `artifacts/S03/qwen38-layer-boundary-localization.json`.
+
 ## Debugging record
 
 The initial full-graph differential diverged at layer 3, the first full-attention layer. The

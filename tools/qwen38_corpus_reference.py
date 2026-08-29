@@ -61,11 +61,19 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--round-kv", action="store_true",
         help="store every DynamicCache K/V update as BF16, then read it as FP32",
     )
+    parser.add_argument("--hidden-output", type=Path,
+                        help="optional FP32 output for one final-normalized hidden row")
+    parser.add_argument("--hidden-case",
+                        help="corpus case whose normalized hidden row should be captured")
+    parser.add_argument("--hidden-step", type=int,
+                        help="zero-based token position to capture from --hidden-case")
     return parser
 
 
 def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Path,
-               round_activations: bool, round_kv: bool) -> dict[str, Any]:
+               round_activations: bool, round_kv: bool,
+               hidden_output: Path | None = None, hidden_case: str | None = None,
+               hidden_step: int | None = None) -> dict[str, Any]:
     import torch
     import torch.nn.functional as F
     from safetensors import safe_open
@@ -158,13 +166,35 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
 
         final_norm = reference._tensor(model_dir, index, "model.language_model.norm.weight").to(torch.float32)
         lm_head = reference._nvfp4(model_dir, index, "lm_head.weight")
+        hidden_payload = bytearray()
+        hidden_capture_metadata: dict[str, Any] | None = None
         for state in states:
-            for hidden in state["hidden"]:
+            for position, hidden in enumerate(state["hidden"]):
                 normalized = reference._rms_norm(hidden, final_norm, config.rms_norm_eps)
+                if (hidden_output is not None and state["id"] == hidden_case and
+                        (hidden_step is None or position == hidden_step)):
+                    row = normalized.reshape(-1).contiguous().cpu().numpy().astype("float32")
+                    hidden_payload.extend(row.tobytes())
+                    hidden_capture_metadata = {
+                        "case": state["id"],
+                        "step": position,
+                        "elements": int(row.size),
+                    }
                 logits = F.linear(normalized.reshape(1, -1), lm_head).reshape(-1).contiguous()
                 values = logits.cpu().numpy().astype("float32").tobytes()
                 output_rows[state["id"]].append(values)
                 greedy[state["id"]].append(int(torch.argmax(logits).item()))
+
+    if hidden_output is not None:
+        if not hidden_payload or hidden_capture_metadata is None:
+            raise ValueError("requested hidden capture did not match a corpus case and step")
+        hidden_output.parent.mkdir(parents=True, exist_ok=True)
+        hidden_output.write_bytes(hidden_payload)
+        hidden_capture_metadata["sha256"] = _sha256(bytes(hidden_payload))
+        hidden_capture_metadata["dtype"] = "float32"
+        hidden_output.with_suffix(".json").write_text(
+            json.dumps(hidden_capture_metadata, indent=2) + "\n"
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
@@ -202,9 +232,14 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
 def main() -> int:
     parser = build_argument_parser()
     args = parser.parse_args()
+    if args.hidden_output is not None and args.hidden_case is None:
+        parser.error("--hidden-output requires --hidden-case")
+    if args.hidden_step is not None and args.hidden_step < 0:
+        parser.error("--hidden-step must be non-negative")
     corpus = json.loads(args.corpus.read_text())
     report = _run_cases(args.model_dir, select_cases(corpus, args.case_ids), args.output_dir,
-                        args.round_activations, args.round_kv)
+                        args.round_activations, args.round_kv, args.hidden_output,
+                        args.hidden_case, args.hidden_step)
     (args.output_dir / "corpus-reference.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({"status": report["status"], "cases": [case["id"] for case in report["cases"]]}, indent=2))
     return 0

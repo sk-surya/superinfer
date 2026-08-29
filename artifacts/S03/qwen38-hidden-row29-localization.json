@@ -1,0 +1,30 @@
+{
+  "schema": "superinfer.qwen38.s03.hidden_row_localization.v1",
+  "status": "localized_before_lm_head",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": {
+    "case": "chat-template",
+    "tokens": 30,
+    "selected_zero_based_step": 29,
+    "target_gpu": "GPU 0 NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a"
+  },
+  "target": {
+    "logits_capture_sha256": "367b47fc5c40705f0d584f4b428f63985ef18ca784ef951f74399a3fb5ab70a7",
+    "normalized_hidden_capture_sha256": "b0df0d1fccdc01cb463100c76e9a2bea182b2c642fa70720ec0dba5479500121",
+    "normalized_hidden_elements": 5120,
+    "stable_prefix_match": "equal to the first 30 rows of the current stable 60-token replay"
+  },
+  "reference": {
+    "implementation": "Transformers Qwen3_5DecoderLayer streamed one layer at a time",
+    "transformers_version": "5.12.1",
+    "torch_version": "2.13.0+cu130",
+    "fp32_kv_hidden_sha256": "4af1166dc4c547e0983d4a009e323a4b2dc6b1d9b3f4d59bcba203b9079a757a",
+    "bf16_kv_hidden_sha256": "ba3fbfdfa3727f6742f8d709881badf2d89c3ae5ed66679b65af9dcb7870e497"
+  },
+  "metrics": {
+    "target_vs_fp32_kv": {"max_abs": 0.2152066, "mean_abs": 0.0496493, "rmse": 0.0627003},
+    "target_vs_bf16_kv": {"max_abs": 0.2200685, "mean_abs": 0.0489205, "rmse": 0.0617750}
+  },
+  "conclusion": "The row-29 discrepancy exists in the final normalized decoder hidden vector before LM-head projection. BF16 KV emulation does not remove it. The next diagnostic boundary is per-layer output/state comparison."
+}

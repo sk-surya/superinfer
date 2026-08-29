@@ -19,6 +19,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -297,6 +298,64 @@ int main() {
     std::cerr << "Qwen full graph synchronization failed: " << sync_status.message() << '\n';
     return 1;
   }
+
+  const char* hidden_capture_path = std::getenv("SUPERINFER_QWEN38_HIDDEN_F32");
+  std::optional<std::uint32_t> hidden_capture_step;
+  if (const char* encoded_step = std::getenv("SUPERINFER_QWEN38_HIDDEN_STEP");
+      encoded_step != nullptr) {
+    std::uint32_t parsed_step = 0;
+    const auto parsed = std::from_chars(encoded_step,
+                                        encoded_step + std::strlen(encoded_step), parsed_step);
+    if (parsed.ec != std::errc{} || parsed.ptr != encoded_step + std::strlen(encoded_step)) {
+      std::cerr << "invalid SUPERINFER_QWEN38_HIDDEN_STEP\n";
+      return 1;
+    }
+    hidden_capture_step = parsed_step;
+    if (hidden_capture_path == nullptr) {
+      std::cerr << "SUPERINFER_QWEN38_HIDDEN_STEP requires SUPERINFER_QWEN38_HIDDEN_F32\n";
+      return 1;
+    }
+  }
+  std::optional<superinfer::ir::physical::BufferId> hidden_buffer_id;
+  std::size_t hidden_buffer_size = 0;
+  if (hidden_capture_path != nullptr) {
+    const auto& commands = specialized.value().plan.commands();
+    const auto lm_head = std::find_if(
+        commands.rbegin(), commands.rend(), [](const auto& command) {
+          return command.kernel.value() == 13 && !command.buffers.empty();
+        });
+    if (lm_head == commands.rend()) {
+      std::cerr << "Qwen LM-head command was not found for hidden capture\n";
+      return 1;
+    }
+    const auto& hidden_buffer = specialized.value().plan.buffers()[lm_head->buffers.front().value()];
+    if (hidden_buffer.tensor.dtype != superinfer::ir::physical::PhysicalDType::f32 ||
+        hidden_buffer.size != 5120U * sizeof(float)) {
+      std::cerr << "Qwen final hidden buffer is not F32[5120]\n";
+      return 1;
+    }
+    hidden_buffer_id = hidden_buffer.id;
+    hidden_buffer_size = hidden_buffer.size;
+  }
+  const auto capture_hidden = [&](std::uint32_t step) -> bool {
+    if (hidden_capture_path == nullptr) return true;
+    std::vector<float> hidden(hidden_buffer_size / sizeof(float));
+    const auto hidden_status = session.copy_from_device(
+        hidden_buffer_id.value(), {reinterpret_cast<std::byte*>(hidden.data()), hidden_buffer_size});
+    if (!hidden_status.ok()) {
+      std::cerr << "hidden capture download failed at step " << step << ": "
+                << hidden_status.message() << '\n';
+      return false;
+    }
+    std::ofstream capture{hidden_capture_path, std::ios::binary | std::ios::trunc};
+    if (!capture.good()) return false;
+    capture.write(reinterpret_cast<const char*>(hidden.data()),
+                  static_cast<std::streamsize>(hidden_buffer_size));
+    return capture.good();
+  };
+  if (hidden_capture_step.has_value() && hidden_capture_step.value() == 0 &&
+      !capture_hidden(0)) return 1;
+
   std::ofstream state_trace;
   std::vector<superinfer::ir::physical::BufferId> state_trace_ids;
   std::vector<std::vector<std::byte>> state_trace_storage;
@@ -483,6 +542,8 @@ int main() {
         return 1;
       }
       if (!capture_state_trace(static_cast<std::uint32_t>(step + 1))) return 1;
+      if (hidden_capture_step.has_value() && hidden_capture_step.value() == step + 1U &&
+          !capture_hidden(step + 1U)) return 1;
       std::vector<std::uint16_t> continuation_logits(logits.size());
       const auto continuation_copy = session.copy_from_device(
           entry.outputs.front(), {reinterpret_cast<std::byte*>(continuation_logits.data()),
@@ -515,35 +576,16 @@ int main() {
       }
     }
   }
-  const char* hidden_capture_path = std::getenv("SUPERINFER_QWEN38_HIDDEN_F32");
-  if (hidden_capture_path != nullptr) {
-    const auto& commands = specialized.value().plan.commands();
-    const auto lm_head = std::find_if(
-        commands.rbegin(), commands.rend(), [](const auto& command) {
-          return command.kernel.value() == 13 && !command.buffers.empty();
-        });
-    if (lm_head == commands.rend()) {
-      std::cerr << "Qwen LM-head command was not found for hidden capture\n";
+  if (hidden_capture_path != nullptr && !hidden_capture_step.has_value() &&
+      !capture_hidden(static_cast<std::uint32_t>(prefill_tokens.size() - 1U +
+                                                  continuation_greedy.size()))) return 1;
+  if (hidden_capture_step.has_value()) {
+    const std::uint32_t completed_steps = static_cast<std::uint32_t>(
+        prefill_tokens.size() == 1 ? continuation_greedy.size() + 1U : prefill_tokens.size());
+    if (hidden_capture_step.value() >= completed_steps) {
+      std::cerr << "hidden capture step was not executed: " << hidden_capture_step.value() << '\n';
       return 1;
     }
-    const auto& hidden_buffer = specialized.value().plan.buffers()[lm_head->buffers.front().value()];
-    if (hidden_buffer.tensor.dtype != superinfer::ir::physical::PhysicalDType::f32 ||
-        hidden_buffer.size != 5120U * sizeof(float)) {
-      std::cerr << "Qwen final hidden buffer is not F32[5120]\n";
-      return 1;
-    }
-    std::vector<float> hidden(hidden_buffer.size / sizeof(float));
-    const auto hidden_status = session.copy_from_device(
-        hidden_buffer.id, {reinterpret_cast<std::byte*>(hidden.data()), hidden_buffer.size});
-    if (!hidden_status.ok()) {
-      std::cerr << "final hidden download failed: " << hidden_status.message() << '\n';
-      return 1;
-    }
-    std::ofstream capture{hidden_capture_path, std::ios::binary | std::ios::trunc};
-    if (!capture.good()) return 1;
-    capture.write(reinterpret_cast<const char*>(hidden.data()),
-                  static_cast<std::streamsize>(hidden_buffer.size));
-    if (!capture.good()) return 1;
   }
   std::cout << "qwen38 e2e token=" << token << " greedy=" << best << " logit=" << best_value
             << " checksum=" << checksum << " state_buffers=" << state_buffers

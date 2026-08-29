@@ -74,7 +74,8 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
 
 - S03 requires real RTX 5090 model-level differential and end-to-end evidence; primitive-only tests are insufficient.
 - A BF16-KV reference diagnostic changes but does not explain the remaining long-replay logit outliers;
-  no numerical tolerance was loosened and S03 remains open.
+  selected-hidden tracing localizes row 29's first proven mismatch before LM-head projection. No
+  numerical tolerance was loosened and S03 remains open.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
 - S03F-01 has pinned immutable Flash-Next model/reference revisions, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.

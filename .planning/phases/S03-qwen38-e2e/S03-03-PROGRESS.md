@@ -90,6 +90,14 @@ fails rows 23, 28, and 29. This changes but does not explain the remaining numer
 tolerance or acceptance criterion was changed. The machine-readable result is
 `artifacts/S03/qwen38-reference-bf16-kv-diagnostic.json`.
 
+The selected-hidden diagnostic then ran the first 30 chat tokens and captured the final normalized
+hidden row at step 29 before LM-head projection. Target logits for the 30-token prefix are
+byte-identical to the first 30 rows of the stable 60-token replay. The target hidden row differs
+from the FP32-KV oracle by max `0.2152066` / RMSE `0.0627003`, and from the BF16-KV oracle by max
+`0.2200685` / RMSE `0.0617750`. This localizes the row-29 discrepancy before LM-head projection;
+the next diagnostic boundary is per-layer output/state comparison. Evidence is recorded in
+`artifacts/S03/qwen38-hidden-row29-localization.json`.
+
 ## Debugging record
 
 The initial full-graph differential diverged at layer 3, the first full-attention layer. The

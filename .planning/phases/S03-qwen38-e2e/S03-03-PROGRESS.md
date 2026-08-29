@@ -107,6 +107,14 @@ max error `0.3636072`, still without removing the drift. These storage choices a
 the sole explanation. The target and reference boundary hashes plus selected layer metrics are
 recorded in `artifacts/S03/qwen38-layer-boundary-localization.json`.
 
+The post-token-mixer boundary was then captured after each decoder layer with a matching
+Transformers token-mixer hook. At layer 0 the target/reference RMSE is `0.0002270`; at layer 63 it
+is `0.0885137`, with no layer exceeding max error `0.5`. The post-MLP layer-63 RMSE is `0.1028437`,
+so the MLP/residual stage adds only a bounded increment to an already accumulated token-mixer
+drift. This capture used physical GPU 1 because GPU 0 was occupied by an unrelated 30-GiB VLLM
+process; both are RTX 5090 `sm_120a`. The corrected comparison is included in the same localization
+artifact.
+
 ## Debugging record
 
 The initial full-graph differential diverged at layer 3, the first full-attention layer. The

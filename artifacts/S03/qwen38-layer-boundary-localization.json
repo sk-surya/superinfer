@@ -14,7 +14,10 @@
   },
   "target": {
     "boundary_capture": "build/evidence/debug-chat-prefix30-layer/target-boundaries.f32",
-    "boundary_capture_sha256": "98bd8a1a605c9faaa6ad7ec07a62412135ecffdd362823cbb777af3de9afab59"
+    "boundary_capture_sha256": "98bd8a1a605c9faaa6ad7ec07a62412135ecffdd362823cbb777af3de9afab59",
+    "attention_boundary_capture": "build/evidence/debug-chat-prefix30-attention-gpu1/target-boundaries.f32",
+    "attention_boundary_capture_sha256": "faa70efe957d4b99de2d5c6d80caab4b66349fd5fde3678ae1cba7abda378536",
+    "attention_boundary_physical_gpu": "GPU 1 NVIDIA GeForce RTX 5090"
   },
   "reference": {
     "implementation": "Transformers Qwen3_5DecoderLayer streamed one layer at a time",
@@ -42,7 +45,18 @@
       "layer_47": {"max_abs": 0.1374680, "mean_abs": 0.0162320, "rmse": 0.0206210},
       "layer_55": {"max_abs": 0.2648850, "mean_abs": 0.0399380, "rmse": 0.0498540},
       "layer_63": {"max_abs": 0.3636072, "mean_abs": 0.0818211, "rmse": 0.1028437}
+    },
+    "post_token_mixer_residual": {
+      "reference_capture": "build/evidence/reference-chat-attention29-bf16-v2/chat-attention29.f32",
+      "reference_capture_sha256": "6a16246571d5097a8b8b0ecb9db1e9d9690d649bec6604e5756c4bc1e0ee8ec0",
+      "layer_0": {"max_abs": 0.0155930, "mean_abs": 0.0000470, "rmse": 0.0002270},
+      "layer_3": {"max_abs": 0.0705340, "mean_abs": 0.0002730, "rmse": 0.0010450},
+      "layer_11": {"max_abs": 0.1214830, "mean_abs": 0.0011130, "rmse": 0.0022480},
+      "layer_31": {"max_abs": 0.0673600, "mean_abs": 0.0048460, "rmse": 0.0066390},
+      "layer_47": {"max_abs": 0.1380650, "mean_abs": 0.0148080, "rmse": 0.0189590},
+      "layer_55": {"max_abs": 0.3656850, "mean_abs": 0.0369050, "rmse": 0.0465820},
+      "layer_63": {"max_abs": 0.3383808, "mean_abs": 0.0707338, "rmse": 0.0885137}
     }
   },
-  "conclusion": "The hidden discrepancy accumulates across decoder layers before final normalization and LM-head projection. The corrected BF16 KV plus BF16 linear-attention convolution-state emulation models the in-place single-token decode update and changes final RMSE from 0.1032561 to 0.1028437; it does not remove the drift. No tolerance or acceptance criterion was changed. The next diagnostic boundary is an operation/state comparison at the first affected layer."
+  "conclusion": "The hidden discrepancy accumulates across decoder layers before final normalization and LM-head projection. The corrected BF16 KV plus BF16 linear-attention convolution-state emulation models the in-place single-token decode update and changes post-MLP final RMSE from 0.1032561 to 0.1028437; it does not remove the drift. Post-token-mixer tracing shows the same gradual accumulation, from layer 0 RMSE 0.0002270 to layer 63 RMSE 0.0885137, while the post-MLP boundary reaches 0.1028437. No tolerance or acceptance criterion was changed. The next diagnostic boundary is an operation/state comparison at the first affected layer."
 }

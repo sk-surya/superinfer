@@ -357,6 +357,7 @@ int main() {
       !capture_hidden(0)) return 1;
 
   const char* layer_trace_path = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_F32");
+  const char* layer_trace_stage = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_STAGE");
   std::optional<std::uint32_t> layer_trace_step;
   std::vector<superinfer::ir::physical::CommandId> layer_trace_commands;
   std::vector<std::vector<std::byte>> layer_trace_captures;
@@ -374,11 +375,19 @@ int main() {
       return 1;
     }
     layer_trace_step = parsed_step;
+    const bool post_attention = layer_trace_stage != nullptr &&
+                                std::string_view{layer_trace_stage} == "post_attention";
+    if (layer_trace_stage != nullptr && !post_attention &&
+        std::string_view{layer_trace_stage} != "post_mlp") {
+      std::cerr << "SUPERINFER_QWEN38_LAYER_TRACE_STAGE must be post_attention or post_mlp\n";
+      return 1;
+    }
     std::size_t residual_index = 0;
     for (const auto& command : specialized.value().plan.commands()) {
       if (command.kernel.value() != 4) continue;
-      // Kernel 4 is emitted once after attention and once after the MLP. Capture the latter.
-      if ((residual_index++ % 2U) == 1U) layer_trace_commands.push_back(command.id);
+      // Kernel 4 is emitted once after the token mixer and once after the MLP.
+      const bool select_post_attention = (residual_index++ % 2U) == 0U;
+      if (select_post_attention == post_attention) layer_trace_commands.push_back(command.id);
     }
     if (layer_trace_commands.size() != 64) {
       std::cerr << "Qwen layer trace expected 64 post-MLP residual commands\n";
@@ -640,7 +649,11 @@ int main() {
     std::ofstream metadata{std::string{layer_trace_path} + ".meta", std::ios::trunc};
     if (!metadata.good()) return 1;
     metadata << "step " << layer_trace_step.value() << " layers " << layer_trace_captures.size()
-             << " contract post_mlp_residual\n";
+             << " contract " << ((layer_trace_stage != nullptr &&
+                                    std::string_view{layer_trace_stage} == "post_attention")
+                                       ? "post_token_mixer_residual"
+                                       : "post_mlp_residual")
+             << "\n";
     for (const auto command : layer_trace_commands) metadata << command.value() << '\n';
     if (!metadata.good()) return 1;
   }

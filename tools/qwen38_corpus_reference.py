@@ -77,6 +77,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         help="corpus case whose post-layer rows should be captured")
     parser.add_argument("--boundary-step", type=int,
                         help="zero-based token position whose post-layer rows should be captured")
+    parser.add_argument("--attention-boundaries-output", type=Path,
+                        help="optional FP32 output for post-token-mixer residual rows")
+    parser.add_argument("--attention-boundary-case",
+                        help="corpus case whose post-token-mixer rows should be captured")
+    parser.add_argument("--attention-boundary-step", type=int,
+                        help="zero-based token position whose post-token-mixer rows should be captured")
     return parser
 
 
@@ -84,7 +90,10 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                round_activations: bool, round_kv: bool, round_linear_state: bool,
                hidden_output: Path | None = None, hidden_case: str | None = None,
                hidden_step: int | None = None, boundaries_output: Path | None = None,
-               boundary_case: str | None = None, boundary_step: int | None = None) -> dict[str, Any]:
+               boundary_case: str | None = None, boundary_step: int | None = None,
+               attention_boundaries_output: Path | None = None,
+               attention_boundary_case: str | None = None,
+               attention_boundary_step: int | None = None) -> dict[str, Any]:
     import torch
     import torch.nn.functional as F
     from safetensors import safe_open
@@ -163,6 +172,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
     greedy: dict[str, list[int]] = {case_id: [] for case_id, _ in normalized_cases}
     boundary_payload = bytearray()
     boundary_count = 0
+    attention_boundary_payload = bytearray()
+    attention_boundary_count = 0
 
     with torch.inference_mode():
         for layer_index in range(config.num_hidden_layers):
@@ -181,6 +192,17 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             layer.load_state_dict(state_dict, strict=True)
             del state_dict
 
+            mixer_outputs: list[torch.Tensor] = []
+            mixer_hook = None
+            if attention_boundaries_output is not None:
+                mixer = getattr(layer, "linear_attn", None) or getattr(layer, "self_attn", None)
+                if mixer is None:
+                    raise ValueError(f"layer {layer_index} has no token mixer")
+
+                def capture_mixer(_module: Any, _inputs: Any, output: Any) -> None:
+                    mixer_outputs.append(output[0] if isinstance(output, tuple) else output)
+
+                mixer_hook = mixer.register_forward_hook(capture_mixer)
             for state in states:
                 next_hidden: list[torch.Tensor] = []
                 for position, hidden in enumerate(state["hidden"]):
@@ -192,6 +214,15 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                                    past_key_values=state["cache"])
                     updated = output[0] if isinstance(output, tuple) else output
                     round_linear_cache_state(state["cache"], layer_index)
+                    if (attention_boundaries_output is not None and state["id"] == attention_boundary_case and
+                            (attention_boundary_step is None or position == attention_boundary_step)):
+                        if len(mixer_outputs) != 1:
+                            raise ValueError("token mixer hook did not capture exactly one output")
+                        row = (hidden + mixer_outputs.pop()).reshape(-1).contiguous().cpu().numpy()
+                        attention_boundary_payload.extend(row.astype("float32").tobytes())
+                        attention_boundary_count += 1
+                    elif attention_boundaries_output is not None:
+                        mixer_outputs.clear()
                     if round_activations:
                         updated = updated.to(torch.bfloat16).to(torch.float32)
                     if (boundaries_output is not None and state["id"] == boundary_case and
@@ -201,6 +232,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                         boundary_count += 1
                     next_hidden.append(updated)
                 state["hidden"] = next_hidden
+            if mixer_hook is not None:
+                mixer_hook.remove()
             del layer
             gc.collect()
 
@@ -248,6 +281,20 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "dtype": "float32",
             "sha256": _sha256(bytes(boundary_payload)),
         }, indent=2) + "\n")
+    if attention_boundaries_output is not None:
+        if not attention_boundary_payload or attention_boundary_count != config.num_hidden_layers:
+            raise ValueError("requested attention boundary capture did not match one complete model step")
+        attention_boundaries_output.parent.mkdir(parents=True, exist_ok=True)
+        attention_boundaries_output.write_bytes(attention_boundary_payload)
+        attention_boundaries_output.with_suffix(".json").write_text(json.dumps({
+            "case": attention_boundary_case,
+            "step": attention_boundary_step,
+            "layers": attention_boundary_count,
+            "elements_per_layer": config.hidden_size,
+            "dtype": "float32",
+            "contract": "post_token_mixer_residual",
+            "sha256": _sha256(bytes(attention_boundary_payload)),
+        }, indent=2) + "\n")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
@@ -294,12 +341,18 @@ def main() -> int:
         parser.error("--boundaries-output requires --boundary-case")
     if args.boundary_step is not None and args.boundary_step < 0:
         parser.error("--boundary-step must be non-negative")
+    if args.attention_boundaries_output is not None and args.attention_boundary_case is None:
+        parser.error("--attention-boundaries-output requires --attention-boundary-case")
+    if args.attention_boundary_step is not None and args.attention_boundary_step < 0:
+        parser.error("--attention-boundary-step must be non-negative")
     corpus = json.loads(args.corpus.read_text())
     report = _run_cases(args.model_dir, select_cases(corpus, args.case_ids), args.output_dir,
                         args.round_activations, args.round_kv, args.round_linear_state,
                         args.hidden_output,
                         args.hidden_case, args.hidden_step, args.boundaries_output,
-                        args.boundary_case, args.boundary_step)
+                        args.boundary_case, args.boundary_step,
+                        args.attention_boundaries_output, args.attention_boundary_case,
+                        args.attention_boundary_step)
     (args.output_dir / "corpus-reference.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({"status": report["status"], "cases": [case["id"] for case in report["cases"]]}, indent=2))
     return 0

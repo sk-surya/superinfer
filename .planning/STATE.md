@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: S03
 status: autonomous_execution
-last_updated: "2026-08-29T00:00:00Z"
+last_updated: "2026-08-29T07:20:00Z"
 progress:
   total_phases: 10
   completed_phases: 3
@@ -77,7 +77,9 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
   selected-hidden tracing localizes row 29's first proven mismatch before LM-head projection. No
   numerical tolerance was loosened and S03 remains open. Per-layer post-MLP tracing now shows
   gradual accumulated drift through the decoder rather than one catastrophic layer; BF16 KV plus
-  BF16 convolution-state emulation does not remove it. See
+  BF16 convolution-state emulation does not remove it. Post-token-mixer tracing narrows the first
+  layer boundary to RMSE `0.0002270` and the final traced layer to `0.0885137`, still below the
+  per-boundary `0.5` diagnostic ceiling but insufficient to close the logit contract. See
   `artifacts/S03/qwen38-layer-boundary-localization.json`.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.

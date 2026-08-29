@@ -100,11 +100,11 @@ the next diagnostic boundary is per-layer output/state comparison. Evidence is r
 
 The per-layer diagnostic captured the post-MLP residual after every one of the 64 decoder layers
 at the same row-29 continuation step. Error grows gradually from layer 0 RMSE `0.0003813` to
-layer 63 RMSE `0.1032561`; attention-layer jumps occur, but no single layer is catastrophic. A
-reference variant that rounds both BF16 KV and linear-attention convolution state changes the
-final RMSE only to `0.1019827`. This rules out those storage choices as the sole explanation and
-localizes the remaining issue to accumulated operation/state numerical behavior before the final
-norm and LM head. The target and both reference boundary hashes plus selected layer metrics are
+layer 63 RMSE `0.1032561`; attention-layer jumps occur, but no single layer is catastrophic. The
+first BF16 linear-state diagnostic missed the single-token in-place convolution update; after
+correcting that hook, the BF16 KV plus linear-state reference reaches final RMSE `0.1028437` and
+max error `0.3636072`, still without removing the drift. These storage choices are therefore not
+the sole explanation. The target and reference boundary hashes plus selected layer metrics are
 recorded in `artifacts/S03/qwen38-layer-boundary-localization.json`.
 
 ## Debugging record

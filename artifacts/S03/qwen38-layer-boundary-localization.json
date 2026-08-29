@@ -22,8 +22,9 @@
     "torch_version": "2.13.0+cu130",
     "standard_boundary_capture": "build/evidence/reference-chat-boundaries29/chat-boundaries29.f32",
     "standard_boundary_capture_sha256": "039c4cd633b0996bad73711f4cf3a07bf99a7b1495fb8963962766f53f6a306e",
-    "bf16_kv_linear_state_capture": "build/evidence/reference-chat-boundaries29-bf16-linear/chat-boundaries29.f32",
-    "bf16_kv_linear_state_capture_sha256": "e2dc0f951cae6ab55713d44764b22b0364b03c2803c949132a1952b1949677a2"
+    "bf16_kv_linear_state_capture": "build/evidence/reference-chat-boundaries29-bf16-linear-v2/chat-boundaries29.f32",
+    "bf16_kv_linear_state_capture_sha256": "3668ef69f857dd3e12b21938a97f357ada84c705321161e29e3337b5cdc5bf4f",
+    "bf16_linear_state_diagnostic": "corrected to round the in-place single-token causal_conv1d_update state after each decoder layer"
   },
   "metrics": {
     "standard_reference": {
@@ -35,13 +36,13 @@
       "layer_63": {"max_abs": 0.3559446, "mean_abs": 0.0821569, "rmse": 0.1032561}
     },
     "bf16_kv_and_linear_state_reference": {
-      "layer_0": {"max_abs": 0.0259510, "mean_abs": 0.0000920, "rmse": 0.0003830},
-      "layer_11": {"max_abs": 0.2072180, "mean_abs": 0.0012130, "rmse": 0.0033060},
-      "layer_31": {"max_abs": 0.0692210, "mean_abs": 0.0049610, "rmse": 0.0067790},
-      "layer_47": {"max_abs": 0.1382830, "mean_abs": 0.0163040, "rmse": 0.0207060},
-      "layer_55": {"max_abs": 0.2665480, "mean_abs": 0.0399730, "rmse": 0.0499730},
-      "layer_63": {"max_abs": 0.3749161, "mean_abs": 0.0811156, "rmse": 0.1019827}
+      "layer_0": {"max_abs": 0.0275330, "mean_abs": 0.0000910, "rmse": 0.0004030},
+      "layer_11": {"max_abs": 0.2068480, "mean_abs": 0.0012240, "rmse": 0.0033070},
+      "layer_31": {"max_abs": 0.0692890, "mean_abs": 0.0049580, "rmse": 0.0067710},
+      "layer_47": {"max_abs": 0.1374680, "mean_abs": 0.0162320, "rmse": 0.0206210},
+      "layer_55": {"max_abs": 0.2648850, "mean_abs": 0.0399380, "rmse": 0.0498540},
+      "layer_63": {"max_abs": 0.3636072, "mean_abs": 0.0818211, "rmse": 0.1028437}
     }
   },
-  "conclusion": "The hidden discrepancy accumulates across decoder layers before final normalization and LM-head projection. BF16 KV plus BF16 linear-attention convolution-state emulation changes final RMSE only from 0.1032561 to 0.1019827 and does not remove the drift. No tolerance or acceptance criterion was changed. The next diagnostic boundary is an operation/state comparison at the first affected layer."
+  "conclusion": "The hidden discrepancy accumulates across decoder layers before final normalization and LM-head projection. The corrected BF16 KV plus BF16 linear-attention convolution-state emulation models the in-place single-token decode update and changes final RMSE from 0.1032561 to 0.1028437; it does not remove the drift. No tolerance or acceptance criterion was changed. The next diagnostic boundary is an operation/state comparison at the first affected layer."
 }

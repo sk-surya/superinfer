@@ -116,6 +116,15 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                 conv_states = conv_states.to(torch.bfloat16).to(torch.float32)
             return super().update_conv_state(conv_states, layer_idx, *args, **kwargs)
 
+    def round_linear_cache_state(cache: DynamicCache, layer_idx: int) -> None:
+        """Model BF16 causal-convolution state after both prefill and single-token decode."""
+        if not round_linear_state:
+            return
+        layer_cache = cache.layers[layer_idx]
+        conv_states = getattr(layer_cache, "conv_states", None)
+        if conv_states is not None:
+            layer_cache.conv_states = conv_states.to(torch.bfloat16).to(torch.float32)
+
     root = json.loads((model_dir / "config.json").read_text())
     config = Qwen3_5TextConfig.from_dict(root["text_config"])
     index = json.loads((model_dir / "model.safetensors.index.json").read_text())["weight_map"]
@@ -182,6 +191,7 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                                    attention_mask=causal_mask, position_ids=position_ids,
                                    past_key_values=state["cache"])
                     updated = output[0] if isinstance(output, tuple) else output
+                    round_linear_cache_state(state["cache"], layer_index)
                     if round_activations:
                         updated = updated.to(torch.bfloat16).to(torch.float32)
                     if (boundaries_output is not None and state["id"] == boundary_case and

@@ -92,6 +92,21 @@ float bf16_to_float(std::uint16_t value) {
   return result;
 }
 
+std::uint16_t float_to_bf16(float value) {
+  std::uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  return static_cast<std::uint16_t>(bits >> 16U);
+}
+
+template <typename T>
+bool read_exact_values(const char* path, std::vector<T>& values) {
+  std::ifstream input{path, std::ios::binary};
+  if (!input.good()) return false;
+  input.read(reinterpret_cast<char*>(values.data()),
+             static_cast<std::streamsize>(values.size() * sizeof(T)));
+  return input.good() && input.peek() == std::ifstream::traits_type::eof();
+}
+
 std::vector<std::byte> convert_bf16_to_f32(superinfer::base::ConstByteView bytes) {
   assert(bytes.size() % sizeof(std::uint16_t) == 0);
   std::vector<std::byte> result(bytes.size() / sizeof(std::uint16_t) * sizeof(float));
@@ -302,6 +317,9 @@ int main() {
   const char* expected_conv_path = std::getenv("SUPERINFER_QWEN38_GDN_CONV_F32");
   const char* expected_core_path = std::getenv("SUPERINFER_QWEN38_GDN_CORE_F32");
   const char* expected_gated_path = std::getenv("SUPERINFER_QWEN38_GDN_GATED_F32");
+  const char* custom_input_path = std::getenv("SUPERINFER_QWEN38_GDN_INPUT_F32");
+  const char* custom_state_path = std::getenv("SUPERINFER_QWEN38_GDN_STATE_F32");
+  const char* conv_capture_path = std::getenv("SUPERINFER_QWEN38_GDN_CONV_OUTPUT_F32");
   if (artifact_path == nullptr || expected_path == nullptr) return skip_if_unconfigured();
   int device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
@@ -347,6 +365,12 @@ int main() {
     return 1;
   }
   auto session = std::move(session_result).value();
+  const bool custom_step = custom_input_path != nullptr || custom_state_path != nullptr;
+  const std::uint32_t segments = diagnostic_segments();
+  if (custom_step && (custom_input_path == nullptr || segments != 1)) {
+    std::cerr << "custom GDN execution requires input and segments=1\n";
+    return 1;
+  }
   for (const auto& item : bindings) {
     if (!item.host_bytes.empty()) {
       if (!session.copy_to_device(item.id, {item.host_bytes.data(), item.host_bytes.size()}).ok()) {
@@ -362,7 +386,26 @@ int main() {
       }
     }
   }
-  const std::uint32_t segments = diagnostic_segments();
+  if (custom_step && custom_state_path != nullptr) {
+    std::vector<float> state(48U * 128U * 128U + 4U * 10240U);
+    if (!read_exact_values(custom_state_path, state)) {
+      std::cerr << "custom GDN state has an unexpected size\n";
+      return 1;
+    }
+    std::vector<std::uint16_t> convolution(4U * 10240U);
+    for (std::size_t index = 0; index < convolution.size(); ++index) {
+      convolution[index] = float_to_bf16(state[48U * 128U * 128U + index]);
+    }
+    if (!session.copy_to_device(binding(bindings, "delta_state").id,
+                                {reinterpret_cast<const std::byte*>(state.data()),
+                                 48U * 128U * 128U * sizeof(float)}).ok() ||
+        !session.copy_to_device(binding(bindings, "conv_state").id,
+                                {reinterpret_cast<const std::byte*>(convolution.data()),
+                                 convolution.size() * sizeof(std::uint16_t)}).ok()) {
+      std::cerr << "custom GDN state upload failed\n";
+      return 1;
+    }
+  }
   std::ifstream expected_stream{expected_path, std::ios::binary};
   std::vector<float> expected(static_cast<std::size_t>(segments) * 5120U);
   expected_stream.read(reinterpret_cast<char*>(expected.data()),
@@ -448,9 +491,16 @@ int main() {
   float gated_contract_maximum = 0.0F;
   for (std::size_t segment = 0; segment < segments; ++segment) {
     std::vector<float> hidden(5120);
-    for (std::size_t index = 0; index < hidden.size(); ++index) {
-      hidden[index] = -0.25F + 0.5F * static_cast<float>(index) / 5119.0F +
-                      static_cast<float>(segment) * 0.03125F;
+    if (custom_step) {
+      if (!read_exact_values(custom_input_path, hidden)) {
+        std::cerr << "custom GDN input has an unexpected size\n";
+        return 1;
+      }
+    } else {
+      for (std::size_t index = 0; index < hidden.size(); ++index) {
+        hidden[index] = -0.25F + 0.5F * static_cast<float>(index) / 5119.0F +
+                        static_cast<float>(segment) * 0.03125F;
+      }
     }
     if (!session.copy_to_device(binding(bindings, "input").id,
                                 {reinterpret_cast<const std::byte*>(hidden.data()),
@@ -496,6 +546,13 @@ int main() {
                                     {reinterpret_cast<std::byte*>(conv_actual.data()),
                                      conv_actual.size() * sizeof(float)}).ok()) {
         return 1;
+      }
+      if (conv_capture_path != nullptr) {
+        std::ofstream capture{conv_capture_path, std::ios::binary | std::ios::trunc};
+        if (!capture.good()) return 1;
+        capture.write(reinterpret_cast<const char*>(conv_actual.data()),
+                      static_cast<std::streamsize>(conv_actual.size() * sizeof(float)));
+        if (!capture.good()) return 1;
       }
       float conv_maximum = 0.0F;
       for (std::size_t index = 0; index < conv_actual.size(); ++index) {

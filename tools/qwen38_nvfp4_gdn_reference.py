@@ -36,6 +36,26 @@ def _nvfp4(model_dir: Path, index: dict[str, str], name: str) -> torch.Tensor:
     return values * scales.to(torch.float32).repeat_interleave(16, dim=1) * tensor_scale
 
 
+def _read_f32(path: Path) -> torch.Tensor:
+    payload = path.read_bytes()
+    if len(payload) % 4 != 0:
+        raise SystemExit(f"{path} does not contain whole FP32 values")
+    return torch.frombuffer(bytearray(payload), dtype=torch.float32).clone()
+
+
+class DeploymentStorageDynamicCache(DynamicCache):
+    """DynamicCache with the deployment's BF16 convolution-state storage contract."""
+
+    def __init__(self, *args, round_linear_state: bool, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._round_linear_state = round_linear_state
+
+    def update_conv_state(self, conv_states, layer_idx, *args, **kwargs):
+        if self._round_linear_state:
+            conv_states = conv_states.to(torch.bfloat16).to(torch.float32)
+        return super().update_conv_state(conv_states, layer_idx, *args, **kwargs)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-dir", type=Path, required=True)
@@ -43,9 +63,16 @@ def main() -> int:
     parser.add_argument("--diagnostics", action="store_true",
                         help="also emit intermediate projection and convolution captures")
     parser.add_argument("--segments", type=int, default=2)
+    parser.add_argument("--input-f32", type=Path,
+                        help="optional real hidden input for one custom stateful step")
+    parser.add_argument("--state-f32", type=Path,
+                        help="optional deployment-layout state before the custom step")
     args = parser.parse_args()
     if args.segments <= 0:
         raise SystemExit("--segments must be positive")
+    custom_step = args.input_f32 is not None or args.state_f32 is not None
+    if custom_step and (args.input_f32 is None or args.segments != 1):
+        raise SystemExit("custom GDN execution requires --input-f32 and --segments 1")
 
     model_dir = args.model_dir
     root = json.loads((model_dir / "config.json").read_text())
@@ -64,7 +91,28 @@ def main() -> int:
         )
     layer.load_state_dict(state, strict=True)
 
-    cache = DynamicCache(config=config)
+    cache = DeploymentStorageDynamicCache(config=config, round_linear_state=True)
+    if custom_step:
+        input_values = _read_f32(args.input_f32)
+        if input_values.numel() != config.hidden_size:
+            raise SystemExit(f"custom input must contain {config.hidden_size} FP32 values")
+        if args.state_f32 is not None:
+            state_values = _read_f32(args.state_f32)
+            delta_elements = 48 * 128 * 128
+            conv_elements = 4 * 10240
+            if state_values.numel() != delta_elements + conv_elements:
+                raise SystemExit("custom GDN state has an unexpected element count")
+            cache.layers[0].recurrent_states = state_values[:delta_elements].reshape(
+                1, 48, 128, 128
+            ).clone()
+            cache.layers[0].conv_states = state_values[delta_elements:].reshape(
+                4, 10240
+            ).transpose(0, 1).unsqueeze(0).clone()
+            cache.layers[0].dtype = cache.layers[0].recurrent_states.dtype
+            cache.layers[0].device = cache.layers[0].recurrent_states.device
+            cache.layers[0].is_conv_states_initialized = True
+            cache.layers[0].is_recurrent_states_initialized = True
+            cache.layers[0].has_previous_state = True
     outputs = []
     attention_outputs = []
     recurrent_states = []
@@ -117,8 +165,11 @@ def main() -> int:
         lambda _module, _inputs, output: attention_outputs.append(output.reshape(-1).detach().clone())
     )
     for segment in range(args.segments):
-        hidden = torch.linspace(-0.25, 0.25, config.hidden_size, dtype=torch.float32).reshape(1, 1, -1)
-        hidden = hidden + segment * 0.03125
+        if custom_step:
+            hidden = input_values.reshape(1, 1, -1)
+        else:
+            hidden = torch.linspace(-0.25, 0.25, config.hidden_size, dtype=torch.float32).reshape(1, 1, -1)
+            hidden = hidden + segment * 0.03125
         with torch.inference_mode():
             output = layer(
                 hidden,

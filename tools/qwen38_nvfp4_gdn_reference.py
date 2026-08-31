@@ -40,6 +40,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--diagnostics", action="store_true",
+                        help="also emit intermediate projection and convolution captures")
     args = parser.parse_args()
 
     model_dir = args.model_dir
@@ -63,6 +65,32 @@ def main() -> int:
     outputs = []
     attention_outputs = []
     recurrent_states = []
+    qkv_projections = []
+    convolved_outputs = []
+    if args.diagnostics:
+        layer.linear_attn.in_proj_qkv.register_forward_hook(
+            lambda _module, _inputs, output: qkv_projections.append(output.reshape(-1).detach().clone())
+        )
+        original_conv_update = layer.linear_attn.causal_conv1d_update
+
+        def capture_conv_update(*inputs, **kwargs):
+            output = original_conv_update(*inputs, **kwargs)
+            convolved_outputs.append(output.reshape(-1).detach().clone())
+            return output
+
+        layer.linear_attn.causal_conv1d_update = capture_conv_update
+        original_conv_fn = layer.linear_attn.causal_conv1d_fn
+        if original_conv_fn is not None:
+            def capture_conv_fn(*inputs, **kwargs):
+                output = original_conv_fn(*inputs, **kwargs)
+                convolved_outputs.append(output.reshape(-1).detach().clone())
+                return output
+
+            layer.linear_attn.causal_conv1d_fn = capture_conv_fn
+        else:
+            layer.linear_attn.conv1d.register_forward_hook(
+                lambda _module, _inputs, output: convolved_outputs.append(
+                    (torch.nn.functional.silu(output[:, :, :1])).reshape(-1).detach().clone()))
     layer.linear_attn.register_forward_hook(
         lambda _module, _inputs, output: attention_outputs.append(output.reshape(-1).detach().clone())
     )
@@ -85,6 +113,11 @@ def main() -> int:
     torch.cat(outputs).numpy().astype("float32").tofile(args.output)
     torch.cat(attention_outputs).numpy().astype("float32").tofile(args.output.with_suffix(".attn.bin"))
     torch.cat(recurrent_states).numpy().astype("float32").tofile(args.output.with_suffix(".state.bin"))
+    if args.diagnostics:
+        torch.cat(qkv_projections).numpy().astype("float32").tofile(
+            args.output.with_suffix(".qkv.bin"))
+        torch.cat(convolved_outputs).numpy().astype("float32").tofile(
+            args.output.with_suffix(".conv.bin"))
     diagnostics = {
         "model": "Qwen3.8-27B-NVFP4-RTX5090",
         "reference": "transformers 5.12.1 Qwen3_5DecoderLayer",
@@ -97,6 +130,19 @@ def main() -> int:
             "shared_between_segments": True,
         },
         "output_prefix": [output[:4].tolist() for output in outputs],
+        "diagnostics": {
+            "qkv_projection": str(args.output.with_suffix(".qkv.bin"))
+            if args.diagnostics else None,
+            "qkv_shape": [10240],
+            "segments": len(qkv_projections),
+            "convolution": str(args.output.with_suffix(".conv.bin"))
+            if args.diagnostics else None,
+            "conv_shape": [10240],
+            "conv_segments": len(convolved_outputs),
+            "z_shape": [6144],
+            "a_shape": [48],
+            "b_shape": [48],
+        },
     }
     args.output.with_suffix(".json").write_text(json.dumps(diagnostics, indent=2) + "\n")
     return 0

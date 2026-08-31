@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: S03
 status: autonomous_execution
-last_updated: "2026-08-29T07:20:00Z"
+last_updated: "2026-08-31T04:05:00Z"
 progress:
   total_phases: 10
   completed_phases: 3
@@ -31,7 +31,7 @@ s03f_01_status: research_complete_capacity_quality_blocked
 | S00 | Complete | 2 | [S00-01](phases/S00-foundation/S00-01-SUMMARY.md), [S00-02](phases/S00-foundation/S00-02-SUMMARY.md) |
 | S01 | Complete — Gate A reached | 3 | [S01-01](phases/S01-artifact-ir/S01-01-SUMMARY.md), [S01-02](phases/S01-artifact-ir/S01-02-SUMMARY.md), [S01-03](phases/S01-artifact-ir/S01-03-SUMMARY.md) |
 | S02 | Complete — Gate B reached | 3 | [S02-03](phases/S02-sm120-baseline/S02-03-SUMMARY.md) |
-| S03 | In progress | 3 | S03-01 and S03-02 complete; S03-03 acceptance is blocked by long-replay reproducibility |
+| S03 | In progress | 3 | S03-01 and S03-02 complete; S03-03 acceptance is blocked by accumulated numerical drift |
 | S03F | Planned; S03F-01 may run research-only in parallel | 6 | [design](FLASH-NEXT-DESIGN.md); capacity/model-contract evidence pending |
 | S04 | Planned; blocked on S03F correctness | 3 | Pending |
 | S05 | Planned | 3 | Pending |
@@ -83,6 +83,10 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
   `artifacts/S03/qwen38-layer-boundary-localization.json`. A CUDA Transformers oracle with the
   same storage emulation matches greedy tokens but retains the logit outliers, so the remaining
   cause is not simply CPU-vs-CUDA reference math; its post-token-mixer layer-63 RMSE is `0.0876815`.
+  An operation-level GDN diagnostic matches layer-0 packed-NVFP4 qkv projection at `1.38283e-5`
+  max error and post-convolution output at `0.00198197`; see
+  `artifacts/S03/qwen38-gdn-operation-localization.json`. The first GDN projection/convolution is
+  not the immediate source of the remaining drift.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
 - S03F-01 has pinned immutable Flash-Next model/reference revisions, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.

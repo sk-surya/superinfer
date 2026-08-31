@@ -285,6 +285,8 @@ int skip_if_unconfigured() {
 int main() {
   const char* artifact_path = std::getenv("SUPERINFER_QWEN38_ARTIFACT");
   const char* expected_path = std::getenv("SUPERINFER_QWEN38_GDN_REFERENCE_F32");
+  const char* expected_qkv_path = std::getenv("SUPERINFER_QWEN38_GDN_QKV_F32");
+  const char* expected_conv_path = std::getenv("SUPERINFER_QWEN38_GDN_CONV_F32");
   if (artifact_path == nullptr || expected_path == nullptr) return skip_if_unconfigured();
   int device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
@@ -375,9 +377,34 @@ int main() {
     return 1;
   }
 
+  std::vector<float> expected_qkv;
+  if (expected_qkv_path != nullptr) {
+    expected_qkv.resize(2U * 10240U);
+    std::ifstream qkv_stream{expected_qkv_path, std::ios::binary};
+    qkv_stream.read(reinterpret_cast<char*>(expected_qkv.data()),
+                    static_cast<std::streamsize>(expected_qkv.size() * sizeof(float)));
+    if (!qkv_stream || qkv_stream.peek() != std::ifstream::traits_type::eof()) {
+      std::cerr << "qkv reference output must contain exactly 20480 FP32 values\n";
+      return 1;
+    }
+  }
+  std::vector<float> expected_conv;
+  if (expected_conv_path != nullptr) {
+    expected_conv.resize(2U * 10240U);
+    std::ifstream conv_stream{expected_conv_path, std::ios::binary};
+    conv_stream.read(reinterpret_cast<char*>(expected_conv.data()),
+                     static_cast<std::streamsize>(expected_conv.size() * sizeof(float)));
+    if (!conv_stream || conv_stream.peek() != std::ifstream::traits_type::eof()) {
+      std::cerr << "convolution reference output must contain exactly 20480 FP32 values\n";
+      return 1;
+    }
+  }
+
   std::vector<float> actual(expected.size());
   float attention_contract_maximum = 0.0F;
   float state_contract_maximum = 0.0F;
+  float qkv_contract_maximum = 0.0F;
+  float conv_contract_maximum = 0.0F;
   for (std::size_t segment = 0; segment < 2; ++segment) {
     std::vector<float> hidden(5120);
     for (std::size_t index = 0; index < hidden.size(); ++index) {
@@ -407,6 +434,36 @@ int main() {
           std::fabs(attention_actual[index] - expected_attention[segment * 5120U + index]));
     }
     attention_contract_maximum = std::max(attention_contract_maximum, attention_maximum);
+    if (!expected_qkv.empty()) {
+      std::vector<float> qkv_actual(10240);
+      if (!session.copy_from_device(binding(bindings, "qkv_projection").id,
+                                    {reinterpret_cast<std::byte*>(qkv_actual.data()),
+                                     qkv_actual.size() * sizeof(float)}).ok()) {
+        return 1;
+      }
+      float qkv_maximum = 0.0F;
+      for (std::size_t index = 0; index < qkv_actual.size(); ++index) {
+        qkv_maximum = std::max(
+            qkv_maximum,
+            std::fabs(qkv_actual[index] - expected_qkv[segment * qkv_actual.size() + index]));
+      }
+      qkv_contract_maximum = std::max(qkv_contract_maximum, qkv_maximum);
+    }
+    if (!expected_conv.empty()) {
+      std::vector<float> conv_actual(10240);
+      if (!session.copy_from_device(binding(bindings, "convolved").id,
+                                    {reinterpret_cast<std::byte*>(conv_actual.data()),
+                                     conv_actual.size() * sizeof(float)}).ok()) {
+        return 1;
+      }
+      float conv_maximum = 0.0F;
+      for (std::size_t index = 0; index < conv_actual.size(); ++index) {
+        conv_maximum = std::max(
+            conv_maximum,
+            std::fabs(conv_actual[index] - expected_conv[segment * conv_actual.size() + index]));
+      }
+      conv_contract_maximum = std::max(conv_contract_maximum, conv_maximum);
+    }
     std::vector<float> actual_state(48U * 128U * 128U);
     if (!session.copy_from_device(binding(bindings, "delta_state").id,
                                   {reinterpret_cast<std::byte*>(actual_state.data()),
@@ -431,11 +488,15 @@ int main() {
   mean /= static_cast<float>(actual.size());
   std::cout << "qwen38 GDN layer0 artifact differential max_abs=" << maximum
             << " mean_abs=" << mean << " segments=2 commands="
-            << session.trace().commands_executed << '\n';
+            << session.trace().commands_executed << " qkv_max_abs=" << qkv_contract_maximum
+            << " conv_max_abs=" << conv_contract_maximum
+            << '\n';
   // The contract covers NVFP4 dequantization plus FP32 accumulation-order differences against
   // Transformers. State and mixer boundaries have tighter diagnostics than the final MLP output.
   return maximum <= 5.0e-2F && mean <= 5.0e-4F && attention_contract_maximum <= 1.0e-2F &&
-                 state_contract_maximum <= 1.0e-3F
+                 state_contract_maximum <= 1.0e-3F &&
+                 (expected_qkv.empty() || qkv_contract_maximum <= 5.0e-2F) &&
+                 (expected_conv.empty() || conv_contract_maximum <= 5.0e-2F)
              ? 0
              : 1;
 }

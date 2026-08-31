@@ -152,3 +152,11 @@ discrepancy, then produce
 the reviewed passing report and second complete target-session corpus run. The legal boundary proof
 is complete for positions 4095/4096, but the numerical model contract is not yet closed for all
 declared corpus cases. S03F-02 remains blocked until that S03 acceptance is explicitly closed.
+
+An operation-level GDN diagnostic then compared the first packed-NVFP4 projection and convolution
+against a two-segment Transformers oracle. The artifact-bound `in_proj_qkv` output matched at
+max `1.38283e-5`, and post-convolution output matched at max `0.00198197`; existing attention,
+state, and final layer checks also passed. This rules out the first GDN projection and convolution
+as the immediate source of the long-replay drift. The diagnostic is opt-in through
+`SUPERINFER_QWEN38_GDN_QKV_F32` and `SUPERINFER_QWEN38_GDN_CONV_F32`, with durable evidence in
+`artifacts/S03/qwen38-gdn-operation-localization.json`. No acceptance tolerance changed.

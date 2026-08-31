@@ -1,0 +1,50 @@
+{
+  "kind": "qwen38_gdn_operation_localization",
+  "status": "pass",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "reference": {
+    "script": "tools/qwen38_nvfp4_gdn_reference.py",
+    "identity": "Transformers 5.12.1 Qwen3_5DecoderLayer",
+    "model_dir": "/srv/models/hf/Qwen3.8-27B-NVFP4-RTX5090-LMHead4",
+    "segments": 2,
+    "segment_lengths": [1, 1],
+    "capture_sha256": {
+      "layer_output": "2d473d494f9d6df2ecbc406458b310fb4a57bed95804e2a047595a57aab6989e",
+      "qkv_projection": "0586987d8eb94bf1c86a60d39349b1b475f62e580da3030fd6d01d4f0ae07df2",
+      "convolution": "f0dab581719c2ebbf9f70d6a849f22addaa4cbf94fe08cc5c3746619e8407ae4"
+    }
+  },
+  "execution": {
+    "path": "mmap .sinf -> typed artifact bindings -> Physical Plan -> CUDA executor",
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "physical_gpu": 0,
+    "cuda_visible_devices": "0",
+    "commands_per_segment": 20,
+    "commands_total": 40,
+    "state_continuation": true
+  },
+  "comparisons": {
+    "qkv_projection": {
+      "shape": [2, 10240],
+      "max_abs": 0.0000138283,
+      "threshold": 0.05,
+      "result": "pass"
+    },
+    "post_convolution": {
+      "shape": [2, 10240],
+      "max_abs": 0.00198197,
+      "threshold": 0.05,
+      "result": "pass"
+    },
+    "existing_layer_boundaries": {
+      "post_token_mixer_max_abs": 0.00482035,
+      "recurrent_state_max_abs": 0.000766158,
+      "final_layer_max_abs": 0.0357285,
+      "result": "pass"
+    }
+  },
+  "conclusion": "The first GDN packed-NVFP4 projection and convolution are not the immediate source of the long-replay drift. The remaining S03 blocker is accumulated numerical divergence at a later operation or across repeated full-model state transitions; acceptance criteria and tolerances remain unchanged."
+}

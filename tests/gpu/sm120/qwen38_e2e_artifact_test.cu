@@ -209,6 +209,36 @@ int main() {
     std::cerr << "specialization failed: " << specialized.error().message() << '\n';
     return 1;
   }
+  if (const char* encoded_dump_layer = std::getenv("SUPERINFER_QWEN38_DUMP_LAYER_COMMANDS");
+      encoded_dump_layer != nullptr) {
+    std::uint32_t dump_layer = 0;
+    const auto parsed = std::from_chars(
+        encoded_dump_layer, encoded_dump_layer + std::strlen(encoded_dump_layer), dump_layer);
+    if (parsed.ec != std::errc{} ||
+        parsed.ptr != encoded_dump_layer + std::strlen(encoded_dump_layer)) {
+      std::cerr << "invalid SUPERINFER_QWEN38_DUMP_LAYER_COMMANDS\n";
+      return 1;
+    }
+    std::size_t model_layer_index = 0;
+    bool saw_token_mixer = false;
+    for (const auto& command : specialized.value().plan.commands()) {
+      const auto kernel = command.kernel.value();
+      if (saw_token_mixer && model_layer_index == dump_layer) {
+        std::cout << "layer=" << model_layer_index << " id=" << command.id.value()
+                  << " kernel=" << kernel << " buffers=";
+        for (const auto buffer : command.buffers) std::cout << buffer.value() << ',';
+        std::cout << " output_bytes="
+                  << specialized.value().plan.buffers()[command.buffers.back().value()].size
+                  << '\n';
+      }
+      if (kernel == 15 || kernel == 23) {
+        saw_token_mixer = true;
+        ++model_layer_index;
+        if (model_layer_index > dump_layer) break;
+      }
+    }
+    return 0;
+  }
   const auto resolved = superinfer::artifact::ArtifactPlanBinding::resolve(
       specialized.value().plan, artifact.value(), records.value());
   if (!resolved.has_value()) {
@@ -582,6 +612,7 @@ int main() {
 
   const char* layer_trace_path = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_F32");
   const char* layer_trace_stage = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_STAGE");
+  const char* command_trace_ids = std::getenv("SUPERINFER_QWEN38_COMMAND_TRACE_IDS");
   std::optional<std::uint32_t> layer_trace_step;
   std::vector<superinfer::ir::physical::CommandId> layer_trace_commands;
   std::vector<std::vector<std::byte>> layer_trace_captures;
@@ -599,23 +630,32 @@ int main() {
       return 1;
     }
     layer_trace_step = parsed_step;
-    const bool post_attention = layer_trace_stage != nullptr &&
-                                std::string_view{layer_trace_stage} == "post_attention";
-    if (layer_trace_stage != nullptr && !post_attention &&
-        std::string_view{layer_trace_stage} != "post_mlp") {
-      std::cerr << "SUPERINFER_QWEN38_LAYER_TRACE_STAGE must be post_attention or post_mlp\n";
-      return 1;
-    }
-    std::size_t residual_index = 0;
-    for (const auto& command : specialized.value().plan.commands()) {
-      if (command.kernel.value() != 4) continue;
-      // Kernel 4 is emitted once after the token mixer and once after the MLP.
-      const bool select_post_attention = (residual_index++ % 2U) == 0U;
-      if (select_post_attention == post_attention) layer_trace_commands.push_back(command.id);
-    }
-    if (layer_trace_commands.size() != 64) {
-      std::cerr << "Qwen layer trace expected 64 post-MLP residual commands\n";
-      return 1;
+    if (command_trace_ids != nullptr) {
+      const auto encoded_ids = parse_token_list(command_trace_ids);
+      if (encoded_ids.empty()) {
+        std::cerr << "invalid SUPERINFER_QWEN38_COMMAND_TRACE_IDS\n";
+        return 1;
+      }
+      for (const auto id : encoded_ids) layer_trace_commands.emplace_back(id);
+    } else {
+      const bool post_attention = layer_trace_stage != nullptr &&
+                                  std::string_view{layer_trace_stage} == "post_attention";
+      if (layer_trace_stage != nullptr && !post_attention &&
+          std::string_view{layer_trace_stage} != "post_mlp") {
+        std::cerr << "SUPERINFER_QWEN38_LAYER_TRACE_STAGE must be post_attention or post_mlp\n";
+        return 1;
+      }
+      std::size_t residual_index = 0;
+      for (const auto& command : specialized.value().plan.commands()) {
+        if (command.kernel.value() != 4) continue;
+        // Kernel 4 is emitted once after the token mixer and once after the MLP.
+        const bool select_post_attention = (residual_index++ % 2U) == 0U;
+        if (select_post_attention == post_attention) layer_trace_commands.push_back(command.id);
+      }
+      if (layer_trace_commands.size() != 64) {
+        std::cerr << "Qwen layer trace expected 64 post-MLP residual commands\n";
+        return 1;
+      }
     }
   }
 
@@ -864,7 +904,7 @@ int main() {
     std::ofstream capture{layer_trace_path, std::ios::binary | std::ios::trunc};
     if (!capture.good()) return 1;
     for (const auto& bytes : layer_trace_captures) {
-      if (bytes.size() != 5120U * sizeof(float)) {
+      if (command_trace_ids == nullptr && bytes.size() != 5120U * sizeof(float)) {
         std::cerr << "layer trace output is not F32[5120]\n";
         return 1;
       }
@@ -874,11 +914,12 @@ int main() {
     if (!capture.good()) return 1;
     std::ofstream metadata{std::string{layer_trace_path} + ".meta", std::ios::trunc};
     if (!metadata.good()) return 1;
-    metadata << "step " << layer_trace_step.value() << " layers " << layer_trace_captures.size()
+    metadata << "step " << layer_trace_step.value() << " captures " << layer_trace_captures.size()
              << " contract " << ((layer_trace_stage != nullptr &&
                                     std::string_view{layer_trace_stage} == "post_attention")
                                        ? "post_token_mixer_residual"
-                                       : "post_mlp_residual")
+                                       : (command_trace_ids != nullptr ? "command_outputs"
+                                                                         : "post_mlp_residual"))
              << "\n";
     for (const auto command : layer_trace_commands) metadata << command.value() << '\n';
     if (!metadata.good()) return 1;

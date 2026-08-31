@@ -117,6 +117,11 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
   `RMSE=0.00039070655`), including segment 29 at max `0.00368`; see
   `artifacts/S03/qwen38-gdn-long-context-differential.json`. The remaining blocker is whole-model
   accumulated drift rather than isolated GDN recurrence.
+  A target-input replay of model layer 42 now matches the independent Transformers layer at QKV
+  max `0.01714611`, convolution max `0.00386417`, recurrent-core max `0.00003777`, and complete
+  layer-output max `0.12633133`. This confirms the layer-42 implementation and state transition;
+  the full-model cliff is upstream hidden-state error amplification. See
+  `artifacts/S03/qwen38-layer42-input-amplification.json`.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
 - S03F-01 has pinned immutable Flash-Next model/reference revisions, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.

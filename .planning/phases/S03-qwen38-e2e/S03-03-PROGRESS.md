@@ -164,6 +164,16 @@ The diagnostic selector and durable results are recorded in
 `artifacts/S03/qwen38-long-replay-diagnostic-round2.json`; the numerical acceptance blocker remains
 open and no tolerance was changed.
 
+To separate implementation error from error amplification, model-layer-42 command outputs were
+captured at position 36 while the independent Transformers helper was driven with the target's
+layer-41 hidden row and layer-42 state from position 35. QKV, causal convolution, and recurrent
+core outputs matched at max errors `0.01714611`, `0.00386417`, and `0.00003777`; the complete
+layer output matched at max `0.12633133`. This proves the layer-42 state transition and kernel
+composition under the target input. The full-model layer-42 jump is therefore upstream numerical
+error amplification, not a layer-42 state corruption. Evidence is recorded in
+`artifacts/S03/qwen38-layer42-input-amplification.json`; S03 remains open because the unchanged
+full-model logit contract is still exceeded.
+
 An operation-level GDN diagnostic then compared the first packed-NVFP4 projection and convolution
 against a two-segment Transformers oracle. The artifact-bound `in_proj_qkv` output matched at
 max `1.38283e-5`, and post-convolution output matched at max `0.00198197`; existing attention,

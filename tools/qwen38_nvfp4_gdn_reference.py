@@ -14,7 +14,8 @@ from pathlib import Path
 
 import torch
 from safetensors import safe_open
-from transformers import DynamicCache, Qwen3_5Config
+from transformers import DynamicCache
+from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5DecoderLayer
 
 
@@ -63,6 +64,8 @@ def main() -> int:
     parser.add_argument("--diagnostics", action="store_true",
                         help="also emit intermediate projection and convolution captures")
     parser.add_argument("--segments", type=int, default=2)
+    parser.add_argument("--layer", type=int, default=0,
+                        help="decoder layer to load from the checkpoint")
     parser.add_argument("--input-f32", type=Path,
                         help="optional real hidden input for one custom stateful step")
     parser.add_argument("--state-f32", type=Path,
@@ -70,16 +73,20 @@ def main() -> int:
     args = parser.parse_args()
     if args.segments <= 0:
         raise SystemExit("--segments must be positive")
+    if args.layer < 0:
+        raise SystemExit("--layer must be non-negative")
     custom_step = args.input_f32 is not None or args.state_f32 is not None
     if custom_step and (args.input_f32 is None or args.segments != 1):
         raise SystemExit("custom GDN execution requires --input-f32 and --segments 1")
 
     model_dir = args.model_dir
     root = json.loads((model_dir / "config.json").read_text())
-    config = Qwen3_5Config.from_dict(root["text_config"])
+    config = Qwen3_5TextConfig.from_dict(root["text_config"])
     index = json.loads((model_dir / "model.safetensors.index.json").read_text())["weight_map"]
-    layer = Qwen3_5DecoderLayer(config, 0).eval()
-    prefix = "model.language_model.layers.0."
+    if args.layer >= config.num_hidden_layers:
+        raise SystemExit(f"--layer must be less than {config.num_hidden_layers}")
+    layer = Qwen3_5DecoderLayer(config, args.layer).eval()
+    prefix = f"model.language_model.layers.{args.layer}."
     state = {}
     for key in layer.state_dict():
         source_name = prefix + key
@@ -113,32 +120,32 @@ def main() -> int:
             conv_elements = 4 * 10240
             if state_values.numel() != delta_elements + conv_elements:
                 raise SystemExit("custom GDN state has an unexpected element count")
-            cache.layers[0].recurrent_states = state_values[:delta_elements].reshape(
+            cache.layers[args.layer].recurrent_states = state_values[:delta_elements].reshape(
                 1, 48, 128, 128
             ).clone()
-            cache.layers[0].conv_states = state_values[delta_elements:].reshape(
+            cache.layers[args.layer].conv_states = state_values[delta_elements:].reshape(
                 4, 10240
             ).transpose(0, 1).unsqueeze(0).clone()
-            cache.layers[0].dtype = cache.layers[0].recurrent_states.dtype
-            cache.layers[0].device = cache.layers[0].recurrent_states.device
-            cache.layers[0].is_conv_states_initialized = True
-            cache.layers[0].is_recurrent_states_initialized = True
-            cache.layers[0].has_previous_state = True
+            cache.layers[args.layer].dtype = cache.layers[args.layer].recurrent_states.dtype
+            cache.layers[args.layer].device = cache.layers[args.layer].recurrent_states.device
+            cache.layers[args.layer].is_conv_states_initialized = True
+            cache.layers[args.layer].is_recurrent_states_initialized = True
+            cache.layers[args.layer].has_previous_state = True
         else:
-            cache.layers[0].conv_states = torch.zeros(
+            cache.layers[args.layer].conv_states = torch.zeros(
                 (1, layer.linear_attn.conv_dim, layer.linear_attn.conv_kernel_size),
                 dtype=torch.float32,
             )
-            cache.layers[0].recurrent_states = torch.zeros(
+            cache.layers[args.layer].recurrent_states = torch.zeros(
                 (1, layer.linear_attn.num_v_heads, layer.linear_attn.head_k_dim,
                  layer.linear_attn.head_v_dim),
                 dtype=torch.float32,
             )
-            cache.layers[0].dtype = torch.float32
-            cache.layers[0].device = torch.device("cpu")
-            cache.layers[0].is_conv_states_initialized = True
-            cache.layers[0].is_recurrent_states_initialized = True
-            cache.layers[0].has_previous_state = True
+            cache.layers[args.layer].dtype = torch.float32
+            cache.layers[args.layer].device = torch.device("cpu")
+            cache.layers[args.layer].is_conv_states_initialized = True
+            cache.layers[args.layer].is_recurrent_states_initialized = True
+            cache.layers[args.layer].has_previous_state = True
     outputs = []
     attention_outputs = []
     recurrent_states = []
@@ -206,7 +213,7 @@ def main() -> int:
                 past_key_values=cache,
             )
         outputs.append(output.reshape(-1).contiguous())
-        recurrent_states.append(cache.layers[0].recurrent_states.reshape(-1).float().detach().clone())
+        recurrent_states.append(cache.layers[args.layer].recurrent_states.reshape(-1).float().detach().clone())
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.cat(outputs).numpy().astype("float32").tofile(args.output)
@@ -224,7 +231,7 @@ def main() -> int:
     diagnostics = {
         "model": "Qwen3.8-27B-NVFP4-RTX5090",
         "reference": "transformers 5.12.1 Qwen3_5DecoderLayer",
-        "layer": 0,
+        "layer": args.layer,
         "segments": args.segments,
         "segment_lengths": [1] * args.segments,
         "state": {

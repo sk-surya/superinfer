@@ -1,0 +1,48 @@
+{
+  "kind": "qwen38_layer42_input_amplification_differential",
+  "status": "pass_layer_contract_blocker_is_upstream_accumulation",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "workload": {
+    "case": "varied-length",
+    "model_layer": 42,
+    "position": 36,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "reference": "Transformers 5.12.1 Qwen3_5DecoderLayer with deployment BF16 state contract"
+  },
+  "inputs": {
+    "target_hidden_before_layer_sha256": "62914fa791e82f9117debccb741749fe6c82d681d2e3655007cc0586d2dac2c4",
+    "target_state_before_position_sha256": "4cdf7607741beff4872ecd174e55339a20fe5d10f71fcbcf25d4dec6d6d41b8a",
+    "target_full_post_mlp_trace_sha256": "d7084f266ed9b9ba0bb086d87fd67b240b7161e5e807456ddf2c49ea8d3af62a",
+    "reference_hidden_source": "target post-MLP layer-41 row at position 36",
+    "reference_state_source": "target model-layer-42 state after position 35"
+  },
+  "operation_comparison": {
+    "target_command_capture_sha256": "a561b0e276e21c7dc3b7aa4054c99864788e75c5d4f2558bf602c5f10389d3c3",
+    "commands": [
+      {"id": 1594, "operation": "qkv_projection", "elements": 10240, "max_abs": 0.01714611, "mean_abs": 0.0016569715, "rmse": 0.0021420852, "reference_sha256": "196fb2c61ee1b6fca1c90815052fe309068d0fff21408b1a2c30a195a0a1affe"},
+      {"id": 1596, "operation": "causal_conv_silu", "elements": 10240, "max_abs": 0.0038641691, "mean_abs": 0.0000215573, "rmse": 0.0000933097, "reference_sha256": "ddc3f4d85b480b8aecb0bf8ead671b3b24382f780fec97ecab8a2b38e6aec63e"},
+      {"id": 1607, "operation": "gated_delta_attention", "elements": 6144, "max_abs": 0.0000377703, "mean_abs": 0.0000005257, "rmse": 0.0000015121, "reference_sha256": "45a3af6878a02435fa51453042fdfd52f8ecef2973ff45c6d13ea766b2522e23"}
+    ],
+    "complete_layer_output": {
+      "elements": 5120,
+      "max_abs": 0.12633133,
+      "mean_abs": 0.0016117513,
+      "rmse": 0.0029210416
+    }
+  },
+  "interpretation": {
+    "full_trace_layer_41_max_abs": 0.248226,
+    "full_trace_layer_42_post_mixer_max_abs": 0.900906,
+    "full_trace_layer_42_post_mlp_max_abs": 1.638304,
+    "conclusion": "When the layer receives the target hidden/state, the independent layer contract passes with bounded error. The full-model layer-42 cliff is caused by accumulated upstream activation error being amplified by the layer, not by a layer-42 state or kernel defect."
+  },
+  "acceptance": {
+    "numerical_contract_changed": false,
+    "S03_closed": false,
+    "next_boundary": "identify and reduce the upstream cross-layer numerical drift or document a reviewed quantized-reference contract"
+  }
+}

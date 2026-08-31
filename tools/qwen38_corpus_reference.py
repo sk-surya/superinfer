@@ -60,6 +60,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="round each layer output through BF16 before the next layer",
     )
     parser.add_argument(
+        "--round-embedding", action="store_true",
+        help="round the embedding operation output through BF16",
+    )
+    parser.add_argument(
+        "--round-final-norm", action="store_true",
+        help="round the final RMSNorm output through BF16 before the LM head",
+    )
+    parser.add_argument(
         "--round-kv", action="store_true",
         help="store every DynamicCache K/V update as BF16, then read it as FP32",
     )
@@ -105,7 +113,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 
 def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Path,
-               round_activations: bool, round_kv: bool, round_linear_state: bool,
+               round_activations: bool,
+               round_embedding: bool, round_final_norm: bool,
+               round_kv: bool, round_linear_state: bool,
                hidden_output: Path | None = None, hidden_case: str | None = None,
                hidden_step: int | None = None, boundaries_output: Path | None = None,
                boundary_case: str | None = None, boundary_step: int | None = None,
@@ -153,6 +163,25 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                 conv_states = conv_states.to(torch.bfloat16).to(torch.float32)
             return super().update_conv_state(conv_states, layer_idx, *args, **kwargs)
 
+    def initialize_decode_state(cache: DynamicCache, layer: Any, layer_index: int) -> None:
+        """Make a fresh cache follow the deployment's one-token decode path from position zero."""
+        cache_layer = cache.layers[layer_index]
+        if not hasattr(layer, "linear_attn") or cache_layer.has_previous_state:
+            return
+        linear = layer.linear_attn
+        cache_layer.conv_states = torch.zeros(
+            (1, linear.conv_dim, linear.conv_kernel_size), device=device, dtype=torch.float32
+        )
+        cache_layer.recurrent_states = torch.zeros(
+            (1, linear.num_v_heads, linear.head_k_dim, linear.head_v_dim),
+            device=device, dtype=torch.float32,
+        )
+        cache_layer.dtype = torch.float32
+        cache_layer.device = device
+        cache_layer.is_conv_states_initialized = True
+        cache_layer.is_recurrent_states_initialized = True
+        cache_layer.has_previous_state = True
+
     def round_linear_cache_state(cache: DynamicCache, layer_idx: int) -> None:
         """Model BF16 causal-convolution state after both prefill and single-token decode."""
         if not round_linear_state:
@@ -188,7 +217,9 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
         {
             "id": case_id,
             "tokens": token_ids,
-            "hidden": [embedding[token].reshape(1, 1, -1) for token in token_ids],
+            "hidden": [((embedding[token].to(torch.bfloat16).to(torch.float32)
+                         if round_embedding else embedding[token]).reshape(1, 1, -1))
+                       for token in token_ids],
             "cache": (DeploymentStorageDynamicCache(
                 config=config, round_kv=round_kv, round_linear_state=round_linear_state
             ) if round_kv or round_linear_state else DynamicCache(config=config)),
@@ -225,6 +256,24 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                             device=device, dtype=torch.float32)
             layer.load_state_dict(state_dict, strict=True)
             del state_dict
+
+            if round_linear_state and hasattr(layer, "linear_attn"):
+                # The deployment causal-convolution kernel stores the current qkv row as BF16
+                # and immediately consumes that stored row. Match that operation ordering in
+                # the independent oracle; rounding only the cache after the layer call is too
+                # late for the current token.
+                original_conv_update = layer.linear_attn.causal_conv1d_update
+
+                def deployment_conv_update(mixed_qkv: Any, *args: Any,
+                                            _original_conv_update: Any = original_conv_update,
+                                            **kwargs: Any) -> Any:
+                    rounded = mixed_qkv.to(torch.bfloat16).to(torch.float32)
+                    return _original_conv_update(rounded, *args, **kwargs)
+
+                layer.linear_attn.causal_conv1d_update = deployment_conv_update
+
+                for state in states:
+                    initialize_decode_state(state["cache"], layer, layer_index)
 
             mixer_outputs: list[torch.Tensor] = []
             mixer_hook = None
@@ -317,6 +366,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
         for state in states:
             for position, hidden in enumerate(state["hidden"]):
                 normalized = reference._rms_norm(hidden, final_norm, config.rms_norm_eps)
+                if round_final_norm:
+                    normalized = normalized.to(torch.bfloat16).to(torch.float32)
                 if (hidden_output is not None and state["id"] == hidden_case and
                         (hidden_step is None or position == hidden_step)):
                     row = normalized.reshape(-1).contiguous().cpu().numpy().astype("float32")
@@ -416,6 +467,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "output_sha256": _sha256(payload),
             "token_ids_sha256": canonical_token_hash(token_ids),
             "round_activations": round_activations,
+            "round_embedding": round_embedding,
+            "round_final_norm": round_final_norm,
             "round_kv": round_kv,
             "round_linear_state": round_linear_state,
             "device": str(device),
@@ -469,7 +522,9 @@ def main() -> int:
         parser.error("--linear-state-layer must be non-negative")
     corpus = json.loads(args.corpus.read_text())
     report = _run_cases(args.model_dir, select_cases(corpus, args.case_ids), args.output_dir,
-                        args.round_activations, args.round_kv, args.round_linear_state,
+        args.round_activations,
+                        args.round_embedding, args.round_final_norm,
+                        args.round_kv, args.round_linear_state,
                         args.hidden_output,
                         args.hidden_case, args.hidden_step, args.boundaries_output,
                         args.boundary_case, args.boundary_step,

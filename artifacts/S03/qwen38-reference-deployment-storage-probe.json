@@ -1,0 +1,50 @@
+{
+  "schema": "superinfer.qwen38.s03.reference-deployment-storage-probe.v1",
+  "status": "diagnostic_not_acceptance",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "reference": {
+    "implementation": "Transformers Qwen3_5DecoderLayer streamed one layer at a time",
+    "transformers_version": "5.12.1",
+    "torch_version": "2.13.0+cu130",
+    "device": "cuda:0",
+    "checkpoint": "/srv/models/hf/Qwen3.8-27B-NVFP4-RTX5090-LMHead4"
+  },
+  "workload": {
+    "case": "chat-template",
+    "target_capture": "build/evidence/kv-match-target/hidden30-current",
+    "target_rows": 60,
+    "comparison_prefix_rows": 30,
+    "target_capture_sha256": "9d588484faff80567136daf86cf31118fa54a2e2da07c9b25e6da1318ff3a99"
+  },
+  "probes": [
+    {
+      "name": "BF16 KV and linear state only",
+      "reference": "build/evidence/reference-chat-deployment-v4/chat-template.f32",
+      "rows": 30,
+      "max_abs": 0.5842886,
+      "mean_abs": 0.0478660,
+      "rmse": 0.0636131,
+      "rows_over_max_abs_0_5": [23, 28, 29]
+    },
+    {
+      "name": "BF16 embedding and final RMSNorm I/O plus KV and linear state",
+      "reference": "build/evidence/reference-chat-deployment-v7/chat-template.f32",
+      "rows": 30,
+      "max_abs": 0.5856843,
+      "mean_abs": 0.0430106,
+      "rmse": 0.0568142,
+      "rows_over_max_abs_0_5": [23, 29]
+    },
+    {
+      "name": "BF16 hook on every decoder module output",
+      "reference": "build/evidence/reference-chat-deployment-v6/chat-template.f32",
+      "rows": 30,
+      "max_abs": 0.8039508,
+      "mean_abs": 0.0506312,
+      "rmse": 0.0672827,
+      "rows_over_max_abs_0_5": [4, 18, 20, 23, 24, 25, 29],
+      "result": "rejected"
+    }
+  ],
+  "conclusion": "The deployment-matched reference must use cached decode semantics from position zero, round the current GDN qkv row before causal convolution, and model BF16 embedding/final-norm storage. The broad per-module hook is rejected. Residual outliers remain accumulated numerical drift in the correctness-first serial CUDA reductions versus the external GEMM reference; the max_abs=0.5 contract remains unchanged and S03 remains open."
+}

@@ -209,3 +209,24 @@ and RMSE `0.00039070655`; the row-29-equivalent segment was max `0.00368` / RMSE
 Projection, convolution, recurrent-core, gated-output, attention-output, and final-layer checks
 all remained passing. This rules out GDN recurrence as the immediate source of the whole-model
 outlier. Evidence is recorded in `artifacts/S03/qwen38-gdn-long-context-differential.json`.
+
+The deployment-matched corpus oracle was corrected to use the actual qualified environment,
+Transformers `5.12.1` with torch `2.13.0+cu130`, and to follow the target's cached single-token
+GDN path from position zero. It rounds the current GDN QKV row before causal convolution, rounds
+the BF16 embedding output and final RMSNorm output at their explicit lowering boundaries, and
+retains FP32 recurrent state plus BF16 KV/convolution storage. The broad per-module BF16 hook was
+tested and rejected because it increased 30-token error. The corrected 60-token comparison is
+repeatable and has max/mean/RMSE `0.5842886/0.0388823/0.0520733`; the narrower 30-token storage
+probe improves to `0.5856843/0.0430106/0.0568142` but still leaves rows 23 and 29 above the
+unchanged max-abs `0.5` contract. Evidence is recorded in
+`artifacts/S03/qwen38-reference-deployment-storage-probe.json`.
+
+The reviewer-requested minimized fresh-process replay is now repeatable: the first 13 chat tokens
+produce byte-identical captures across five independent SuperInfer processes on GPU 0. This rules
+out current-session nondeterminism for that prefix but does not close the historical long-replay
+discrepancy; evidence is recorded in `artifacts/S03/qwen38-chat-prefix13-repeatability.json`.
+
+The corpus reference identity discrepancy is resolved in the checked-in acceptance fixture: the
+qualified local and planned Transformers version are both `5.12.1`. S03 remains open because the
+full numerical contract still fails on accumulated long-context logit outliers; no tolerance was
+changed and no production kernel was modified by these diagnostics.

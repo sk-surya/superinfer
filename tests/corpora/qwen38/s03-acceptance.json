@@ -17,7 +17,7 @@
   },
   "reference": {
     "implementation": "Transformers Qwen3_5TextConfig/Qwen3_5DecoderLayer with shared DynamicCache",
-    "local_version": "5.14.1",
+    "local_version": "5.12.1",
     "planned_version": "5.12.1",
     "comparison_dtype": "FP32 logits after BF16 SuperInfer output conversion"
   },

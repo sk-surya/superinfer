@@ -91,6 +91,17 @@ def main() -> int:
         )
     layer.load_state_dict(state, strict=True)
 
+    original_conv_update = layer.linear_attn.causal_conv1d_update
+
+    def deployment_conv_update(mixed_qkv, *conv_args,
+                               _original_conv_update=original_conv_update, **conv_kwargs):
+        # The CUDA deployment rounds the current qkv row to BF16 before the causal convolution
+        # consumes it, not only when the resulting history is committed to state.
+        rounded = mixed_qkv.to(torch.bfloat16).to(torch.float32)
+        return _original_conv_update(rounded, *conv_args, **conv_kwargs)
+
+    layer.linear_attn.causal_conv1d_update = deployment_conv_update
+
     cache = DeploymentStorageDynamicCache(config=config, round_linear_state=True)
     if custom_step:
         input_values = _read_f32(args.input_f32)
@@ -110,6 +121,21 @@ def main() -> int:
             ).transpose(0, 1).unsqueeze(0).clone()
             cache.layers[0].dtype = cache.layers[0].recurrent_states.dtype
             cache.layers[0].device = cache.layers[0].recurrent_states.device
+            cache.layers[0].is_conv_states_initialized = True
+            cache.layers[0].is_recurrent_states_initialized = True
+            cache.layers[0].has_previous_state = True
+        else:
+            cache.layers[0].conv_states = torch.zeros(
+                (1, layer.linear_attn.conv_dim, layer.linear_attn.conv_kernel_size),
+                dtype=torch.float32,
+            )
+            cache.layers[0].recurrent_states = torch.zeros(
+                (1, layer.linear_attn.num_v_heads, layer.linear_attn.head_k_dim,
+                 layer.linear_attn.head_v_dim),
+                dtype=torch.float32,
+            )
+            cache.layers[0].dtype = torch.float32
+            cache.layers[0].device = torch.device("cpu")
             cache.layers[0].is_conv_states_initialized = True
             cache.layers[0].is_recurrent_states_initialized = True
             cache.layers[0].has_previous_state = True

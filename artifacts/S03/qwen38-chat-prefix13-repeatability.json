@@ -1,0 +1,25 @@
+{
+  "schema": "superinfer.qwen38.s03.chat-prefix-repeatability.v1",
+  "status": "pass",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "gpu": {
+    "index": 0,
+    "name": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a"
+  },
+  "workload": {
+    "case": "chat-template",
+    "tokens": 13,
+    "token_ids_sha256": "44f38efa385f7e55ba558903ac4d5d19b852f60f73ff32ca35d1601c5c4a6c4d",
+    "token_prefix": [248045, 8678, 198, 24342, 286, 4879, 369, 716, 310, 830, 11553, 13, 5044]
+  },
+  "runs": 5,
+  "capture_sha256": "504a599b16fa09b07986e15251348a6cac28ee2be1e457730d37731504ea653d",
+  "continuation_capture_sha256": "7819e5a0a93c8930752f0ad682b2e968125b50027ab9f931f795c0cd7bd19d72",
+  "byte_identical_across_fresh_processes": true,
+  "controls": {
+    "arena_poison": "not used in this five-run replay",
+    "activation_reuse": "normal"
+  },
+  "conclusion": "The earliest historical 13-token chat prefix is repeatable across five fresh SuperInfer processes. This does not explain the historical long-replay captures and is not by itself S03 closure."
+}

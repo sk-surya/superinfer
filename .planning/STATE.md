@@ -98,7 +98,9 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
   BF16 KV rounding (`final_hidden max_abs=0.00111389`, attention-output `0.00135803`), ruling out
   a standalone long-context full-attention/cache defect. See
   `artifacts/S03/qwen38-layer3-long-context-differential.json`; the remaining blocker is accumulated
-  full-stack numerical drift.
+  full-stack numerical drift. A temporary FP64 NVFP4 GEMV accumulator probe produced a byte-identical
+  30-token logits capture and was reverted; see
+  `artifacts/S03/qwen38-nvfp4-double-accumulation-probe.json`.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
 - S03F-01 has pinned immutable Flash-Next model/reference revisions, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.

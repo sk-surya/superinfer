@@ -1,0 +1,25 @@
+{
+  "kind": "qwen38_nvfp4_double_accumulation_probe",
+  "status": "rejected_hypothesis",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": {
+    "case": "chat-template",
+    "tokens": 30,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "commands": 72720
+  },
+  "experiment": {
+    "change": "temporary double-precision accumulator in nvfp4_linear_f32 only",
+    "production_change_kept": false,
+    "hypothesis": "NVFP4 GEMV reduction precision is responsible for the whole-model logit outliers"
+  },
+  "result": {
+    "probe_capture_sha256": "367b47fc5c40705f0d584f4b428f63985ef18ca784ef951f74399a3fb5ab70a7",
+    "baseline_capture_sha256": "367b47fc5c40705f0d584f4b428f63985ef18ca784ef951f74399a3fb5ab70a7",
+    "max_abs": 0.59774923,
+    "bad_rows_over_0_5": [23, 29],
+    "result": "no_observable_BF16_logits_change"
+  },
+  "conclusion": "Higher-precision NVFP4 GEMV accumulation does not change the stored whole-model logits or outlier rows for this workload. The temporary kernel change was reverted and is not a production candidate."
+}

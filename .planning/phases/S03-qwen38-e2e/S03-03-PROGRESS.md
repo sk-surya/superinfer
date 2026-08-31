@@ -188,3 +188,10 @@ max `0.00135803`. This rules out a standalone long-context full-attention/cache 
 the full-model outlier as accumulated cross-stack numerical drift. Evidence is recorded in
 `artifacts/S03/qwen38-layer3-long-context-differential.json`; no tolerance or production kernel
 changed.
+
+A reversible whole-model probe changed only `nvfp4_linear_f32` accumulation from FP32 to FP64 for
+the 30-token chat prefix. Its stored logits capture was byte-identical to the baseline
+(`367b47fc...`), with the same outlier rows 23 and 29 and max `0.59774923`; the change was reverted.
+This rejects GEMV accumulator precision as an observable fix for the current BF16 logits contract.
+The failed hypothesis is retained in
+`artifacts/S03/qwen38-nvfp4-double-accumulation-probe.json`.

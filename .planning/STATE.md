@@ -90,6 +90,15 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
   core at `3.6478e-5` max error, further narrowing the source to later GDN normalization/output or
   accumulated cross-layer behavior. The normalized/gated core output also matches at `0.00436258`
   max error, so the complete layer-0 GDN token-mixer path passes staged external differentials.
+  All-layer boundary reduction shows the first material post-token-mixer jump at layer 3, the first
+  full-attention block (`max_abs=0.070608`, `RMSE=0.001046`), while prior GDN drift is nonzero. The
+  next S03 diagnostic is long-context full-attention/cache behavior versus input-error amplification;
+  see `artifacts/S03/qwen38-full-attention-jump-localization.json`.
+  The corrected standalone layer-3 experiment now passes 30-step decode with deployment-matched
+  BF16 KV rounding (`final_hidden max_abs=0.00111389`, attention-output `0.00135803`), ruling out
+  a standalone long-context full-attention/cache defect. See
+  `artifacts/S03/qwen38-layer3-long-context-differential.json`; the remaining blocker is accumulated
+  full-stack numerical drift.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
 - S03F-01 has pinned immutable Flash-Next model/reference revisions, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.

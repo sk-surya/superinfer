@@ -1,0 +1,30 @@
+{
+  "kind": "qwen38_full_attention_boundary_jump_localization",
+  "status": "diagnostic",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": {
+    "case": "chat-template",
+    "step": 29,
+    "tokens": 30,
+    "boundary": "post_token_mixer_residual",
+    "target_capture_sha256": "faa70efe957d4b99de2d5c6d80caab4b66349fd5fde3678ae1cba7abda378536",
+    "cuda_reference_capture_sha256": "a5b2de77d1846de3ca024a4db3451091169685e82cac0d9a1a9297ab28c69065"
+  },
+  "first_material_jump": {
+    "layer": 3,
+    "layer_role": "first_full_attention_layer",
+    "max_abs": 0.070608,
+    "rmse": 0.001046,
+    "mean_abs": 0.000273
+  },
+  "later_full_attention_boundaries": {
+    "layer_13": {"max_abs": 0.204533, "rmse": 0.003454},
+    "layer_14": {"max_abs": 0.295433, "rmse": 0.004799},
+    "layer_33": {"max_abs": 0.209755, "rmse": 0.007789},
+    "layer_34": {"max_abs": 0.209366, "rmse": 0.008027},
+    "layer_43": {"max_abs": 0.197201, "rmse": 0.013767},
+    "layer_55": {"max_abs": 0.376442, "rmse": 0.046334}
+  },
+  "interpretation": "The first material post-token-mixer jump coincides with the first full-attention block, while drift is already nonzero from preceding GDN layers. This localizes the next investigation to long-context full-attention/cache behavior or amplification of prior input error; it is not proof of a standalone full-attention defect.",
+  "next_experiment": "Compare artifact full-attention command boundaries at context length 30 against an independent BF16-cache Transformers decode oracle, including q/k/v projections, RoPE, grouped attention, output gate, and output projection."
+}

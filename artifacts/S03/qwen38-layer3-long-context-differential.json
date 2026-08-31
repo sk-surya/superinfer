@@ -1,0 +1,33 @@
+{
+  "kind": "qwen38_full_attention_long_context_differential",
+  "status": "pass",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "reference": {
+    "script": "tools/qwen38_nvfp4_layer_reference.py",
+    "identity": "Transformers 5.12.1 Qwen3_5DecoderLayer",
+    "layer": 3,
+    "cache_contract": "BF16 KV storage applied inside DynamicCache.update before attention reads",
+    "steps": 30,
+    "output_sha256": "6b224416ed1b5897ce2991f8fb43eea887911de113998b6264fe621014dfd97b",
+    "attention_output_sha256": "011d67853397f75a24a0833e83de995b371519cefc322f81f08bb43889961f24"
+  },
+  "target": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "physical_gpu": 0,
+    "cuda_visible_devices": "0",
+    "output_sha256": "fd4c9c6344b892dc13b344a96385673ce920886b68f4dc132a581e94cdab76ef",
+    "attention_output_sha256": "c1503f25707926efe1806035a3b8452cb45e71dc6a54bef84f044a192b55d97d"
+  },
+  "comparison": {
+    "final_hidden_max_abs": 0.00111389,
+    "final_hidden_mean_abs": 0.0000233764,
+    "attention_output_max_abs": 0.00135803,
+    "final_hidden_max_abs_threshold": 0.02,
+    "final_hidden_mean_abs_threshold": 0.0002,
+    "result": "pass"
+  },
+  "conclusion": "Standalone full-attention layer-3 decode over 30 positions passes with the deployment-matched BF16 KV oracle. The earlier larger discrepancy came from rounding the reference cache after rather than before attention; no production kernel or tolerance change is justified by this experiment."
+}

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -82,11 +83,25 @@ superinfer::ir::physical::PhysicalTensorDescriptor f32_descriptor(
           superinfer::ir::physical::StorageEncoding::none, {}};
 }
 
+std::uint32_t diagnostic_decode_steps() {
+  const char* encoded = std::getenv("SUPERINFER_QWEN38_LAYER_DECODE_STEPS");
+  if (encoded == nullptr) return 1;
+  char* end = nullptr;
+  errno = 0;
+  const unsigned long parsed = std::strtoul(encoded, &end, 10);
+  if (errno != 0 || end == encoded || *end != '\0' || parsed == 0 || parsed > 4096U) {
+    std::cerr << "invalid SUPERINFER_QWEN38_LAYER_DECODE_STEPS\n";
+    std::abort();
+  }
+  return static_cast<std::uint32_t>(parsed);
+}
+
 superinfer::ir::physical::Plan make_layer_plan(
     const std::vector<superinfer::artifact::TensorTableRecord>& records,
     std::vector<BufferBinding>& bindings) {
   using namespace superinfer;
   using namespace ir::physical;
+  const std::uint32_t decode_steps = diagnostic_decode_steps();
   std::unordered_map<std::string, const artifact::TensorTableRecord*> by_name;
   for (const auto& record : records) by_name.emplace(record.name, &record);
 
@@ -150,11 +165,15 @@ superinfer::ir::physical::Plan make_layer_plan(
   const auto k_norm = add_f32("k_norm", 1024);
   const auto q_rope = add_f32("q_rope", 6144);
   const auto k_rope = add_f32("k_rope", 1024);
-  const auto key_cache = add_buffer("key_cache", 4U * 256U * sizeof(std::uint16_t),
-                                    {PhysicalDType::bf16, {1, 4, 256}, PhysicalLayout::row_major,
+  const auto key_cache = add_buffer("key_cache",
+                                    static_cast<std::uint64_t>(decode_steps) * 4U * 256U *
+                                        sizeof(std::uint16_t),
+                                    {PhysicalDType::bf16, {decode_steps, 4, 256}, PhysicalLayout::row_major,
                                      256, StorageEncoding::none, {}});
-  const auto value_cache = add_buffer("value_cache", 4U * 256U * sizeof(std::uint16_t),
-                                      {PhysicalDType::bf16, {1, 4, 256}, PhysicalLayout::row_major,
+  const auto value_cache = add_buffer("value_cache",
+                                      static_cast<std::uint64_t>(decode_steps) * 4U * 256U *
+                                          sizeof(std::uint16_t),
+                                      {PhysicalDType::bf16, {decode_steps, 4, 256}, PhysicalLayout::row_major,
                                        256, StorageEncoding::none, {}});
   const auto attended = add_f32("attended", 6144);
   const auto gated = add_f32("gated", 6144);
@@ -202,7 +221,7 @@ superinfer::ir::physical::Plan make_layer_plan(
   command(20, {q_norm, q_rope}, 1.0e-5F, 10000000.0F, {}, false, {24, 256, 64, 0});
   command(20, {k_norm, k_rope}, 1.0e-5F, 10000000.0F, {}, false, {4, 256, 64, 0});
   command(22, {k_rope, v_projection, key_cache, value_cache}, 1.0e-5F, 1.0F, {}, false, {},
-          {4, 256, 0, 1});
+          {4, 256, 0, decode_steps});
   command(23, {q_rope, key_cache, value_cache, attended}, 1.0e-5F, 1.0F, {24, 4, 256, 1});
   command(19, {gate, attended, gated});
   command(13, {gated, o_weight, o_scale, o_tensor_scale, attention_output});
@@ -240,6 +259,7 @@ int skip_if_unconfigured() {
 int main() {
   const char* artifact_path = std::getenv("SUPERINFER_QWEN38_ARTIFACT");
   const char* expected_path = std::getenv("SUPERINFER_QWEN38_REFERENCE_F32");
+  const char* expected_attention_path = std::getenv("SUPERINFER_QWEN38_LAYER_ATTENTION_F32");
   if (artifact_path == nullptr || expected_path == nullptr) return skip_if_unconfigured();
   MappedFile artifact_file{artifact_path};
   if (!artifact_file.valid()) {
@@ -275,32 +295,71 @@ int main() {
       return 1;
     }
   }
-  std::vector<float> hidden(5120);
-  for (std::size_t index = 0; index < hidden.size(); ++index) {
-    hidden[index] = -0.25F + 0.5F * static_cast<float>(index) / 5119.0F;
-  }
-  if (!session.copy_to_device(binding(bindings, "input").id,
-                              {reinterpret_cast<const std::byte*>(hidden.data()),
-                               hidden.size() * sizeof(float)}).ok()) {
-    return 1;
-  }
-  if (!session.execute().ok() || !session.synchronize_for_test().ok()) {
-    std::cerr << "layer execution failed\n";
-    return 1;
-  }
+  const std::uint32_t decode_steps = diagnostic_decode_steps();
   std::ifstream expected_stream{expected_path, std::ios::binary};
-  std::vector<float> expected(5120);
+  std::vector<float> expected(static_cast<std::size_t>(decode_steps) * 5120U);
   expected_stream.read(reinterpret_cast<char*>(expected.data()),
                        static_cast<std::streamsize>(expected.size() * sizeof(float)));
   if (!expected_stream || expected_stream.peek() != std::ifstream::traits_type::eof()) {
-    std::cerr << "reference output must contain exactly 5120 FP32 values\n";
+    std::cerr << "reference output has an unexpected FP32 element count\n";
     return 1;
   }
   std::vector<float> actual(expected.size());
-  if (!session.copy_from_device(binding(bindings, "output").id,
-                                {reinterpret_cast<std::byte*>(actual.data()),
-                                 actual.size() * sizeof(float)}).ok()) {
-    return 1;
+  const char* attention_capture_path = std::getenv("SUPERINFER_QWEN38_LAYER_ATTENTION_OUTPUT_F32");
+  std::vector<float> actual_attention;
+  if (attention_capture_path != nullptr) actual_attention.resize(expected.size());
+  std::vector<float> expected_attention;
+  if (expected_attention_path != nullptr) {
+    expected_attention.resize(expected.size());
+    std::ifstream attention_stream{expected_attention_path, std::ios::binary};
+    attention_stream.read(reinterpret_cast<char*>(expected_attention.data()),
+                          static_cast<std::streamsize>(expected_attention.size() * sizeof(float)));
+    if (!attention_stream || attention_stream.peek() != std::ifstream::traits_type::eof()) {
+      std::cerr << "attention reference output has an unexpected FP32 element count\n";
+      return 1;
+    }
+  }
+  float attention_maximum = 0.0F;
+  for (std::uint32_t step = 0; step < decode_steps; ++step) {
+    std::vector<float> hidden(5120);
+    for (std::size_t index = 0; index < hidden.size(); ++index) {
+      hidden[index] = -0.25F + 0.5F * static_cast<float>(index) / 5119.0F +
+                      static_cast<float>(step) * 0.03125F;
+    }
+    if (!session.copy_to_device(binding(bindings, "input").id,
+                                {reinterpret_cast<const std::byte*>(hidden.data()),
+                                 hidden.size() * sizeof(float)}).ok()) {
+      return 1;
+    }
+    const auto execute_status = step == 0 ? session.execute()
+                                          : session.execute_at_position_for_test(step);
+    if (!execute_status.ok() || !session.synchronize_for_test().ok() ||
+        !session.copy_from_device(
+            binding(bindings, "output").id,
+            {reinterpret_cast<std::byte*>(actual.data() + static_cast<std::size_t>(step) * 5120U),
+             5120U * sizeof(float)}).ok()) {
+      std::cerr << "layer execution failed at step " << step << "\n";
+      return 1;
+    }
+    if (!expected_attention.empty() || attention_capture_path != nullptr) {
+      std::vector<float> attention(5120);
+      if (!session.copy_from_device(
+              binding(bindings, "attention_output").id,
+              {reinterpret_cast<std::byte*>(attention.data()), attention.size() * sizeof(float)}).ok()) {
+        return 1;
+      }
+      for (std::size_t index = 0; index < attention.size(); ++index) {
+        if (!expected_attention.empty()) {
+          attention_maximum = std::max(
+              attention_maximum,
+              std::fabs(attention[index] - expected_attention[
+                  static_cast<std::size_t>(step) * 5120U + index]));
+        }
+        if (!actual_attention.empty()) {
+          actual_attention[static_cast<std::size_t>(step) * 5120U + index] = attention[index];
+        }
+      }
+    }
   }
   float maximum = 0.0F;
   float mean = 0.0F;
@@ -310,7 +369,27 @@ int main() {
     mean += error;
   }
   mean /= static_cast<float>(actual.size());
+  if (const char* capture_path = std::getenv("SUPERINFER_QWEN38_LAYER_OUTPUT_F32");
+      capture_path != nullptr) {
+    std::ofstream capture{capture_path, std::ios::binary | std::ios::trunc};
+    if (!capture.good()) return 1;
+    capture.write(reinterpret_cast<const char*>(actual.data()),
+                  static_cast<std::streamsize>(actual.size() * sizeof(float)));
+    if (!capture.good()) return 1;
+  }
+  if (attention_capture_path != nullptr) {
+    std::ofstream capture{attention_capture_path, std::ios::binary | std::ios::trunc};
+    if (!capture.good()) return 1;
+    capture.write(reinterpret_cast<const char*>(actual_attention.data()),
+                  static_cast<std::streamsize>(actual_attention.size() * sizeof(float)));
+    if (!capture.good()) return 1;
+  }
   std::cout << "qwen38 layer3 artifact differential max_abs=" << maximum
-            << " mean_abs=" << mean << " commands=" << session.trace().commands_executed << '\n';
-  return maximum <= 2.0e-2F && mean <= 2.0e-4F ? 0 : 1;
+            << " mean_abs=" << mean << " steps=" << decode_steps
+            << " commands=" << session.trace().commands_executed
+            << " attention_max_abs=" << attention_maximum << '\n';
+  return maximum <= 2.0e-2F && mean <= 2.0e-4F &&
+                 (expected_attention.empty() || attention_maximum <= 5.0e-2F)
+             ? 0
+             : 1;
 }

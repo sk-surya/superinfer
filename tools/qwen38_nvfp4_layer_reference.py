@@ -15,11 +15,20 @@ from pathlib import Path
 
 import torch
 from safetensors import safe_open
-from transformers import Qwen3_5Config
+from transformers import DynamicCache, Qwen3_5Config
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5DecoderLayer,
     Qwen3_5TextRotaryEmbedding,
 )
+
+
+class BF16StorageDynamicCache(DynamicCache):
+    """DynamicCache that exposes the deployment's BF16 KV storage contract before attention."""
+
+    def update(self, key_states, value_states, layer_idx, *args, **kwargs):
+        key_states = key_states.to(torch.bfloat16).to(torch.float32)
+        value_states = value_states.to(torch.bfloat16).to(torch.float32)
+        return super().update(key_states, value_states, layer_idx, *args, **kwargs)
 
 
 def _tensor(model_dir: Path, index: dict[str, str], name: str) -> torch.Tensor:
@@ -52,6 +61,7 @@ def main() -> int:
     parser.add_argument("--layer", type=int, default=3)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--diagnostics", action="store_true")
+    parser.add_argument("--decode-steps", type=int, default=1)
     args = parser.parse_args()
 
     root = json.loads((args.model_dir / "config.json").read_text())
@@ -67,15 +77,33 @@ def main() -> int:
             state[key] = _nvfp4(args.model_dir, index, prefix + key)
     layer.load_state_dict(state, strict=True)
 
-    hidden = torch.linspace(-0.25, 0.25, config.hidden_size, dtype=torch.float32).reshape(1, 1, -1)
-    position_ids = torch.zeros((1, 1), dtype=torch.long)
     rotary = Qwen3_5TextRotaryEmbedding(config)
-    position_embeddings = rotary(hidden, position_ids)
-    causal_mask = torch.zeros((1, 1, 1, 1), dtype=torch.float32)
-    with torch.inference_mode():
-        output = layer(hidden, position_embeddings=position_embeddings,
-                       attention_mask=causal_mask, position_ids=position_ids)
+    if args.decode_steps <= 0:
+        raise SystemExit("--decode-steps must be positive")
+    cache = BF16StorageDynamicCache(config=config)
+    outputs = []
+    attention_outputs = []
     if args.diagnostics:
+        layer.self_attn.register_forward_hook(
+            lambda _module, _inputs, output: attention_outputs.append(
+                (output[0] if isinstance(output, tuple) else output).reshape(-1).detach().clone()))
+    with torch.inference_mode():
+        for step in range(args.decode_steps):
+            hidden = torch.linspace(-0.25, 0.25, config.hidden_size,
+                                    dtype=torch.float32).reshape(1, 1, -1)
+            hidden = hidden + step * 0.03125
+            position_ids = torch.full((1, 1), step, dtype=torch.long)
+            position_embeddings = rotary(hidden, position_ids)
+            causal_mask = torch.zeros((1, 1, 1, step + 1), dtype=torch.float32)
+            output = layer(hidden, position_embeddings=position_embeddings,
+                           attention_mask=causal_mask, position_ids=position_ids,
+                           past_key_values=cache)
+            outputs.append(output.reshape(-1).contiguous())
+    output = torch.cat(outputs)
+    if args.diagnostics:
+        torch.cat(attention_outputs).numpy().astype("float32").tofile(
+            args.output.with_suffix(".attn.bin"))
+    if args.diagnostics and args.decode_steps == 1:
         with torch.inference_mode():
             attention = layer.self_attn
             normalized = layer.input_layernorm(hidden)

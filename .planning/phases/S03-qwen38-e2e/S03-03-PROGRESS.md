@@ -172,3 +172,19 @@ The diagnostic was completed through the normalized/gated GDN core output, which
 checks, the complete layer-0 GDN token-mixer path passes its staged external differential across
 two state-continuing segments. The remaining S03 failure is accumulated cross-layer behavior or a
 later operation, not an isolated layer-0 GDN boundary.
+
+The complete-layer trace was then reduced across all 64 layers. The first material post-token-mixer
+jump is at layer 3 (`max_abs=0.070608`, `RMSE=0.001046`), which is the first full-attention layer;
+later full-attention boundaries show the same jump pattern while preceding GDN drift is already
+nonzero. This localizes the next investigation to long-context full-attention/cache behavior or
+amplification of prior input error, without claiming a standalone full-attention defect. The
+machine-readable reduction is `artifacts/S03/qwen38-full-attention-jump-localization.json`.
+
+The bounded long-context full-attention experiment initially exposed an oracle-contract error:
+rounding KV after the reference attention call produced a false step-0 discrepancy. After moving
+BF16 rounding into `DynamicCache.update`, before attention reads K/V, the 30-step layer-3 artifact
+differential passed with final hidden max `0.00111389` / mean `0.0000233764` and attention-output
+max `0.00135803`. This rules out a standalone long-context full-attention/cache defect and leaves
+the full-model outlier as accumulated cross-stack numerical drift. Evidence is recorded in
+`artifacts/S03/qwen38-layer3-long-context-differential.json`; no tolerance or production kernel
+changed.

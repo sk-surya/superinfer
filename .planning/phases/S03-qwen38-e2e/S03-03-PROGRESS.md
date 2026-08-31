@@ -270,3 +270,19 @@ Fresh full-artifact target execution is currently externally blocked because bot
 occupied by user-owned services using 20.75 GiB and 24.57 GiB respectively; the 19.19 GiB
 SuperInfer arena cannot safely fit alongside either. This occupancy is recorded in the acceptance
 state evidence and is not a SuperInfer failure.
+
+## Final acceptance refresh
+
+With GPU 0 available again, the canonical batched acceptance harness was rerun for two independent
+target sessions against the pinned artifact and Transformers 5.12.1 / torch 2.13.0+cu130 reference.
+Plain-short, Unicode, and special-token cases passed token, numerical, and repeatability checks.
+Chat-template produced 60/60 greedy-token matches and repeatable captures but failed 8 numerical
+rows, with max absolute error `0.6116333008`. Varied-length produced 81/81 greedy-token matches
+and repeatable captures but failed 46 numerical rows, with max absolute error `4.6154732704`, mean
+absolute error `0.6096376059`, and RMSE `0.7747322253`. The exact result is recorded in
+`artifacts/S03/qwen38-s03-final-acceptance-refresh.json`, with raw evidence under
+`build/evidence/qwen38-s03-acceptance-final/`.
+
+This refresh confirms the existing diagnosis: deterministic long-context numerical drift remains;
+no tolerance changed, no production kernel changed, and S03 is not closed. S03F-02 remains
+engineering-blocked.

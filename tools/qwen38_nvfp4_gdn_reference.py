@@ -42,7 +42,10 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--diagnostics", action="store_true",
                         help="also emit intermediate projection and convolution captures")
+    parser.add_argument("--segments", type=int, default=2)
     args = parser.parse_args()
+    if args.segments <= 0:
+        raise SystemExit("--segments must be positive")
 
     model_dir = args.model_dir
     root = json.loads((model_dir / "config.json").read_text())
@@ -113,7 +116,7 @@ def main() -> int:
     layer.linear_attn.register_forward_hook(
         lambda _module, _inputs, output: attention_outputs.append(output.reshape(-1).detach().clone())
     )
-    for segment in range(2):
+    for segment in range(args.segments):
         hidden = torch.linspace(-0.25, 0.25, config.hidden_size, dtype=torch.float32).reshape(1, 1, -1)
         hidden = hidden + segment * 0.03125
         with torch.inference_mode():
@@ -145,8 +148,8 @@ def main() -> int:
         "model": "Qwen3.8-27B-NVFP4-RTX5090",
         "reference": "transformers 5.12.1 Qwen3_5DecoderLayer",
         "layer": 0,
-        "segments": 2,
-        "segment_lengths": [1, 1],
+        "segments": args.segments,
+        "segment_lengths": [1] * args.segments,
         "state": {
             "conv_shape": [1, 10240, 4],
             "recurrent_shape": [1, 48, 128, 128],

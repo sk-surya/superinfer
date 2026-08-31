@@ -1,0 +1,34 @@
+{
+  "kind": "qwen38_gdn_long_context_differential",
+  "status": "pass",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "reference": {
+    "script": "tools/qwen38_nvfp4_gdn_reference.py",
+    "identity": "Transformers 5.12.1 Qwen3_5DecoderLayer",
+    "segments": 30,
+    "state_continuation": true,
+    "output_sha256": "e749d6ab599a9ed0e8e34c65e789a829bb7052034201a117af4c329b839bd1e5"
+  },
+  "target": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "physical_gpu": 0,
+    "cuda_visible_devices": "0",
+    "commands": 600,
+    "output_sha256": "38ba6b766a210ccb2a5f77e68c47262f84f0b2edc06d9b42f42010cfd9a33545"
+  },
+  "comparison": {
+    "output_shape": [30, 5120],
+    "max_abs": 0.035728455,
+    "mean_abs": 0.0002591842,
+    "rmse": 0.00039070655,
+    "max_abs_threshold": 0.05,
+    "mean_abs_threshold": 0.0005,
+    "segment_29_max_abs": 0.00368,
+    "segment_29_rmse": 0.00020,
+    "result": "pass"
+  },
+  "conclusion": "The artifact-bound layer-0 GDN path remains within its external differential contract across 30 state-continuing segments. GDN recurrence is not the immediate source of the whole-model row-29 outlier."
+}

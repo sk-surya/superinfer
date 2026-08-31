@@ -104,6 +104,19 @@ std::vector<std::byte> convert_bf16_to_f32(superinfer::base::ConstByteView bytes
   return result;
 }
 
+std::uint32_t diagnostic_segments() {
+  const char* encoded = std::getenv("SUPERINFER_QWEN38_GDN_SEGMENTS");
+  if (encoded == nullptr) return 2;
+  char* end = nullptr;
+  errno = 0;
+  const unsigned long parsed = std::strtoul(encoded, &end, 10);
+  if (errno != 0 || end == encoded || *end != '\0' || parsed == 0 || parsed > 4096U) {
+    std::cerr << "invalid SUPERINFER_QWEN38_GDN_SEGMENTS\n";
+    std::abort();
+  }
+  return static_cast<std::uint32_t>(parsed);
+}
+
 superinfer::ir::physical::Plan make_plan(
     const superinfer::artifact::ArtifactView& artifact,
     const std::vector<Record>& records, std::vector<Binding>& bindings) {
@@ -349,15 +362,16 @@ int main() {
       }
     }
   }
+  const std::uint32_t segments = diagnostic_segments();
   std::ifstream expected_stream{expected_path, std::ios::binary};
-  std::vector<float> expected(2U * 5120U);
+  std::vector<float> expected(static_cast<std::size_t>(segments) * 5120U);
   expected_stream.read(reinterpret_cast<char*>(expected.data()),
                        static_cast<std::streamsize>(expected.size() * sizeof(float)));
   if (!expected_stream || expected_stream.peek() != std::ifstream::traits_type::eof()) {
     std::cerr << "reference output must contain exactly 10240 FP32 values\n";
     return 1;
   }
-  std::vector<float> expected_attention(2U * 5120U);
+  std::vector<float> expected_attention(static_cast<std::size_t>(segments) * 5120U);
   std::string attention_path{expected_path};
   const std::size_t extension = attention_path.rfind(".bin");
   if (extension != std::string::npos) attention_path.insert(extension, ".attn");
@@ -368,7 +382,8 @@ int main() {
     std::cerr << "attention reference output must contain exactly 10240 FP32 values\n";
     return 1;
   }
-  std::vector<float> expected_state(2U * 48U * 128U * 128U);
+  std::vector<float> expected_state(
+      static_cast<std::size_t>(segments) * 48U * 128U * 128U);
   std::string state_path{expected_path};
   if (extension != std::string::npos) state_path.insert(extension, ".state");
   std::ifstream state_stream{state_path, std::ios::binary};
@@ -381,7 +396,7 @@ int main() {
 
   std::vector<float> expected_qkv;
   if (expected_qkv_path != nullptr) {
-    expected_qkv.resize(2U * 10240U);
+    expected_qkv.resize(static_cast<std::size_t>(segments) * 10240U);
     std::ifstream qkv_stream{expected_qkv_path, std::ios::binary};
     qkv_stream.read(reinterpret_cast<char*>(expected_qkv.data()),
                     static_cast<std::streamsize>(expected_qkv.size() * sizeof(float)));
@@ -392,7 +407,7 @@ int main() {
   }
   std::vector<float> expected_conv;
   if (expected_conv_path != nullptr) {
-    expected_conv.resize(2U * 10240U);
+    expected_conv.resize(static_cast<std::size_t>(segments) * 10240U);
     std::ifstream conv_stream{expected_conv_path, std::ios::binary};
     conv_stream.read(reinterpret_cast<char*>(expected_conv.data()),
                      static_cast<std::streamsize>(expected_conv.size() * sizeof(float)));
@@ -403,7 +418,7 @@ int main() {
   }
   std::vector<float> expected_core;
   if (expected_core_path != nullptr) {
-    expected_core.resize(2U * 6144U);
+    expected_core.resize(static_cast<std::size_t>(segments) * 6144U);
     std::ifstream core_stream{expected_core_path, std::ios::binary};
     core_stream.read(reinterpret_cast<char*>(expected_core.data()),
                      static_cast<std::streamsize>(expected_core.size() * sizeof(float)));
@@ -414,7 +429,7 @@ int main() {
   }
   std::vector<float> expected_gated;
   if (expected_gated_path != nullptr) {
-    expected_gated.resize(2U * 6144U);
+    expected_gated.resize(static_cast<std::size_t>(segments) * 6144U);
     std::ifstream gated_stream{expected_gated_path, std::ios::binary};
     gated_stream.read(reinterpret_cast<char*>(expected_gated.data()),
                       static_cast<std::streamsize>(expected_gated.size() * sizeof(float)));
@@ -431,7 +446,7 @@ int main() {
   float conv_contract_maximum = 0.0F;
   float core_contract_maximum = 0.0F;
   float gated_contract_maximum = 0.0F;
-  for (std::size_t segment = 0; segment < 2; ++segment) {
+  for (std::size_t segment = 0; segment < segments; ++segment) {
     std::vector<float> hidden(5120);
     for (std::size_t index = 0; index < hidden.size(); ++index) {
       hidden[index] = -0.25F + 0.5F * static_cast<float>(index) / 5119.0F +
@@ -542,8 +557,16 @@ int main() {
     mean += error;
   }
   mean /= static_cast<float>(actual.size());
+  if (const char* capture_path = std::getenv("SUPERINFER_QWEN38_GDN_OUTPUT_F32");
+      capture_path != nullptr) {
+    std::ofstream capture{capture_path, std::ios::binary | std::ios::trunc};
+    if (!capture.good()) return 1;
+    capture.write(reinterpret_cast<const char*>(actual.data()),
+                  static_cast<std::streamsize>(actual.size() * sizeof(float)));
+    if (!capture.good()) return 1;
+  }
   std::cout << "qwen38 GDN layer0 artifact differential max_abs=" << maximum
-            << " mean_abs=" << mean << " segments=2 commands="
+            << " mean_abs=" << mean << " segments=" << segments << " commands="
             << session.trace().commands_executed << " qkv_max_abs=" << qkv_contract_maximum
             << " conv_max_abs=" << conv_contract_maximum
             << " core_max_abs=" << core_contract_maximum

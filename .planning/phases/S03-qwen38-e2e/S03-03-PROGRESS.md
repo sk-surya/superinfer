@@ -202,3 +202,10 @@ does not explain the hidden-state drift; evidence is in
 `artifacts/S03/qwen38-logit-dtype-diagnostic.json`. A separate FP64 RMSNorm reduction probe worsened
 the staged layer-3 differential and was reverted; its result is in
 `artifacts/S03/qwen38-rmsnorm-precision-probe.json`.
+
+The GDN staged differential was extended from two to 30 state-continuing segments. The complete
+artifact-bound layer remained within contract at aggregate max `0.035728455`, mean `0.0002591842`,
+and RMSE `0.00039070655`; the row-29-equivalent segment was max `0.00368` / RMSE `0.00020`.
+Projection, convolution, recurrent-core, gated-output, attention-output, and final-layer checks
+all remained passing. This rules out GDN recurrence as the immediate source of the whole-model
+outlier. Evidence is recorded in `artifacts/S03/qwen38-gdn-long-context-differential.json`.

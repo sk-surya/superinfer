@@ -96,6 +96,34 @@ std::uint32_t diagnostic_decode_steps() {
   return static_cast<std::uint32_t>(parsed);
 }
 
+std::uint32_t custom_start_position() {
+  const char* encoded = std::getenv("SUPERINFER_QWEN38_LAYER_START_POSITION");
+  if (encoded == nullptr) return 0;
+  char* end = nullptr;
+  errno = 0;
+  const unsigned long parsed = std::strtoul(encoded, &end, 10);
+  if (errno != 0 || end == encoded || *end != '\0' || parsed >= 262144UL) {
+    std::cerr << "invalid SUPERINFER_QWEN38_LAYER_START_POSITION\n";
+    std::abort();
+  }
+  return static_cast<std::uint32_t>(parsed);
+}
+
+std::uint16_t float_to_bf16(float value) noexcept {
+  std::uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  return static_cast<std::uint16_t>(bits >> 16U);
+}
+
+template <typename T>
+bool read_exact_values(const char* path, std::vector<T>& values) {
+  std::ifstream input{path, std::ios::binary};
+  if (!input.good()) return false;
+  input.read(reinterpret_cast<char*>(values.data()),
+             static_cast<std::streamsize>(values.size() * sizeof(T)));
+  return input.good() && input.peek() == std::ifstream::traits_type::eof();
+}
+
 superinfer::ir::physical::Plan make_layer_plan(
     const std::vector<superinfer::artifact::TensorTableRecord>& records,
     std::vector<BufferBinding>& bindings) {
@@ -286,6 +314,21 @@ int main() {
     return 1;
   }
   auto session = std::move(session_result).value();
+  const char* custom_input_path = std::getenv("SUPERINFER_QWEN38_LAYER_INPUT_F32");
+  const char* custom_kv_path = std::getenv("SUPERINFER_QWEN38_LAYER_KV_F32");
+  const bool custom_step = custom_input_path != nullptr || custom_kv_path != nullptr ||
+                           std::getenv("SUPERINFER_QWEN38_LAYER_START_POSITION") != nullptr;
+  if (custom_step && (custom_input_path == nullptr || custom_kv_path == nullptr ||
+                      std::getenv("SUPERINFER_QWEN38_LAYER_START_POSITION") == nullptr)) {
+    std::cerr << "custom layer execution requires input, KV, and start position\n";
+    return 1;
+  }
+  const std::uint32_t start_position = custom_start_position();
+  const std::uint32_t decode_steps = diagnostic_decode_steps();
+  if (custom_step && start_position >= decode_steps) {
+    std::cerr << "custom layer start position exceeds configured cache capacity\n";
+    return 1;
+  }
   for (const auto& item : bindings) {
     if (item.record == nullptr) continue;
     const auto payload = artifact.value().payload_range(
@@ -295,9 +338,36 @@ int main() {
       return 1;
     }
   }
-  const std::uint32_t decode_steps = diagnostic_decode_steps();
+  if (custom_step) {
+    std::vector<float> hidden(5120);
+    const std::size_t cache_elements = static_cast<std::size_t>(start_position) * 4U * 256U;
+    std::vector<float> kv(cache_elements * 2U);
+    if (!read_exact_values(custom_input_path, hidden) || !read_exact_values(custom_kv_path, kv)) {
+      std::cerr << "custom layer input or KV snapshot has an unexpected size\n";
+      return 1;
+    }
+    std::vector<std::uint16_t> key(cache_elements);
+    std::vector<std::uint16_t> value(cache_elements);
+    for (std::size_t index = 0; index < cache_elements; ++index) {
+      key[index] = float_to_bf16(kv[index]);
+      value[index] = float_to_bf16(kv[cache_elements + index]);
+    }
+    if (!session.copy_to_device(binding(bindings, "input").id,
+                                {reinterpret_cast<const std::byte*>(hidden.data()),
+                                 hidden.size() * sizeof(float)}).ok() ||
+        !session.copy_to_device(binding(bindings, "key_cache").id,
+                                {reinterpret_cast<const std::byte*>(key.data()),
+                                 key.size() * sizeof(std::uint16_t)}).ok() ||
+        !session.copy_to_device(binding(bindings, "value_cache").id,
+                                {reinterpret_cast<const std::byte*>(value.data()),
+                                 value.size() * sizeof(std::uint16_t)}).ok()) {
+      std::cerr << "custom layer state upload failed\n";
+      return 1;
+    }
+  }
   std::ifstream expected_stream{expected_path, std::ios::binary};
-  std::vector<float> expected(static_cast<std::size_t>(decode_steps) * 5120U);
+  const std::size_t execution_steps = custom_step ? 1U : decode_steps;
+  std::vector<float> expected(execution_steps * 5120U);
   expected_stream.read(reinterpret_cast<char*>(expected.data()),
                        static_cast<std::streamsize>(expected.size() * sizeof(float)));
   if (!expected_stream || expected_stream.peek() != std::ifstream::traits_type::eof()) {
@@ -320,23 +390,27 @@ int main() {
     }
   }
   float attention_maximum = 0.0F;
-  for (std::uint32_t step = 0; step < decode_steps; ++step) {
+  for (std::uint32_t iteration = 0; iteration < execution_steps; ++iteration) {
+    const std::uint32_t step = custom_step ? start_position : iteration;
     std::vector<float> hidden(5120);
-    for (std::size_t index = 0; index < hidden.size(); ++index) {
-      hidden[index] = -0.25F + 0.5F * static_cast<float>(index) / 5119.0F +
-                      static_cast<float>(step) * 0.03125F;
+    if (!custom_step) {
+      for (std::size_t index = 0; index < hidden.size(); ++index) {
+        hidden[index] = -0.25F + 0.5F * static_cast<float>(index) / 5119.0F +
+                        static_cast<float>(step) * 0.03125F;
+      }
     }
-    if (!session.copy_to_device(binding(bindings, "input").id,
+    if (!custom_step && !session.copy_to_device(binding(bindings, "input").id,
                                 {reinterpret_cast<const std::byte*>(hidden.data()),
                                  hidden.size() * sizeof(float)}).ok()) {
       return 1;
     }
-    const auto execute_status = step == 0 ? session.execute()
-                                          : session.execute_at_position_for_test(step);
+    const auto execute_status = !custom_step && step == 0
+                                    ? session.execute()
+                                    : session.execute_at_position_for_test(step);
     if (!execute_status.ok() || !session.synchronize_for_test().ok() ||
         !session.copy_from_device(
             binding(bindings, "output").id,
-            {reinterpret_cast<std::byte*>(actual.data() + static_cast<std::size_t>(step) * 5120U),
+            {reinterpret_cast<std::byte*>(actual.data() + static_cast<std::size_t>(iteration) * 5120U),
              5120U * sizeof(float)}).ok()) {
       std::cerr << "layer execution failed at step " << step << "\n";
       return 1;
@@ -353,10 +427,10 @@ int main() {
           attention_maximum = std::max(
               attention_maximum,
               std::fabs(attention[index] - expected_attention[
-                  static_cast<std::size_t>(step) * 5120U + index]));
+                  static_cast<std::size_t>(iteration) * 5120U + index]));
         }
         if (!actual_attention.empty()) {
-          actual_attention[static_cast<std::size_t>(step) * 5120U + index] = attention[index];
+          actual_attention[static_cast<std::size_t>(iteration) * 5120U + index] = attention[index];
         }
       }
     }

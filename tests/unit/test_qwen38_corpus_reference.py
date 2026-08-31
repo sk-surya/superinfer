@@ -107,6 +107,23 @@ class Qwen38CorpusReferenceTests(unittest.TestCase):
         )
         self.assertEqual(args.device, "cuda")
 
+    def test_reference_cli_can_capture_kv_snapshot(self) -> None:
+        parser = build_argument_parser()
+        args = parser.parse_args(
+            [
+                "--model-dir", "/model",
+                "--corpus", "/corpus.json",
+                "--output-dir", "/output",
+                "--kv-output", "/kv.f32",
+                "--kv-case", "chat-template",
+                "--kv-step", "28",
+                "--kv-layer", "3",
+            ]
+        )
+        self.assertEqual(args.kv_case, "chat-template")
+        self.assertEqual(args.kv_step, 28)
+        self.assertEqual(args.kv_layer, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

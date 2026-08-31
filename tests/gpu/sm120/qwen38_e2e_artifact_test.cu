@@ -21,6 +21,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -356,6 +357,111 @@ int main() {
   if (hidden_capture_step.has_value() && hidden_capture_step.value() == 0 &&
       !capture_hidden(0)) return 1;
 
+  const char* kv_capture_path = std::getenv("SUPERINFER_QWEN38_KV_F32");
+  std::optional<std::uint32_t> kv_capture_step;
+  std::optional<std::uint32_t> kv_capture_layer;
+  std::optional<superinfer::ir::physical::BufferId> kv_key_buffer_id;
+  std::optional<superinfer::ir::physical::BufferId> kv_value_buffer_id;
+  if (kv_capture_path != nullptr) {
+    const char* encoded_step = std::getenv("SUPERINFER_QWEN38_KV_STEP");
+    const char* encoded_layer = std::getenv("SUPERINFER_QWEN38_KV_LAYER");
+    if (encoded_step == nullptr || encoded_layer == nullptr) {
+      std::cerr << "SUPERINFER_QWEN38_KV_F32 requires SUPERINFER_QWEN38_KV_STEP and "
+                   "SUPERINFER_QWEN38_KV_LAYER\n";
+      return 1;
+    }
+    std::uint32_t parsed_step = 0;
+    const auto step_result = std::from_chars(
+        encoded_step, encoded_step + std::strlen(encoded_step), parsed_step);
+    std::uint32_t parsed_layer = 0;
+    const auto layer_result = std::from_chars(
+        encoded_layer, encoded_layer + std::strlen(encoded_layer), parsed_layer);
+    if (step_result.ec != std::errc{} ||
+        step_result.ptr != encoded_step + std::strlen(encoded_step) ||
+        layer_result.ec != std::errc{} ||
+        layer_result.ptr != encoded_layer + std::strlen(encoded_layer)) {
+      std::cerr << "invalid Qwen KV capture step or layer\n";
+      return 1;
+    }
+    if (parsed_layer >= 64U || parsed_layer < 3U || parsed_layer % 4U != 3U) {
+      std::cerr << "Qwen KV capture layer must be one of 3,7,...,63\n";
+      return 1;
+    }
+    const std::size_t requested_full_attention_index = (parsed_layer - 3U) / 4U;
+    std::size_t full_attention_index = 0;
+    for (const auto& command : specialized.value().plan.commands()) {
+      if (command.kernel.value() != 22) continue;
+      if (full_attention_index == requested_full_attention_index) {
+        if (command.buffers.size() != 4) {
+          std::cerr << "Qwen KV cache append command has an unexpected operand count\n";
+          return 1;
+        }
+        kv_key_buffer_id = command.buffers[2];
+        kv_value_buffer_id = command.buffers[3];
+        break;
+      }
+      ++full_attention_index;
+    }
+    if (!kv_key_buffer_id.has_value() || !kv_value_buffer_id.has_value()) {
+      std::cerr << "requested Qwen KV cache append command was not found\n";
+      return 1;
+    }
+    kv_capture_step = parsed_step;
+    kv_capture_layer = parsed_layer;
+  }
+  const auto capture_kv = [&](std::uint32_t step) -> bool {
+    if (kv_capture_path == nullptr) return true;
+    if (!kv_capture_step.has_value() || step != kv_capture_step.value()) return true;
+    const auto& key_buffer = specialized.value().plan.buffers()[kv_key_buffer_id.value().value()];
+    const auto& value_buffer = specialized.value().plan.buffers()[kv_value_buffer_id.value().value()];
+    constexpr std::size_t kHeads = 4;
+    constexpr std::size_t kHeadDimension = 256;
+    const std::size_t elements = (static_cast<std::size_t>(step) + 1U) * kHeads * kHeadDimension;
+    const std::size_t bytes = elements * sizeof(std::uint16_t);
+    if (key_buffer.tensor.dtype != superinfer::ir::physical::PhysicalDType::bf16 ||
+        value_buffer.tensor.dtype != superinfer::ir::physical::PhysicalDType::bf16 ||
+        bytes > key_buffer.size || bytes > value_buffer.size) {
+      std::cerr << "Qwen KV capture buffer contract mismatch\n";
+      return false;
+    }
+    std::vector<std::uint16_t> key_storage(elements);
+    std::vector<std::uint16_t> value_storage(elements);
+    if (!session.copy_from_device(kv_key_buffer_id.value(),
+                                  {reinterpret_cast<std::byte*>(key_storage.data()), bytes}).ok() ||
+        !session.copy_from_device(kv_value_buffer_id.value(),
+                                  {reinterpret_cast<std::byte*>(value_storage.data()), bytes}).ok()) {
+      std::cerr << "Qwen KV capture download failed\n";
+      return false;
+    }
+    std::vector<float> payload;
+    payload.reserve(elements * 2U);
+    for (const std::uint16_t value : key_storage) payload.push_back(bf16_to_float(value));
+    for (const std::uint16_t value : value_storage) payload.push_back(bf16_to_float(value));
+    std::ofstream capture{kv_capture_path, std::ios::binary | std::ios::trunc};
+    if (!capture.good()) return false;
+    capture.write(reinterpret_cast<const char*>(payload.data()),
+                  static_cast<std::streamsize>(payload.size() * sizeof(float)));
+    if (!capture.good()) return false;
+    std::ofstream metadata{std::string{kv_capture_path} + ".json", std::ios::trunc};
+    if (!metadata.good()) return false;
+    metadata << "{\n"
+             << "  \"case\": \"target-execution\",\n"
+             << "  \"layer\": " << kv_capture_layer.value() << ",\n"
+             << "  \"step\": " << step << ",\n"
+             << "  \"positions\": " << (step + 1U) << ",\n"
+             << "  \"heads\": 4,\n"
+             << "  \"head_dimension\": 256,\n"
+             << "  \"dtype\": \"float32\",\n"
+             << "  \"layout\": \"[positions, heads, head_dimension] key then value\",\n"
+             << "  \"source_dtype\": \"bf16\",\n"
+             << "  \"bytes\": " << payload.size() * sizeof(float) << ",\n"
+             << "  \"fnv1a64\": "
+             << fnv1a64({reinterpret_cast<const std::byte*>(payload.data()),
+                        payload.size() * sizeof(float)}) << "\n}\n";
+    return metadata.good();
+  };
+  if (kv_capture_step.has_value() && kv_capture_step.value() == 0 && !capture_kv(0)) return 1;
+
   const char* layer_trace_path = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_F32");
   const char* layer_trace_stage = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_STAGE");
   std::optional<std::uint32_t> layer_trace_step;
@@ -587,6 +693,7 @@ int main() {
       if (!capture_state_trace(static_cast<std::uint32_t>(step + 1))) return 1;
       if (hidden_capture_step.has_value() && hidden_capture_step.value() == step + 1U &&
           !capture_hidden(step + 1U)) return 1;
+      if (!capture_kv(static_cast<std::uint32_t>(step + 1U))) return 1;
       std::vector<std::uint16_t> continuation_logits(logits.size());
       const auto continuation_copy = session.copy_from_device(
           entry.outputs.front(), {reinterpret_cast<std::byte*>(continuation_logits.data()),

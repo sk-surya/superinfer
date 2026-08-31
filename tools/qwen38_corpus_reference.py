@@ -85,6 +85,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         help="corpus case whose post-token-mixer rows should be captured")
     parser.add_argument("--attention-boundary-step", type=int,
                         help="zero-based token position whose post-token-mixer rows should be captured")
+    parser.add_argument("--kv-output", type=Path,
+                        help="optional FP32 output for one deployment KV cache snapshot")
+    parser.add_argument("--kv-case",
+                        help="corpus case whose KV cache should be captured")
+    parser.add_argument("--kv-step", type=int,
+                        help="zero-based token position at which to capture the KV cache")
+    parser.add_argument("--kv-layer", type=int,
+                        help="decoder layer whose KV cache should be captured")
     return parser
 
 
@@ -96,6 +104,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                attention_boundaries_output: Path | None = None,
                attention_boundary_case: str | None = None,
                attention_boundary_step: int | None = None,
+               kv_output: Path | None = None, kv_case: str | None = None,
+               kv_step: int | None = None, kv_layer: int | None = None,
                device_name: str = "cpu") -> dict[str, Any]:
     import torch
     import torch.nn.functional as F
@@ -181,6 +191,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
     boundary_count = 0
     attention_boundary_payload = bytearray()
     attention_boundary_count = 0
+    kv_payload = bytearray()
+    kv_metadata: dict[str, Any] | None = None
 
     with torch.inference_mode():
         for layer_index in range(config.num_hidden_layers):
@@ -240,6 +252,23 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                         boundary_payload.extend(row.tobytes())
                         boundary_count += 1
                     next_hidden.append(updated)
+                    if (kv_output is not None and state["id"] == kv_case and
+                            layer_index == kv_layer and position == kv_step):
+                        layer_cache = state["cache"].layers[layer_index]
+                        keys = getattr(layer_cache, "keys", None)
+                        values = getattr(layer_cache, "values", None)
+                        if keys is None or values is None:
+                            raise ValueError(f"layer {layer_index} has no KV cache at step {position}")
+                        valid_keys = keys[0, :, :position + 1, :].permute(1, 0, 2).contiguous()
+                        valid_values = values[0, :, :position + 1, :].permute(1, 0, 2).contiguous()
+                        kv_payload.extend(valid_keys.float().cpu().numpy().tobytes())
+                        kv_payload.extend(valid_values.float().cpu().numpy().tobytes())
+                        kv_metadata = {
+                            "case": state["id"], "layer": layer_index, "step": position,
+                            "positions": position + 1,
+                            "heads": int(valid_keys.shape[1]),
+                            "head_dimension": int(valid_keys.shape[2]),
+                        }
                 state["hidden"] = next_hidden
             if mixer_hook is not None:
                 mixer_hook.remove()
@@ -305,6 +334,19 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "contract": "post_token_mixer_residual",
             "sha256": _sha256(bytes(attention_boundary_payload)),
         }, indent=2) + "\n")
+    if kv_output is not None:
+        if not kv_payload or kv_metadata is None:
+            raise ValueError("requested KV capture did not match a corpus case, layer, and step")
+        kv_output.parent.mkdir(parents=True, exist_ok=True)
+        kv_output.write_bytes(kv_payload)
+        kv_metadata.update({
+            "dtype": "float32",
+            "layout": "[positions, heads, head_dimension] key then value",
+            "bytes": len(kv_payload),
+            "sha256": _sha256(bytes(kv_payload)),
+            "round_kv": round_kv,
+        })
+        kv_output.with_suffix(".json").write_text(json.dumps(kv_metadata, indent=2) + "\n")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
@@ -356,6 +398,16 @@ def main() -> int:
         parser.error("--attention-boundaries-output requires --attention-boundary-case")
     if args.attention_boundary_step is not None and args.attention_boundary_step < 0:
         parser.error("--attention-boundary-step must be non-negative")
+    if args.kv_output is not None and args.kv_case is None:
+        parser.error("--kv-output requires --kv-case")
+    if args.kv_output is not None and args.kv_step is None:
+        parser.error("--kv-output requires --kv-step")
+    if args.kv_output is not None and args.kv_layer is None:
+        parser.error("--kv-output requires --kv-layer")
+    if args.kv_step is not None and args.kv_step < 0:
+        parser.error("--kv-step must be non-negative")
+    if args.kv_layer is not None and args.kv_layer < 0:
+        parser.error("--kv-layer must be non-negative")
     corpus = json.loads(args.corpus.read_text())
     report = _run_cases(args.model_dir, select_cases(corpus, args.case_ids), args.output_dir,
                         args.round_activations, args.round_kv, args.round_linear_state,
@@ -363,7 +415,8 @@ def main() -> int:
                         args.hidden_case, args.hidden_step, args.boundaries_output,
                         args.boundary_case, args.boundary_step,
                         args.attention_boundaries_output, args.attention_boundary_case,
-                        args.attention_boundary_step, args.device)
+                        args.attention_boundary_step, args.kv_output, args.kv_case,
+                        args.kv_step, args.kv_layer, args.device)
     (args.output_dir / "corpus-reference.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({"status": report["status"], "cases": [case["id"] for case in report["cases"]]}, indent=2))
     return 0

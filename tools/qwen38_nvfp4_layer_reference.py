@@ -50,6 +50,13 @@ def _nvfp4(model_dir: Path, index: dict[str, str], name: str) -> torch.Tensor:
     return values * block_scale * tensor_scale
 
 
+def _read_f32(path: Path) -> torch.Tensor:
+    payload = path.read_bytes()
+    if len(payload) % 4 != 0:
+        raise SystemExit(f"{path} does not contain whole FP32 values")
+    return torch.frombuffer(bytearray(payload), dtype=torch.float32).clone()
+
+
 def rotate_half(value: torch.Tensor) -> torch.Tensor:
     half = value.shape[-1] // 2
     return torch.cat((-value[..., half:], value[..., :half]), dim=-1)
@@ -62,7 +69,19 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--diagnostics", action="store_true")
     parser.add_argument("--decode-steps", type=int, default=1)
+    parser.add_argument("--input-f32", type=Path,
+                        help="optional FP32 hidden input for a single custom-position step")
+    parser.add_argument("--kv-f32", type=Path,
+                        help="optional FP32 key-then-value cache snapshot for a custom step")
+    parser.add_argument("--start-position", type=int,
+                        help="position of the custom input; requires --input-f32 and --kv-f32")
     args = parser.parse_args()
+
+    custom_step = args.input_f32 is not None or args.kv_f32 is not None or args.start_position is not None
+    if custom_step and (args.input_f32 is None or args.kv_f32 is None or args.start_position is None):
+        parser.error("--input-f32, --kv-f32, and --start-position must be supplied together")
+    if args.start_position is not None and not 0 <= args.start_position < 262144:
+        parser.error("--start-position must be in [0, 262144)")
 
     root = json.loads((args.model_dir / "config.json").read_text())
     config = Qwen3_5Config.from_dict(root["text_config"])
@@ -88,10 +107,37 @@ def main() -> int:
             lambda _module, _inputs, output: attention_outputs.append(
                 (output[0] if isinstance(output, tuple) else output).reshape(-1).detach().clone()))
     with torch.inference_mode():
-        for step in range(args.decode_steps):
-            hidden = torch.linspace(-0.25, 0.25, config.hidden_size,
-                                    dtype=torch.float32).reshape(1, 1, -1)
-            hidden = hidden + step * 0.03125
+        if custom_step:
+            input_values = _read_f32(args.input_f32)
+            expected_input_elements = config.hidden_size
+            if input_values.numel() != expected_input_elements:
+                raise SystemExit(
+                    f"custom input must contain {expected_input_elements} FP32 values")
+            kv_values = _read_f32(args.kv_f32)
+            positions = args.start_position
+            elements_per_cache = positions * config.num_key_value_heads * config.head_dim
+            expected_kv_elements = 2 * elements_per_cache
+            if kv_values.numel() != expected_kv_elements:
+                raise SystemExit(
+                    f"custom KV snapshot must contain {expected_kv_elements} FP32 values")
+            if positions:
+                key = kv_values[:elements_per_cache].reshape(
+                    positions, config.num_key_value_heads, config.head_dim
+                ).permute(1, 0, 2).unsqueeze(0)
+                value = kv_values[elements_per_cache:].reshape(
+                    positions, config.num_key_value_heads, config.head_dim
+                ).permute(1, 0, 2).unsqueeze(0)
+                cache.update(key, value, args.layer)
+            step_values = [positions]
+            hidden_values = [input_values.reshape(1, 1, -1)]
+        else:
+            step_values = list(range(args.decode_steps))
+            hidden_values = []
+            for step in step_values:
+                hidden = torch.linspace(-0.25, 0.25, config.hidden_size,
+                                        dtype=torch.float32).reshape(1, 1, -1)
+                hidden_values.append(hidden + step * 0.03125)
+        for step, hidden in zip(step_values, hidden_values):
             position_ids = torch.full((1, 1), step, dtype=torch.long)
             position_embeddings = rotary(hidden, position_ids)
             causal_mask = torch.zeros((1, 1, 1, step + 1), dtype=torch.float32)

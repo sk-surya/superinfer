@@ -1,0 +1,59 @@
+{
+  "kind": "qwen38_long_replay_diagnostic_round2",
+  "status": "diagnostics_complete_blocker_open",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "workload": {
+    "case": "varied-length",
+    "prefill_token": 760,
+    "continuation_tokens": 36,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090"
+  },
+  "state_probe": {
+    "model_layer": 42,
+    "target_capture_sha256": "23cc64b58ef387c8b8af016be3658300ef8a9e96ee52d1bb4fa23cf0551e494e",
+    "reference_capture_sha256": "020a7f0be8133cf606d083656e72bc7a70b8339c3c09f86b5017338fd075c5d2",
+    "recurrent_state": {
+      "elements": 786432,
+      "max_abs": 0.0116944909,
+      "mean_abs": 0.0000401985235,
+      "rmse": 0.0000932656694,
+      "correlation": 0.9998574377
+    },
+    "convolution_state": {
+      "elements": 40960,
+      "max_abs": 0.25,
+      "mean_abs": 0.0250816084,
+      "rmse": 0.0332964435,
+      "correlation": 0.9995375323
+    },
+    "interpretation": "The previously reported large layer-42 state mismatch was caused by selecting the 42nd GDN operation rather than model layer 42. The corrected model-layer selector agrees with the independent deployment-matched state capture."
+  },
+  "liveness_probe": {
+    "normal_trace_sha256": "89ab932faa2fab0ca281efdacfd5885e1b5fe2b9f2eb3206a279d835cad3dec0",
+    "no_alias_trace_sha256": "89ab932faa2fab0ca281efdacfd5885e1b5fe2b9f2eb3206a279d835cad3dec0",
+    "normal_arena_bytes": 19191265792,
+    "no_alias_arena_bytes": 19343845636,
+    "result": "activation reuse does not change the post-token-mixer trace or greedy sequence"
+  },
+  "scale_order_probe": {
+    "hypothesis": "Scaling the normalized query before the recurrent dot product, as in Transformers, will reduce accumulated drift versus scaling the dot-product result afterward.",
+    "baseline_reference": "build/evidence/reference-varied-deployment-v7/varied-length.f32",
+    "patched_capture_sha256": "3af1916cafe8faad6190fa4d186b018786920add1eb73270188b2ede669fdc1b",
+    "baseline_row_34": {
+      "max_abs": 0.596280098,
+      "mean_abs": 0.0707100928,
+      "rmse": 0.0902893394
+    },
+    "patched_row_34": {
+      "max_abs": 1.04678535,
+      "mean_abs": 0.125706509,
+      "rmse": 0.161706999
+    },
+    "result": "rejected; the temporary production change was reverted"
+  },
+  "conclusion": "The corrected state and no-alias probes rule out state-buffer selection and activation lifetime reuse as the immediate cause. The query-scale ordering experiment worsened the contract and was reverted. The S03 numerical acceptance blocker remains accumulated cross-layer drift; no tolerance was changed and S03 is not closed."
+}

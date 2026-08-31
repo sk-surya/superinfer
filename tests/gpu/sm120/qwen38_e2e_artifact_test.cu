@@ -463,6 +463,7 @@ int main() {
   if (kv_capture_step.has_value() && kv_capture_step.value() == 0 && !capture_kv(0)) return 1;
 
   const char* gdn_state_capture_path = std::getenv("SUPERINFER_QWEN38_GDN_STATE_F32");
+  std::uint32_t gdn_state_capture_layer = 0;
   std::optional<std::uint32_t> gdn_state_capture_step;
   std::optional<superinfer::ir::physical::BufferId> gdn_delta_state_id;
   std::optional<superinfer::ir::physical::BufferId> gdn_conv_state_id;
@@ -480,20 +481,50 @@ int main() {
       std::cerr << "invalid SUPERINFER_QWEN38_GDN_STATE_STEP\n";
       return 1;
     }
-    for (const auto& buffer : specialized.value().plan.buffers()) {
-      if (!gdn_delta_state_id.has_value() &&
-          buffer.tensor.dtype == superinfer::ir::physical::PhysicalDType::f32 &&
-          buffer.tensor.shape == std::vector<std::uint64_t>({48, 128, 128})) {
-        gdn_delta_state_id = buffer.id;
-      }
-      if (!gdn_conv_state_id.has_value() &&
-          buffer.tensor.dtype == superinfer::ir::physical::PhysicalDType::bf16 &&
-          buffer.tensor.shape == std::vector<std::uint64_t>({4, 10240})) {
-        gdn_conv_state_id = buffer.id;
+    if (const char* encoded_layer = std::getenv("SUPERINFER_QWEN38_GDN_STATE_LAYER");
+        encoded_layer != nullptr) {
+      const auto layer_result = std::from_chars(
+          encoded_layer, encoded_layer + std::strlen(encoded_layer), gdn_state_capture_layer);
+      if (layer_result.ec != std::errc{} ||
+          layer_result.ptr != encoded_layer + std::strlen(encoded_layer)) {
+        std::cerr << "invalid SUPERINFER_QWEN38_GDN_STATE_LAYER\n";
+        return 1;
       }
     }
-    if (!gdn_delta_state_id.has_value() || !gdn_conv_state_id.has_value()) {
-      std::cerr << "layer-0 GDN state buffers were not found\n";
+    std::size_t model_layer_index = 0;
+    for (const auto& command : specialized.value().plan.commands()) {
+      const auto kernel = command.kernel.value();
+      if (kernel != 15 && kernel != 23) continue;
+      if (kernel == 15 && model_layer_index == gdn_state_capture_layer) {
+        if (command.buffers.size() < 7) {
+          std::cerr << "selected GDN state command lacks state operand\n";
+          return 1;
+        }
+        gdn_delta_state_id = command.buffers[5];
+        break;
+      }
+      ++model_layer_index;
+    }
+    if (!gdn_delta_state_id.has_value()) {
+      std::cerr << "selected GDN state layer was not found\n";
+      return 1;
+    }
+    model_layer_index = 0;
+    for (const auto& command : specialized.value().plan.commands()) {
+      const auto kernel = command.kernel.value();
+      if (kernel != 15 && kernel != 23 && kernel != 25) continue;
+      if (kernel == 25 && model_layer_index == gdn_state_capture_layer) {
+        if (command.buffers.size() < 4) {
+          std::cerr << "selected GDN convolution command lacks state operand\n";
+          return 1;
+        }
+        gdn_conv_state_id = command.buffers[2];
+        break;
+      }
+      if (kernel == 15 || kernel == 23) ++model_layer_index;
+    }
+    if (!gdn_conv_state_id.has_value()) {
+      std::cerr << "selected GDN convolution layer was not found\n";
       return 1;
     }
     gdn_state_capture_step = parsed_step;
@@ -501,15 +532,25 @@ int main() {
   const auto capture_gdn_state = [&](std::uint32_t step) -> bool {
     if (gdn_state_capture_path == nullptr || !gdn_state_capture_step.has_value() ||
         step != gdn_state_capture_step.value()) return true;
-    std::vector<float> delta(48U * 128U * 128U);
-    std::vector<std::uint16_t> conv(4U * 10240U);
+    const auto& delta_state_buffer =
+        specialized.value().plan.buffers()[gdn_delta_state_id.value().value()];
+    const auto& conv_state_buffer =
+        specialized.value().plan.buffers()[gdn_conv_state_id.value().value()];
+    const std::size_t delta_elements = delta_state_buffer.size / sizeof(float);
+    const std::size_t conv_elements = conv_state_buffer.size / sizeof(std::uint16_t);
+    std::vector<float> delta(delta_elements);
+    std::vector<std::uint16_t> conv(conv_elements);
+    if (delta.empty()) {
+      std::cerr << "selected GDN delta state is empty\n";
+      return false;
+    }
     if (!session.copy_from_device(
             gdn_delta_state_id.value(),
             {reinterpret_cast<std::byte*>(delta.data()), delta.size() * sizeof(float)}).ok() ||
         !session.copy_from_device(
             gdn_conv_state_id.value(),
             {reinterpret_cast<std::byte*>(conv.data()), conv.size() * sizeof(std::uint16_t)}).ok()) {
-      std::cerr << "layer-0 GDN state capture download failed\n";
+      std::cerr << "selected GDN state capture download failed\n";
       return false;
     }
     std::vector<float> payload = std::move(delta);
@@ -523,10 +564,14 @@ int main() {
     std::ofstream metadata{std::string{gdn_state_capture_path} + ".json", std::ios::trunc};
     if (!metadata.good()) return false;
     metadata << "{\n"
-             << "  \"layer\": 0,\n"
+             << "  \"layer\": " << gdn_state_capture_layer << ",\n"
              << "  \"step\": " << step << ",\n"
-             << "  \"delta_elements\": " << 48U * 128U * 128U << ",\n"
-             << "  \"conv_elements\": " << 4U * 10240U << ",\n"
+             << "  \"delta_buffer_id\": " << gdn_delta_state_id.value().value() << ",\n"
+             << "  \"delta_buffer_size\": " << delta_state_buffer.size << ",\n"
+             << "  \"conv_buffer_id\": " << gdn_conv_state_id.value().value() << ",\n"
+             << "  \"conv_buffer_size\": " << conv_state_buffer.size << ",\n"
+             << "  \"delta_elements\": " << payload.size() - conv.size() << ",\n"
+             << "  \"convolution_elements\": " << conv.size() << ",\n"
              << "  \"delta_dtype\": \"float32\",\n"
              << "  \"conv_source_dtype\": \"bf16\",\n"
              << "  \"layout\": \"delta then convolution state\"\n}\n";

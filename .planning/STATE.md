@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: S03
 status: autonomous_execution
-last_updated: "2026-08-31T08:20:00Z"
+last_updated: "2026-08-31T18:08:44Z"
 progress:
   total_phases: 10
   completed_phases: 3
@@ -41,7 +41,7 @@ s03f_01_status: research_complete_capacity_quality_blocked
 
 ## Current Focus
 
-S03 remains the primary implementation lane. The corrected deployment oracle now bounds the long-context chat result: the deterministic 60-token SuperInfer replay matches all 60 Transformers greedy tokens but fails the unchanged 0.5 max-abs logit contract on rows 23, 29, and 30 while passing mean/RMSE limits. Full CPU repository validation passes. Fresh artifact target runs are temporarily blocked because both RTX 5090s are occupied by user-owned services; see `artifacts/S03/qwen38-s03-deployment-contract-acceptance-state.json`.
+S03 remains the primary implementation lane. The corrected deployment oracle now bounds the long-context chat result: the deterministic 60-token SuperInfer replay matches all 60 Transformers greedy tokens but fails the unchanged 0.5 max-abs logit contract on rows 23, 29, and 30 while passing mean/RMSE limits. Full CPU repository validation passes. GPU 0 is available for controlled diagnostics; GPU 1 remains occupied by the user-owned NInfer service. The latest state/liveness probes are recorded in `artifacts/S03/qwen38-long-replay-diagnostic-round2.json`.
 
 The approved S03F amendment adds Flash-Next after S03 and before S04. **Only S03F-01 may begin before S03 closes**, and it is research-only: pin reference/model revisions, inventory exact packed tensors, produce a capacity ledger, and evaluate quantization/residency recipes. S03F-01 has pinned official model/source identity and metadata, and now records exact header evidence from the incomplete RadixArk NVFP4 candidate: 32.20 GiB of routed-expert tensor bytes over 23 layers and a bounded 48-layer projection of 67.95 GiB from 22 matching complete layers. It remains capacity/quality blocked because the complete checkpoint and executable reference are unavailable locally, and no upstream serving metric substitutes for SuperInfer qualification. It did not modify Physical Plan, MemoryPlanner, runtime or kernels.
 

@@ -153,6 +153,17 @@ the reviewed passing report and second complete target-session corpus run. The l
 is complete for positions 4095/4096, but the numerical model contract is not yet closed for all
 declared corpus cases. S03F-02 remains blocked until that S03 acceptance is explicitly closed.
 
+The next diagnostic round corrected the state probe to select model layer 42 rather than the 42nd
+GDN operation. The corrected layer-42 recurrent state matches the independent deployment-matched
+reference at max absolute error `0.01169449`, and the BF16 convolution state at `0.25`; the
+correlations are `0.9998574` and `0.9995375`. A no-alias activation plan produces a byte-identical
+post-token-mixer trace and the same greedy sequence as the normal liveness plan, ruling out
+activation reuse as the immediate source. A temporary query-scale ordering change was tested
+against the 37-token replay, worsened row 34 from max `0.59628` to `1.04679`, and was reverted.
+The diagnostic selector and durable results are recorded in
+`artifacts/S03/qwen38-long-replay-diagnostic-round2.json`; the numerical acceptance blocker remains
+open and no tolerance was changed.
+
 An operation-level GDN diagnostic then compared the first packed-NVFP4 projection and convolution
 against a two-segment Transformers oracle. The artifact-bound `in_proj_qkv` output matched at
 max `1.38283e-5`, and post-convolution output matched at max `0.00198197`; existing attention,

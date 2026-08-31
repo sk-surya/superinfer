@@ -126,6 +126,7 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
 - S03F-01 has pinned immutable Flash-Next model/reference revisions and now records formula-only text state/workspace estimates, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.
 - The final two-session S03 acceptance refresh is recorded in `artifacts/S03/qwen38-s03-final-acceptance-refresh.json`: all corpus greedy tokens and captures are repeatable, but chat-template and varied-length still fail the unchanged numerical contract.
+- A reference-only per-layer BF16 output-rounding probe worsened the chat max error to `1.0134909153` and is rejected; no production change was made.
 - If acceptable full expert residency across two 5090s is not feasible, S03F-04 may not invent silent expert paging. Record a capacity/residency ADR first.
 - Dual-GPU runtime work must validate actual peer-access topology and retain a pinned-host staged fallback; peer access is not assumed from GPU model alone.
 - Flash-Next vision and MTP are explicitly outside S03F.

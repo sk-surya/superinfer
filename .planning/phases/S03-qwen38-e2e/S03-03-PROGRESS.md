@@ -286,3 +286,10 @@ absolute error `0.6096376059`, and RMSE `0.7747322253`. The exact result is reco
 This refresh confirms the existing diagnosis: deterministic long-context numerical drift remains;
 no tolerance changed, no production kernel changed, and S03 is not closed. S03F-02 remains
 engineering-blocked.
+
+The next precision-contract probe rounded each Transformers decoder-layer output through BF16
+between layers while retaining the qualified BF16 embedding, GDN state, KV, and final-norm
+boundaries. It worsened the chat-template comparison to global max `1.0134909153`, mean
+`0.0439874046`, and RMSE `0.0602338836`, versus the deployment-matched baseline max `0.6116333008`.
+The per-layer BF16 materialization hypothesis is rejected and no production change was made.
+Evidence is recorded in `artifacts/S03/qwen38-layer-output-rounding-probe.json`.

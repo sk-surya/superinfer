@@ -1,0 +1,37 @@
+{
+  "kind": "qwen38_layer_output_rounding_probe",
+  "status": "rejected_hypothesis",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": {
+    "case": "chat-template",
+    "rows": 60,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090"
+  },
+  "reference": {
+    "implementation": "Transformers 5.12.1 Qwen3_5DecoderLayer",
+    "capture": "build/evidence/reference-chat-layer-round/chat-template.f32",
+    "capture_sha256": "97a06dace6c8eaada4683b7db2f15f9c2510268e413fdca4093a99ae723c74cb",
+    "storage_contract": "BF16 embedding, BF16 layer outputs, BF16 GDN qkv/linear state, BF16 KV, BF16 final norm",
+    "device": "cuda:0"
+  },
+  "target": {
+    "capture": "build/evidence/qwen38-s03-acceptance-final/chat-template/run-1-base.f32 plus run-1-continuation.f32",
+    "capture_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99"
+  },
+  "experiment": {
+    "hypothesis": "The remaining long-context drift is caused by missing BF16 materialization between decoder layers.",
+    "change": "round each reference decoder-layer output through BF16 before feeding the next layer",
+    "other_boundaries": ["BF16 embedding", "BF16 GDN qkv/linear state", "BF16 KV", "BF16 final norm"]
+  },
+  "result": {
+    "max_abs": 1.0134909153,
+    "mean_abs": 0.0439874046,
+    "rmse": 0.0602338836,
+    "rows_over_0_5": [18, 23, 24, 25, 28, 29, 31, 35, 55],
+    "baseline_reference": "build/evidence/reference-chat-deployment-v7/chat-template.f32",
+    "baseline_max_abs": 0.6116333008,
+    "result": "worse_than_deployment_matched_contract"
+  },
+  "conclusion": "Per-layer BF16 output rounding is not the missing physical contract and is not a production change."
+}

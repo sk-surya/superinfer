@@ -1,0 +1,12 @@
+{
+  "kind": "qwen38_logit_dtype_diagnostic",
+  "status": "not_explanatory",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": "chat-template, 60-token stable replay",
+  "target_capture_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99",
+  "comparison": {
+    "reference_fp32": {"max_abs": 0.59774923, "mean_abs": 0.03872421, "rmse": 0.05180305, "bad_rows_over_0_5": [23, 29]},
+    "reference_rounded_to_bf16": {"max_abs": 0.609375, "mean_abs": 0.03844646, "rmse": 0.05206104, "bad_rows_over_0_5": [29]}
+  },
+  "conclusion": "BF16-rounding the reference does not remove the row-29 outlier; the hidden-state drift remains a real model-level issue. Acceptance criteria were unchanged."
+}

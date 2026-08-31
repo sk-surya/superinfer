@@ -195,3 +195,10 @@ the 30-token chat prefix. Its stored logits capture was byte-identical to the ba
 This rejects GEMV accumulator precision as an observable fix for the current BF16 logits contract.
 The failed hypothesis is retained in
 `artifacts/S03/qwen38-nvfp4-double-accumulation-probe.json`.
+
+An output-contract check rounded the FP32 reference logits to BF16 before comparison. It removed
+row 23 from the `max_abs=0.5` failures but left row 29 at `0.609375`, confirming that output dtype
+does not explain the hidden-state drift; evidence is in
+`artifacts/S03/qwen38-logit-dtype-diagnostic.json`. A separate FP64 RMSNorm reduction probe worsened
+the staged layer-3 differential and was reverted; its result is in
+`artifacts/S03/qwen38-rmsnorm-precision-probe.json`.

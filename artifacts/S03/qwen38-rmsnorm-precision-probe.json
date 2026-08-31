@@ -1,0 +1,10 @@
+{
+  "kind": "qwen38_rmsnorm_precision_probe",
+  "status": "rejected_hypothesis",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": "layer 3 full-attention artifact decode, 30 steps",
+  "experiment": "temporary FP64 sum-of-squares in both runtime RMSNorm kernels; reverted",
+  "baseline": {"max_abs": 0.00108337, "mean_abs": 0.0000109873, "attention_max_abs": 0.00123596},
+  "probe": {"max_abs": 0.00125885, "mean_abs": 0.0000205786, "attention_max_abs": 0.00136185},
+  "conclusion": "Higher-precision RMSNorm reduction worsened the staged differential and is not a production candidate."
+}

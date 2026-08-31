@@ -230,3 +230,22 @@ The corpus reference identity discrepancy is resolved in the checked-in acceptan
 qualified local and planned Transformers version are both `5.12.1`. S03 remains open because the
 full numerical contract still fails on accumulated long-context logit outliers; no tolerance was
 changed and no production kernel was modified by these diagnostics.
+
+## Deployment-contract acceptance state
+
+The corrected deployment oracle comparison is now bounded and deterministic. It uses the
+Transformers `5.12.1` / torch `2.13.0+cu130` CUDA capture at
+`build/evidence/reference-chat-deployment-v7/chat-template.f32` and models cached decode from
+position zero, BF16 embedding I/O, BF16 GDN QKV/linear state, BF16 KV, and BF16 final-norm I/O.
+The stable 60-token SuperInfer replay matches all 60 reference greedy tokens, but the unchanged
+row contract still fails absolute-logit limits on rows 23, 29, and 30. Failing row maxima are
+`0.5208769`, `0.5856843`, and `0.5124722`; mean/RMSE limits pass. The full comparison, artifact
+and capture hashes, unchanged numerical contract, and validation results are recorded in
+`artifacts/S03/qwen38-s03-deployment-contract-acceptance-state.json`.
+
+Repository CPU gates pass: `uv run --extra dev pytest -q` reports 60 tests and 9 subtests passed,
+and `python tools/validate.py --full` passes all configure/build/test/install/sanitize/wheel steps.
+Fresh full-artifact target execution is currently externally blocked because both RTX 5090s are
+occupied by user-owned services using 20.75 GiB and 24.57 GiB respectively; the 19.19 GiB
+SuperInfer arena cannot safely fit alongside either. This occupancy is recorded in the acceptance
+state evidence and is not a SuperInfer failure.

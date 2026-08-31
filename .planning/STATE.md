@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: S03
 status: autonomous_execution
-last_updated: "2026-08-31T04:05:00Z"
+last_updated: "2026-08-31T08:20:00Z"
 progress:
   total_phases: 10
   completed_phases: 3
@@ -41,7 +41,7 @@ s03f_01_status: research_complete_capacity_quality_blocked
 
 ## Current Focus
 
-S03 remains the primary implementation lane. Quantized LM/FFN/attention/GDN projection lowering, explicit tensor-scale bindings, state-buffer aliasing, per-head RMSNorm, sigmoid gating, partial RoPE, BF16 KV append, cached GQA, Gated Delta parameter derivation, and causal convolution are covered by focused CPU/CUDA evidence. Real `.sinf` artifacts now drive a complete layer-3 full-attention path and a complete layer-0 Gated-DeltaNet path across two execution segments on GPU 0, both matching independent Transformers-based references within recorded contracts. S03-02 also compiles and binds the complete 64-layer graph with liveness-aware physical ranges. S03-03 proves tokenizer identity, two independent three-token static-prefill fixtures, a six-position plain-short decode replay, capacity rejection, legal position-4095 execution without allocation growth, and independent Transformers logit/token agreement for short cases. The historical long chat/varied-length replay is now repeatable on its minimized 13-token prefix and current full replay, but the deployment-matched independent oracle still leaves accumulated long-context logit outliers above the unchanged numerical contract; the bounded failure evidence is recorded in `artifacts/S03/qwen38-e2e-corpus-acceptance-failure.json`.
+S03 remains the primary implementation lane. The corrected deployment oracle now bounds the long-context chat result: the deterministic 60-token SuperInfer replay matches all 60 Transformers greedy tokens but fails the unchanged 0.5 max-abs logit contract on rows 23, 29, and 30 while passing mean/RMSE limits. Full CPU repository validation passes. Fresh artifact target runs are temporarily blocked because both RTX 5090s are occupied by user-owned services; see `artifacts/S03/qwen38-s03-deployment-contract-acceptance-state.json`.
 
 The approved S03F amendment adds Flash-Next after S03 and before S04. **Only S03F-01 may begin before S03 closes**, and it is research-only: pin reference/model revisions, inventory exact packed tensors, produce a capacity ledger, and evaluate quantization/residency recipes. S03F-01 has pinned official model/source identity and metadata, but remains capacity/quality blocked because the complete checkpoint and executable reference are unavailable locally. It did not modify Physical Plan, MemoryPlanner, runtime or kernels.
 

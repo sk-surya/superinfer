@@ -1,0 +1,115 @@
+{
+  "schema": "superinfer.qwen38.s03.deployment-contract-acceptance-state.v1",
+  "status": "fail_numerical_contract_execution_blocked_by_external_gpu",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "corpus_sha256": "438fc893d13045df197c37d6e6aeed25eac5a2d6f698d032b7b7e6047a12cf03",
+  "reference": {
+    "capture": "build/evidence/reference-chat-deployment-v7/chat-template.f32",
+    "sha256": "9d7fae75cfaf9978b0827520194089bf25a768cdd506cc22154b4d784d32aa88",
+    "transformers_version": "5.12.1",
+    "torch_version": "2.13.0+cu130",
+    "device": "cuda",
+    "contract": "cached decode from position zero; BF16 embedding, GDN qkv, linear state, KV, and final norm",
+    "report": "build/evidence/reference-chat-deployment-v7/corpus-reference.json"
+  },
+  "target": {
+    "base_capture": "build/evidence/debug-chat-full-current/base.f32",
+    "base_sha256": "504a599b16fa09b07986e15251348a6cac28ee2be1e457730d37731504ea653d",
+    "continuation_capture": "build/evidence/debug-chat-full-current/continuation.f32",
+    "continuation_sha256": "2059317cea416780fedb24ba9f57d144bf32a4b5e38de312e54ee0685d61acc9",
+    "gpu": "GPU 0 NVIDIA GeForce RTX 5090"
+  },
+  "numerical_contract": {
+    "max_abs": 0.5,
+    "mean_abs": 0.1,
+    "rmse": 0.15,
+    "unchanged": true
+  },
+  "comparison": {
+    "rows": 60,
+    "token_sequence_match": true,
+    "rows_failing_max_abs": [
+      23,
+      29,
+      30
+    ],
+    "selected_rows": {
+      "0": {
+        "max_abs": 0.28420448303222656,
+        "mean_abs": 0.04163235065457651,
+        "rmse": 0.051952233133288526
+      },
+      "11": {
+        "max_abs": 0.31135034561157227,
+        "mean_abs": 0.045622365868508756,
+        "rmse": 0.057953046089037195
+      },
+      "12": {
+        "max_abs": 0.3461592197418213,
+        "mean_abs": 0.04852382024814922,
+        "rmse": 0.06177073014759177
+      },
+      "23": {
+        "max_abs": 0.5208768844604492,
+        "mean_abs": 0.052986182154668736,
+        "rmse": 0.06802100432238767
+      },
+      "28": {
+        "max_abs": 0.4972233772277832,
+        "mean_abs": 0.04873434200283733,
+        "rmse": 0.06232658334464245
+      },
+      "29": {
+        "max_abs": 0.5856842994689941,
+        "mean_abs": 0.05149680078754228,
+        "rmse": 0.06583409936488306
+      },
+      "30": {
+        "max_abs": 0.5124721527099609,
+        "mean_abs": 0.04538810073352147,
+        "rmse": 0.05781547404396301
+      },
+      "59": {
+        "max_abs": 0.30151963233947754,
+        "mean_abs": 0.04481640732527612,
+        "rmse": 0.05676303003890955
+      }
+    },
+    "failing_rows": [
+      {
+        "row": 23,
+        "max_abs": 0.5208768844604492,
+        "mean_abs": 0.052986182154668736,
+        "rmse": 0.06802100432238767
+      },
+      {
+        "row": 29,
+        "max_abs": 0.5856842994689941,
+        "mean_abs": 0.05149680078754228,
+        "rmse": 0.06583409936488306
+      },
+      {
+        "row": 30,
+        "max_abs": 0.5124721527099609,
+        "mean_abs": 0.04538810073352147,
+        "rmse": 0.05781547404396301
+      }
+    ]
+  },
+  "gpu_snapshot": {
+    "devices": [
+      "0, NVIDIA GeForce RTX 5090, 32607, 24966, 0",
+      "1, NVIDIA GeForce RTX 5090, 32607, 24598, 0"
+    ],
+    "compute_processes": [
+      "GPU-a5407696-c193-1206-4226-69eb0eb59d91, 3733774, VLLM::EngineCore, 24924 MiB",
+      "GPU-c8c0066b-56e6-cb12-6fe4-4f7ee1f8f40a, 2205050, /home/skrishnan/ninfer/build/apps/ninfer-serve, 24572 MiB"
+    ],
+    "interpretation": "Both GPUs have external compute services consuming 20.75 GiB and 24.57 GiB; the 19.19 GiB SuperInfer artifact arena cannot fit alongside either without stopping user-owned services."
+  },
+  "validation": {
+    "python_tests": "uv run --extra dev pytest -q: 60 passed, 9 subtests passed",
+    "repository_validation": "python tools/validate.py --full: all 11 steps passed"
+  },
+  "conclusion": "The corrected deployment oracle confirms deterministic 60/60 greedy-token identity but fails the unchanged 0.5 max-abs contract on rows 23, 29, and 30. S03 remains open; further full-artifact target runs are blocked externally by occupied GPUs."
+}

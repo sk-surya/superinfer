@@ -160,3 +160,15 @@ state, and final layer checks also passed. This rules out the first GDN projecti
 as the immediate source of the long-replay drift. The diagnostic is opt-in through
 `SUPERINFER_QWEN38_GDN_QKV_F32` and `SUPERINFER_QWEN38_GDN_CONV_F32`, with durable evidence in
 `artifacts/S03/qwen38-gdn-operation-localization.json`. No acceptance tolerance changed.
+
+The same diagnostic was extended through the GDN recurrent core, capturing both the chunk and
+cached single-token reference paths. The artifact-bound core output matched the external oracle at
+max `3.6478e-5` over both segments. The first GDN projection, convolution, and recurrent core are
+therefore not the immediate source of the long-replay drift; acceptance remains open and tolerances
+remain unchanged. The operation-localization artifact records the core capture hash and result.
+
+The diagnostic was completed through the normalized/gated GDN core output, which matched at max
+`0.00436258`. Combined with the existing output-projection, recurrent-state, and final layer
+checks, the complete layer-0 GDN token-mixer path passes its staged external differential across
+two state-continuing segments. The remaining S03 failure is accumulated cross-layer behavior or a
+later operation, not an isolated layer-0 GDN boundary.

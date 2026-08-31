@@ -14,7 +14,9 @@
     "capture_sha256": {
       "layer_output": "2d473d494f9d6df2ecbc406458b310fb4a57bed95804e2a047595a57aab6989e",
       "qkv_projection": "0586987d8eb94bf1c86a60d39349b1b475f62e580da3030fd6d01d4f0ae07df2",
-      "convolution": "f0dab581719c2ebbf9f70d6a849f22addaa4cbf94fe08cc5c3746619e8407ae4"
+      "convolution": "f0dab581719c2ebbf9f70d6a849f22addaa4cbf94fe08cc5c3746619e8407ae4",
+      "recurrent_core": "42f843dc2d12be17161b0fda481a5e056f73c243c864124e9f3695fe7f451b9c",
+      "gated_core_output": "df1918be5109a064bf0d49152b21e7f5f03b690b5740f77975819605958d1a93"
     }
   },
   "execution": {
@@ -39,6 +41,18 @@
       "threshold": 0.05,
       "result": "pass"
     },
+    "recurrent_core": {
+      "shape": [2, 6144],
+      "max_abs": 0.000036478,
+      "threshold": 0.05,
+      "result": "pass"
+    },
+    "gated_core_output": {
+      "shape": [2, 6144],
+      "max_abs": 0.00436258,
+      "threshold": 0.05,
+      "result": "pass"
+    },
     "existing_layer_boundaries": {
       "post_token_mixer_max_abs": 0.00482035,
       "recurrent_state_max_abs": 0.000766158,
@@ -46,5 +60,5 @@
       "result": "pass"
     }
   },
-  "conclusion": "The first GDN packed-NVFP4 projection and convolution are not the immediate source of the long-replay drift. The remaining S03 blocker is accumulated numerical divergence at a later operation or across repeated full-model state transitions; acceptance criteria and tolerances remain unchanged."
+  "conclusion": "The layer-0 GDN packed-NVFP4 projection, convolution, recurrent core, and gated normalized output are not the immediate source of the long-replay drift. Together with the existing attention-output, recurrent-state, and final layer checks, this localizes the remaining S03 blocker to accumulated cross-layer behavior or a later operation; acceptance criteria and tolerances remain unchanged."
 }

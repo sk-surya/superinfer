@@ -86,7 +86,10 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
   An operation-level GDN diagnostic matches layer-0 packed-NVFP4 qkv projection at `1.38283e-5`
   max error and post-convolution output at `0.00198197`; see
   `artifacts/S03/qwen38-gdn-operation-localization.json`. The first GDN projection/convolution is
-  not the immediate source of the remaining drift.
+  not the immediate source of the remaining drift. The same diagnostic now matches the recurrent
+  core at `3.6478e-5` max error, further narrowing the source to later GDN normalization/output or
+  accumulated cross-layer behavior. The normalized/gated core output also matches at `0.00436258`
+  max error, so the complete layer-0 GDN token-mixer path passes staged external differentials.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
 - S03F-01 has pinned immutable Flash-Next model/reference revisions, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.

@@ -67,6 +67,8 @@ def main() -> int:
     recurrent_states = []
     qkv_projections = []
     convolved_outputs = []
+    core_outputs = []
+    gated_outputs = []
     if args.diagnostics:
         layer.linear_attn.in_proj_qkv.register_forward_hook(
             lambda _module, _inputs, output: qkv_projections.append(output.reshape(-1).detach().clone())
@@ -91,6 +93,23 @@ def main() -> int:
             layer.linear_attn.conv1d.register_forward_hook(
                 lambda _module, _inputs, output: convolved_outputs.append(
                     (torch.nn.functional.silu(output[:, :, :1])).reshape(-1).detach().clone()))
+        layer.linear_attn.norm.register_forward_hook(
+            lambda _module, _inputs, output: gated_outputs.append(output.reshape(-1).detach().clone()))
+        original_chunk_rule = layer.linear_attn.chunk_gated_delta_rule
+        original_recurrent_rule = layer.linear_attn.recurrent_gated_delta_rule
+
+        def capture_chunk_rule(*inputs, **kwargs):
+            output = original_chunk_rule(*inputs, **kwargs)
+            core_outputs.append(output[0].reshape(-1).detach().clone())
+            return output
+
+        def capture_recurrent_rule(*inputs, **kwargs):
+            output = original_recurrent_rule(*inputs, **kwargs)
+            core_outputs.append(output[0].reshape(-1).detach().clone())
+            return output
+
+        layer.linear_attn.chunk_gated_delta_rule = capture_chunk_rule
+        layer.linear_attn.recurrent_gated_delta_rule = capture_recurrent_rule
     layer.linear_attn.register_forward_hook(
         lambda _module, _inputs, output: attention_outputs.append(output.reshape(-1).detach().clone())
     )
@@ -118,6 +137,10 @@ def main() -> int:
             args.output.with_suffix(".qkv.bin"))
         torch.cat(convolved_outputs).numpy().astype("float32").tofile(
             args.output.with_suffix(".conv.bin"))
+        torch.cat(core_outputs).numpy().astype("float32").tofile(
+            args.output.with_suffix(".core.bin"))
+        torch.cat(gated_outputs).numpy().astype("float32").tofile(
+            args.output.with_suffix(".gated.bin"))
     diagnostics = {
         "model": "Qwen3.8-27B-NVFP4-RTX5090",
         "reference": "transformers 5.12.1 Qwen3_5DecoderLayer",
@@ -137,7 +160,13 @@ def main() -> int:
             "segments": len(qkv_projections),
             "convolution": str(args.output.with_suffix(".conv.bin"))
             if args.diagnostics else None,
+            "core": str(args.output.with_suffix(".core.bin"))
+            if args.diagnostics else None,
             "conv_shape": [10240],
+            "core_shape": [6144],
+            "gated": str(args.output.with_suffix(".gated.bin"))
+            if args.diagnostics else None,
+            "gated_shape": [6144],
             "conv_segments": len(convolved_outputs),
             "z_shape": [6144],
             "a_shape": [48],

@@ -287,6 +287,8 @@ int main() {
   const char* expected_path = std::getenv("SUPERINFER_QWEN38_GDN_REFERENCE_F32");
   const char* expected_qkv_path = std::getenv("SUPERINFER_QWEN38_GDN_QKV_F32");
   const char* expected_conv_path = std::getenv("SUPERINFER_QWEN38_GDN_CONV_F32");
+  const char* expected_core_path = std::getenv("SUPERINFER_QWEN38_GDN_CORE_F32");
+  const char* expected_gated_path = std::getenv("SUPERINFER_QWEN38_GDN_GATED_F32");
   if (artifact_path == nullptr || expected_path == nullptr) return skip_if_unconfigured();
   int device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
@@ -399,12 +401,36 @@ int main() {
       return 1;
     }
   }
+  std::vector<float> expected_core;
+  if (expected_core_path != nullptr) {
+    expected_core.resize(2U * 6144U);
+    std::ifstream core_stream{expected_core_path, std::ios::binary};
+    core_stream.read(reinterpret_cast<char*>(expected_core.data()),
+                     static_cast<std::streamsize>(expected_core.size() * sizeof(float)));
+    if (!core_stream || core_stream.peek() != std::ifstream::traits_type::eof()) {
+      std::cerr << "core reference output must contain exactly 12288 FP32 values\n";
+      return 1;
+    }
+  }
+  std::vector<float> expected_gated;
+  if (expected_gated_path != nullptr) {
+    expected_gated.resize(2U * 6144U);
+    std::ifstream gated_stream{expected_gated_path, std::ios::binary};
+    gated_stream.read(reinterpret_cast<char*>(expected_gated.data()),
+                      static_cast<std::streamsize>(expected_gated.size() * sizeof(float)));
+    if (!gated_stream || gated_stream.peek() != std::ifstream::traits_type::eof()) {
+      std::cerr << "gated reference output must contain exactly 12288 FP32 values\n";
+      return 1;
+    }
+  }
 
   std::vector<float> actual(expected.size());
   float attention_contract_maximum = 0.0F;
   float state_contract_maximum = 0.0F;
   float qkv_contract_maximum = 0.0F;
   float conv_contract_maximum = 0.0F;
+  float core_contract_maximum = 0.0F;
+  float gated_contract_maximum = 0.0F;
   for (std::size_t segment = 0; segment < 2; ++segment) {
     std::vector<float> hidden(5120);
     for (std::size_t index = 0; index < hidden.size(); ++index) {
@@ -464,6 +490,36 @@ int main() {
       }
       conv_contract_maximum = std::max(conv_contract_maximum, conv_maximum);
     }
+    if (!expected_core.empty()) {
+      std::vector<float> core_actual(6144);
+      if (!session.copy_from_device(binding(bindings, "core").id,
+                                    {reinterpret_cast<std::byte*>(core_actual.data()),
+                                     core_actual.size() * sizeof(float)}).ok()) {
+        return 1;
+      }
+      float core_maximum = 0.0F;
+      for (std::size_t index = 0; index < core_actual.size(); ++index) {
+        core_maximum = std::max(
+            core_maximum,
+            std::fabs(core_actual[index] - expected_core[segment * core_actual.size() + index]));
+      }
+      core_contract_maximum = std::max(core_contract_maximum, core_maximum);
+    }
+    if (!expected_gated.empty()) {
+      std::vector<float> gated_actual(6144);
+      if (!session.copy_from_device(binding(bindings, "gated").id,
+                                    {reinterpret_cast<std::byte*>(gated_actual.data()),
+                                     gated_actual.size() * sizeof(float)}).ok()) {
+        return 1;
+      }
+      float gated_maximum = 0.0F;
+      for (std::size_t index = 0; index < gated_actual.size(); ++index) {
+        gated_maximum = std::max(
+            gated_maximum,
+            std::fabs(gated_actual[index] - expected_gated[segment * gated_actual.size() + index]));
+      }
+      gated_contract_maximum = std::max(gated_contract_maximum, gated_maximum);
+    }
     std::vector<float> actual_state(48U * 128U * 128U);
     if (!session.copy_from_device(binding(bindings, "delta_state").id,
                                   {reinterpret_cast<std::byte*>(actual_state.data()),
@@ -490,13 +546,17 @@ int main() {
             << " mean_abs=" << mean << " segments=2 commands="
             << session.trace().commands_executed << " qkv_max_abs=" << qkv_contract_maximum
             << " conv_max_abs=" << conv_contract_maximum
+            << " core_max_abs=" << core_contract_maximum
+            << " gated_max_abs=" << gated_contract_maximum
             << '\n';
   // The contract covers NVFP4 dequantization plus FP32 accumulation-order differences against
   // Transformers. State and mixer boundaries have tighter diagnostics than the final MLP output.
   return maximum <= 5.0e-2F && mean <= 5.0e-4F && attention_contract_maximum <= 1.0e-2F &&
                  state_contract_maximum <= 1.0e-3F &&
                  (expected_qkv.empty() || qkv_contract_maximum <= 5.0e-2F) &&
-                 (expected_conv.empty() || conv_contract_maximum <= 5.0e-2F)
+                 (expected_conv.empty() || conv_contract_maximum <= 5.0e-2F) &&
+                 (expected_core.empty() || core_contract_maximum <= 5.0e-2F) &&
+                 (expected_gated.empty() || gated_contract_maximum <= 5.0e-2F)
              ? 0
              : 1;
 }

@@ -462,6 +462,79 @@ int main() {
   };
   if (kv_capture_step.has_value() && kv_capture_step.value() == 0 && !capture_kv(0)) return 1;
 
+  const char* gdn_state_capture_path = std::getenv("SUPERINFER_QWEN38_GDN_STATE_F32");
+  std::optional<std::uint32_t> gdn_state_capture_step;
+  std::optional<superinfer::ir::physical::BufferId> gdn_delta_state_id;
+  std::optional<superinfer::ir::physical::BufferId> gdn_conv_state_id;
+  if (gdn_state_capture_path != nullptr) {
+    const char* encoded_step = std::getenv("SUPERINFER_QWEN38_GDN_STATE_STEP");
+    if (encoded_step == nullptr) {
+      std::cerr << "SUPERINFER_QWEN38_GDN_STATE_F32 requires SUPERINFER_QWEN38_GDN_STATE_STEP\n";
+      return 1;
+    }
+    std::uint32_t parsed_step = 0;
+    const auto step_result = std::from_chars(
+        encoded_step, encoded_step + std::strlen(encoded_step), parsed_step);
+    if (step_result.ec != std::errc{} ||
+        step_result.ptr != encoded_step + std::strlen(encoded_step)) {
+      std::cerr << "invalid SUPERINFER_QWEN38_GDN_STATE_STEP\n";
+      return 1;
+    }
+    for (const auto& buffer : specialized.value().plan.buffers()) {
+      if (!gdn_delta_state_id.has_value() &&
+          buffer.tensor.dtype == superinfer::ir::physical::PhysicalDType::f32 &&
+          buffer.tensor.shape == std::vector<std::uint64_t>({48, 128, 128})) {
+        gdn_delta_state_id = buffer.id;
+      }
+      if (!gdn_conv_state_id.has_value() &&
+          buffer.tensor.dtype == superinfer::ir::physical::PhysicalDType::bf16 &&
+          buffer.tensor.shape == std::vector<std::uint64_t>({4, 10240})) {
+        gdn_conv_state_id = buffer.id;
+      }
+    }
+    if (!gdn_delta_state_id.has_value() || !gdn_conv_state_id.has_value()) {
+      std::cerr << "layer-0 GDN state buffers were not found\n";
+      return 1;
+    }
+    gdn_state_capture_step = parsed_step;
+  }
+  const auto capture_gdn_state = [&](std::uint32_t step) -> bool {
+    if (gdn_state_capture_path == nullptr || !gdn_state_capture_step.has_value() ||
+        step != gdn_state_capture_step.value()) return true;
+    std::vector<float> delta(48U * 128U * 128U);
+    std::vector<std::uint16_t> conv(4U * 10240U);
+    if (!session.copy_from_device(
+            gdn_delta_state_id.value(),
+            {reinterpret_cast<std::byte*>(delta.data()), delta.size() * sizeof(float)}).ok() ||
+        !session.copy_from_device(
+            gdn_conv_state_id.value(),
+            {reinterpret_cast<std::byte*>(conv.data()), conv.size() * sizeof(std::uint16_t)}).ok()) {
+      std::cerr << "layer-0 GDN state capture download failed\n";
+      return false;
+    }
+    std::vector<float> payload = std::move(delta);
+    payload.reserve(payload.size() + conv.size());
+    for (const std::uint16_t value : conv) payload.push_back(bf16_to_float(value));
+    std::ofstream capture{gdn_state_capture_path, std::ios::binary | std::ios::trunc};
+    if (!capture.good()) return false;
+    capture.write(reinterpret_cast<const char*>(payload.data()),
+                  static_cast<std::streamsize>(payload.size() * sizeof(float)));
+    if (!capture.good()) return false;
+    std::ofstream metadata{std::string{gdn_state_capture_path} + ".json", std::ios::trunc};
+    if (!metadata.good()) return false;
+    metadata << "{\n"
+             << "  \"layer\": 0,\n"
+             << "  \"step\": " << step << ",\n"
+             << "  \"delta_elements\": " << 48U * 128U * 128U << ",\n"
+             << "  \"conv_elements\": " << 4U * 10240U << ",\n"
+             << "  \"delta_dtype\": \"float32\",\n"
+             << "  \"conv_source_dtype\": \"bf16\",\n"
+             << "  \"layout\": \"delta then convolution state\"\n}\n";
+    return metadata.good();
+  };
+  if (gdn_state_capture_step.has_value() && gdn_state_capture_step.value() == 0 &&
+      !capture_gdn_state(0)) return 1;
+
   const char* layer_trace_path = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_F32");
   const char* layer_trace_stage = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_STAGE");
   std::optional<std::uint32_t> layer_trace_step;
@@ -694,6 +767,7 @@ int main() {
       if (hidden_capture_step.has_value() && hidden_capture_step.value() == step + 1U &&
           !capture_hidden(step + 1U)) return 1;
       if (!capture_kv(static_cast<std::uint32_t>(step + 1U))) return 1;
+      if (!capture_gdn_state(static_cast<std::uint32_t>(step + 1U))) return 1;
       std::vector<std::uint16_t> continuation_logits(logits.size());
       const auto continuation_copy = session.copy_from_device(
           entry.outputs.front(), {reinterpret_cast<std::byte*>(continuation_logits.data()),

@@ -93,6 +93,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         help="zero-based token position at which to capture the KV cache")
     parser.add_argument("--kv-layer", type=int,
                         help="decoder layer whose KV cache should be captured")
+    parser.add_argument("--linear-state-output", type=Path,
+                        help="optional FP32 output for one Gated-DeltaNet state snapshot")
+    parser.add_argument("--linear-state-case",
+                        help="corpus case whose Gated-DeltaNet state should be captured")
+    parser.add_argument("--linear-state-step", type=int,
+                        help="zero-based token position at which to capture linear state")
+    parser.add_argument("--linear-state-layer", type=int,
+                        help="Gated-DeltaNet layer whose state should be captured")
     return parser
 
 
@@ -106,6 +114,10 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                attention_boundary_step: int | None = None,
                kv_output: Path | None = None, kv_case: str | None = None,
                kv_step: int | None = None, kv_layer: int | None = None,
+               linear_state_output: Path | None = None,
+               linear_state_case: str | None = None,
+               linear_state_step: int | None = None,
+               linear_state_layer: int | None = None,
                device_name: str = "cpu") -> dict[str, Any]:
     import torch
     import torch.nn.functional as F
@@ -193,6 +205,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
     attention_boundary_count = 0
     kv_payload = bytearray()
     kv_metadata: dict[str, Any] | None = None
+    linear_state_payload = bytearray()
+    linear_state_metadata: dict[str, Any] | None = None
 
     with torch.inference_mode():
         for layer_index in range(config.num_hidden_layers):
@@ -268,6 +282,26 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                             "positions": position + 1,
                             "heads": int(valid_keys.shape[1]),
                             "head_dimension": int(valid_keys.shape[2]),
+                        }
+                    if (linear_state_output is not None and state["id"] == linear_state_case and
+                            layer_index == linear_state_layer and position == linear_state_step):
+                        layer_cache = state["cache"].layers[layer_index]
+                        recurrent = getattr(layer_cache, "recurrent_states", None)
+                        convolution = getattr(layer_cache, "conv_states", None)
+                        if recurrent is None or convolution is None:
+                            raise ValueError(
+                                f"layer {layer_index} has no complete linear state at step {position}")
+                        linear_state_payload.extend(
+                            recurrent.float().contiguous().cpu().numpy().tobytes())
+                        # The CUDA deployment stores causal-convolution history as
+                        # [tap, channel], while Transformers exposes [batch, channel, tap].
+                        deployment_convolution = convolution.transpose(-1, -2)
+                        linear_state_payload.extend(
+                            deployment_convolution.float().contiguous().cpu().numpy().tobytes())
+                        linear_state_metadata = {
+                            "case": state["id"], "layer": layer_index, "step": position,
+                            "delta_elements": int(recurrent.numel()),
+                            "convolution_elements": int(convolution.numel()),
                         }
                 state["hidden"] = next_hidden
             if mixer_hook is not None:
@@ -347,6 +381,21 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "round_kv": round_kv,
         })
         kv_output.with_suffix(".json").write_text(json.dumps(kv_metadata, indent=2) + "\n")
+    if linear_state_output is not None:
+        if not linear_state_payload or linear_state_metadata is None:
+            raise ValueError("requested linear state capture did not match a corpus case, layer, and step")
+        linear_state_output.parent.mkdir(parents=True, exist_ok=True)
+        linear_state_output.write_bytes(linear_state_payload)
+        linear_state_metadata.update({
+            "dtype": "float32",
+            "layout": "recurrent state then convolution state",
+            "bytes": len(linear_state_payload),
+            "sha256": _sha256(bytes(linear_state_payload)),
+            "round_linear_state": round_linear_state,
+        })
+        linear_state_output.with_suffix(".json").write_text(
+            json.dumps(linear_state_metadata, indent=2) + "\n"
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
@@ -408,6 +457,16 @@ def main() -> int:
         parser.error("--kv-step must be non-negative")
     if args.kv_layer is not None and args.kv_layer < 0:
         parser.error("--kv-layer must be non-negative")
+    if args.linear_state_output is not None and args.linear_state_case is None:
+        parser.error("--linear-state-output requires --linear-state-case")
+    if args.linear_state_output is not None and args.linear_state_step is None:
+        parser.error("--linear-state-output requires --linear-state-step")
+    if args.linear_state_output is not None and args.linear_state_layer is None:
+        parser.error("--linear-state-output requires --linear-state-layer")
+    if args.linear_state_step is not None and args.linear_state_step < 0:
+        parser.error("--linear-state-step must be non-negative")
+    if args.linear_state_layer is not None and args.linear_state_layer < 0:
+        parser.error("--linear-state-layer must be non-negative")
     corpus = json.loads(args.corpus.read_text())
     report = _run_cases(args.model_dir, select_cases(corpus, args.case_ids), args.output_dir,
                         args.round_activations, args.round_kv, args.round_linear_state,
@@ -416,7 +475,9 @@ def main() -> int:
                         args.boundary_case, args.boundary_step,
                         args.attention_boundaries_output, args.attention_boundary_case,
                         args.attention_boundary_step, args.kv_output, args.kv_case,
-                        args.kv_step, args.kv_layer, args.device)
+                        args.kv_step, args.kv_layer, args.linear_state_output,
+                        args.linear_state_case, args.linear_state_step,
+                        args.linear_state_layer, args.device)
     (args.output_dir / "corpus-reference.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({"status": report["status"], "cases": [case["id"] for case in report["cases"]]}, indent=2))
     return 0

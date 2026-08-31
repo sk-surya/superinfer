@@ -263,6 +263,85 @@ def classify_tensor_bytes(inventory: FlashNextInventory) -> dict[str, int]:
     return {key: totals[key] for key in sorted(totals)}
 
 
+def estimate_runtime_state_and_workspace(
+    config: Mapping[str, Any], *, context_length: int, batch_size: int = 1,
+    activation_dtype_bytes: int = 2, kv_dtype_bytes: int = 2,
+    state_dtype_bytes: int = 4,
+) -> dict[str, int]:
+    """Estimate text-only decode state and a reusable workspace lower bound.
+
+    This is a capacity formula, not a claim about a complete checkpoint. KV state is counted
+    for full-attention layers, recurrent and convolution state for linear-attention layers, and
+    workspace is the largest single transient requirement among the modeled decode buffers. The
+    caller supplies byte widths so a BF16-storage/FP32-state deployment is explicit.
+    """
+    if context_length <= 0 or batch_size <= 0 or any(
+            value <= 0 for value in
+            (activation_dtype_bytes, kv_dtype_bytes, state_dtype_bytes)):
+        raise FlashNextValidationError("invalid_runtime_shape [positive dimensions required]")
+    layer_types = config.get("layer_types")
+    layer_count = config.get("num_hidden_layers")
+    if not isinstance(layer_types, list) or not isinstance(layer_count, int) or \
+            layer_count <= 0 or len(layer_types) != layer_count or \
+            any(layer_type not in ("linear_attention", "full_attention")
+                for layer_type in layer_types):
+        raise FlashNextValidationError("invalid_runtime_shape [layer types]")
+
+    def positive_int(name: str) -> int:
+        value = config.get(name)
+        if not isinstance(value, int) or value <= 0:
+            raise FlashNextValidationError(f"invalid_runtime_shape [{name}]")
+        return value
+
+    hidden_size = positive_int("hidden_size")
+    attention_heads = positive_int("num_attention_heads")
+    kv_heads = positive_int("num_key_value_heads")
+    head_dim = positive_int("head_dim")
+    linear_key_heads = positive_int("linear_num_key_heads")
+    linear_value_heads = positive_int("linear_num_value_heads")
+    linear_key_dim = positive_int("linear_key_head_dim")
+    linear_value_dim = positive_int("linear_value_head_dim")
+    convolution_kernel = positive_int("linear_conv_kernel_dim")
+    expert_count = positive_int("num_experts")
+    top_k = positive_int("num_experts_per_tok")
+    moe_intermediate = positive_int("moe_intermediate_size")
+    if attention_heads % kv_heads != 0 or linear_value_heads % linear_key_heads != 0 or \
+            top_k > expert_count:
+        raise FlashNextValidationError("invalid_runtime_shape [head or routing divisibility]")
+
+    linear_layers = sum(layer_type == "linear_attention" for layer_type in layer_types)
+    full_layers = layer_count - linear_layers
+    convolution_channels = (
+        2 * linear_key_heads * linear_key_dim + linear_value_heads * linear_value_dim
+    )
+    kv_state_bytes = (
+        batch_size * context_length * full_layers * 2 * kv_heads * head_dim * kv_dtype_bytes
+    )
+    recurrent_state_bytes = (
+        batch_size * linear_layers * linear_value_heads * linear_key_dim * linear_value_dim
+        * state_dtype_bytes
+    )
+    convolution_state_bytes = (
+        batch_size * linear_layers * convolution_channels * convolution_kernel * kv_dtype_bytes
+    )
+    workspace_candidates = (
+        batch_size * hidden_size * activation_dtype_bytes * 2,
+        batch_size * convolution_channels * activation_dtype_bytes,
+        batch_size * attention_heads * head_dim * activation_dtype_bytes * 2,
+        batch_size * expert_count * 4 + batch_size * top_k * 8,
+        batch_size * top_k * moe_intermediate * activation_dtype_bytes,
+    )
+    workspace_bytes = max(workspace_candidates)
+    return {
+        "kv_state_bytes": kv_state_bytes,
+        "recurrent_state_bytes": recurrent_state_bytes,
+        "convolution_state_bytes": convolution_state_bytes,
+        "workspace_bytes": workspace_bytes,
+        "total_bytes": kv_state_bytes + recurrent_state_bytes +
+        convolution_state_bytes + workspace_bytes,
+    }
+
+
 def build_residency_options(
     layers: Sequence[tuple[str, int]], category_bytes: Mapping[str, int],
     *, recipes: Mapping[str, Mapping[str, float]], device_budget_bytes: int,
@@ -365,5 +444,6 @@ __all__ = [
     "OFFICIAL_CONFIG_SHA256", "OFFICIAL_INDEX_SHA256", "OFFICIAL_MODEL_REPOSITORY",
     "OFFICIAL_MODEL_REVISION", "OFFICIAL_REFERENCE_REPOSITORY", "OFFICIAL_REFERENCE_REVISION",
     "blocked_source_evidence", "build_residency_options", "classify_tensor_bytes",
+    "estimate_runtime_state_and_workspace",
     "official_contract", "validate_source",
 ]

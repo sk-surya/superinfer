@@ -13,6 +13,7 @@ from superinfer.convert.flash_next import (
     build_residency_options,
     blocked_source_evidence,
     classify_tensor_bytes,
+    estimate_runtime_state_and_workspace,
     official_contract,
     validate_source,
 )
@@ -125,6 +126,49 @@ class FlashNextContractTests(unittest.TestCase):
 
 
 class FlashNextLedgerTests(unittest.TestCase):
+    def test_runtime_state_and_workspace_formula_is_deterministic(self) -> None:
+        config = {
+            "num_hidden_layers": 4,
+            "layer_types": ["linear_attention", "full_attention",
+                             "linear_attention", "full_attention"],
+            "hidden_size": 16,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "head_dim": 4,
+            "linear_num_key_heads": 2,
+            "linear_num_value_heads": 4,
+            "linear_key_head_dim": 2,
+            "linear_value_head_dim": 3,
+            "linear_conv_kernel_dim": 5,
+            "num_experts": 8,
+            "num_experts_per_tok": 2,
+            "moe_intermediate_size": 6,
+        }
+        first = estimate_runtime_state_and_workspace(
+            config, context_length=10, batch_size=2, activation_dtype_bytes=2,
+            kv_dtype_bytes=2, state_dtype_bytes=4,
+        )
+        second = estimate_runtime_state_and_workspace(
+            config, context_length=10, batch_size=2, activation_dtype_bytes=2,
+            kv_dtype_bytes=2, state_dtype_bytes=4,
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(first["kv_state_bytes"], 2 * 10 * 2 * 2 * 2 * 4 * 2)
+        self.assertEqual(first["recurrent_state_bytes"], 2 * 2 * 4 * 2 * 3 * 4)
+        self.assertEqual(first["convolution_state_bytes"], 2 * 2 * (2 * 2 * 2 + 4 * 3) * 5 * 2)
+        self.assertGreater(first["workspace_bytes"], 0)
+        self.assertEqual(first["total_bytes"], sum(
+            first[key] for key in ("kv_state_bytes", "recurrent_state_bytes",
+                                   "convolution_state_bytes", "workspace_bytes")
+        ))
+
+    def test_runtime_state_formula_rejects_invalid_context_and_batch(self) -> None:
+        config = {"num_hidden_layers": 1, "layer_types": ["full_attention"]}
+        for kwargs in ({"context_length": 0}, {"context_length": 4, "batch_size": 0}):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(
+                    FlashNextValidationError, "runtime_shape"):
+                estimate_runtime_state_and_workspace(config, **kwargs)
+
     def test_categories_reconcile_and_order_deterministically(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

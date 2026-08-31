@@ -1,0 +1,35 @@
+{
+  "schema": "superinfer.s03f.flash-next-runtime-state-formula.v1",
+  "status": "formula_only_complete_artifact_required",
+  "source": {
+    "path": "/srv/models/hf/Qwen3.8-Flash-Next-NVFP4",
+    "identity": "RadixArk private NVFP4 candidate",
+    "complete_checkpoint": false,
+    "config_sha256": "e765305daba0951974308f4d32c075b52a6a45974730d273f2216718a994d624"
+  },
+  "formula_inputs": {
+    "batch_size": 1,
+    "activation_dtype_bytes": 2,
+    "kv_dtype_bytes": 2,
+    "state_dtype_bytes": 4,
+    "contexts": [4096, 262144]
+  },
+  "results": {
+    "4096": {
+      "kv_state_bytes": 100663296,
+      "recurrent_state_bytes": 113246208,
+      "convolution_state_bytes": 2949120,
+      "workspace_bytes": 24576,
+      "total_bytes": 216883200
+    },
+    "262144": {
+      "kv_state_bytes": 6442450944,
+      "recurrent_state_bytes": 113246208,
+      "convolution_state_bytes": 2949120,
+      "workspace_bytes": 24576,
+      "total_bytes": 6558670848
+    }
+  },
+  "interpretation": "Formula-only state/workspace evidence; no complete model residency or quality claim.",
+  "implementation": "python/superinfer/convert/flash_next.py:estimate_runtime_state_and_workspace"
+}

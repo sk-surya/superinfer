@@ -124,7 +124,7 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
   `artifacts/S03/qwen38-layer42-input-amplification.json`.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
-- S03F-01 has pinned immutable Flash-Next model/reference revisions, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.
+- S03F-01 has pinned immutable Flash-Next model/reference revisions and now records formula-only text state/workspace estimates, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.
 - If acceptable full expert residency across two 5090s is not feasible, S03F-04 may not invent silent expert paging. Record a capacity/residency ADR first.
 - Dual-GPU runtime work must validate actual peer-access topology and retain a pinned-host staged fallback; peer access is not assumed from GPU model alone.
 - Flash-Next vision and MTP are explicitly outside S03F.

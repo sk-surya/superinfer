@@ -20,6 +20,10 @@ excluded as non-matches.
   `null`; no parameter-count or quality substitute is used.
 - Recorded D-019: residency feasibility is unknown and expert paging/staging/caching is forbidden
   until exact packed bytes and quality evidence exist.
+- Added a deterministic formula-only state/workspace estimator parameterized by context, batch,
+  activation, KV, and recurrent-state byte widths. It reports KV state, recurrent state,
+  convolution state, and a reusable decode-workspace lower bound without implying complete model
+  residency.
 - No Physical Plan, IR, compiler, specializer, runtime, CUDA, kernel, or memory-planner files were
   changed. S03F-02 remains blocked until S03 closes.
 
@@ -31,6 +35,14 @@ excluded as non-matches.
 - `pytest tests/unit/test_flash_next.py -q` could not run because `pytest` is not installed in this
   environment.
 - `SUPERINFER_VALIDATION_TMP=/srv/repos/superinfer/build/validation-tmp TMPDIR=/srv/repos/superinfer/build/superinfer-tmp CMAKE_BUILD_PARALLEL_LEVEL=2 python3 tools/validate.py --full` — all validation stages passed after the final research/tooling changes.
+- `TMPDIR=/srv/repos/superinfer/build/tmp uv run --extra dev pytest -q tests/unit/test_flash_next.py tests/unit` — 56 tests and 9 subtests passed after the runtime-state formula addition.
+- `TMPDIR=/srv/repos/superinfer/build/tmp python tools/validate.py --full` — all 11 repository validation stages passed.
+
+The formula evidence is `artifacts/S03F/flash-next-runtime-state-formula.json`. For the local
+candidate's 48-layer config, it estimates 216,883,200 bytes of text state/workspace at context
+4,096 and 6,558,670,848 bytes at context 262,144 under BF16 KV/convolution, FP32 recurrent state,
+and 2-byte activation assumptions. These values are not packed model totals and do not change the
+capacity/quality blocker.
 
 ## Exact blockers
 

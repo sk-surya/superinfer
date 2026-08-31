@@ -28,3 +28,23 @@ equivalence claim. The validator in `superinfer.convert.flash_next` reads config
 metadata only, requires exact revisions when provenance is supplied, and fails closed on a partial
 or mismatched source. Re-run it after acquiring all pinned shards and an executable reference
 revision; S03F-02 must not add expert staging or paging before that evidence exists.
+
+## Runtime-state formula evidence
+
+The research tool now exposes a deterministic formula-only estimate that is independent of
+checkpoint completeness. For the local candidate's pinned 48-layer text configuration, with
+batch 1, BF16 KV/convolution storage, FP32 recurrent state, and a 2-byte activation workspace,
+the estimate at the declared 262,144-token context is:
+
+| Component | Bytes |
+|---|---:|
+| Full-attention KV state | 6,442,450,944 |
+| Linear-attention recurrent state | 113,246,208 |
+| Linear-attention convolution state | 2,949,120 |
+| Reusable decode workspace lower bound | 24,576 |
+| Formula total | 6,558,670,848 |
+
+At context 4,096, the formula total is 216,883,200 bytes. These are state/workspace formulas,
+not complete model residency numbers: routed experts, shared experts, PLE, non-expert weights,
+and quality qualification remain blocked on the complete authenticated artifact and executable
+reference.

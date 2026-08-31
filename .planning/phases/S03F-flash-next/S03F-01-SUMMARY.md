@@ -39,3 +39,20 @@ excluded as non-matches.
 2. Supply an executable reference checkout for the pinned source, plus the pinned semantic metadata
    for PLE/N-gram and QSA where the technical report is insufficient.
 3. Run reference quality evaluation before selecting any quantization/residency candidate.
+
+## Partial NVFP4 evidence update
+
+The local RadixArk NVFP4 candidate is more exact than a generic "near match" label. Header-only
+inspection finds 91 routed-expert safetensors shards containing 139,776 tensors and exactly
+`32,204,669,952` tensor-payload bytes for 23 present layers. Twenty-two layers are complete; the
+missing layer-21 `experts-0256-0383` shard means one range is absent. All 22 matching complete
+layers have exactly `1,415,589,888` tensor-payload bytes, yielding a bounded projection of
+`67,948,314,624` routed-expert tensor bytes for all 48 layers. This remains a projection because
+layers 24–47 and all non-routed checkpoint families are absent locally.
+
+The candidate's checked-in audit reports 1,562 unchanged non-routed BF16 tensors comprising
+`118,408,052,728` bytes, including 31 MTP tensors. Its README records GSM8K `0.9727065959059894`
+and AIME26 `pass@1 0.9875` / `majority@8 1.0`. These are upstream serving evaluations, not
+SuperInfer reference-equivalence evidence and not authorization for residency selection.
+The detailed, hash-bound observation is
+`artifacts/S03F/flash-next-partial-nvfp4-ledger.json`. It does not change D-019 or unblock S03F-02.

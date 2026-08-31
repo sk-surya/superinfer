@@ -1,0 +1,102 @@
+{
+  "schema": "superinfer.s03f.flash-next-partial-nvfp4-ledger.v1",
+  "status": "incomplete_diagnostic",
+  "observation": {
+    "status": "incomplete_but_qualified_upstream_candidate",
+    "local_path": "/srv/models/hf/Qwen3.8-Flash-Next-NVFP4",
+    "layer_coverage": {
+      "layers_present": 23,
+      "complete_layer_ranges_present": 22,
+      "missing_layer_21_range": "experts-0256-0383",
+      "layers_absent": [
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47
+      ]
+    },
+    "safetensors": {
+      "routed_expert_safetensors_files": 91,
+      "tensor_records": 139776,
+      "tensor_payload_bytes": 32204669952,
+      "physical_file_bytes": 32223105024
+    },
+    "complete_layer_tensor_bytes": 1415589888,
+    "complete_layer_count": 22,
+    "projected_48_layer_routed_expert_tensor_bytes": 67948314624,
+    "projection_method": "22 matching complete layers are byte-identical in tensor payload; multiply by 48",
+    "category_bytes": {
+      "routed_experts": 32204669952,
+      "embedding_lm_head": 0,
+      "mtp": 0,
+      "non_expert_text": 0,
+      "ple": 0,
+      "router_indexer": 0,
+      "shared_experts": 0,
+      "vision": 0
+    },
+    "unchanged_non_routed_bf16": {
+      "tensors": 1562,
+      "bytes": 118408052728,
+      "mtp_tensors": 31,
+      "source": "audit_unchanged_report.json",
+      "sha256": "b0901c9029446c7e78f864b359096c73846c54fb8ecd7dd9c77357e4f0530f51"
+    },
+    "identity_hashes": {
+      "config.json": "e765305daba0951974308f4d32c075b52a6a45974730d273f2216718a994d624",
+      "hf_quant_config.json": "7e69ef4b94302ae5b6f453b913621f698d5631a1d023d8b3e9e3b829721b98e8",
+      "README.md": "2b62aaf5b5d876732a2f4efb5f023ca31185ba324110fc9be27c8b088ee827a2",
+      "audit_unchanged_report.json": "b0901c9029446c7e78f864b359096c73846c54fb8ecd7dd9c77357e4f0530f51",
+      "gsm8k_metrics.json": "88766f7e1da1f8a7a8adb98ba3df94c4db6982af1176e35af12e223a81952a20",
+      "aime26_metrics.json": "eb4acd8c64618dc36db5c909b05ead73d172f5fdc90c42b44685c77468032ae9"
+    },
+    "quality_evidence_status": "upstream_protocol_metrics_present_but_not_accepted_for_residency_decision",
+    "quality_metrics": {
+      "gsm8k": {
+        "score": 0.9727065959059894,
+        "num_examples": 1319,
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "max_tokens": 8192,
+        "source_sha256": "88766f7e1da1f8a7a8adb98ba3df94c4db6982af1176e35af12e223a81952a20"
+      },
+      "aime26": {
+        "pass@1": 0.9875,
+        "majority@8": 1.0,
+        "num_examples": 30,
+        "n_repeats": 8,
+        "temperature": 1.0,
+        "max_tokens": 130000,
+        "source_sha256": "eb4acd8c64618dc36db5c909b05ead73d172f5fdc90c42b44685c77468032ae9"
+      }
+    }
+  },
+  "scientific_limitations": [
+    "This is not the complete 48-layer official checkpoint.",
+    "The 48-layer routed-expert total is a projection from matching complete layers, not a full ledger.",
+    "It excludes all non-routed weights because those shard families are absent locally.",
+    "Existing GSM8K/AIME metrics are upstream serving evaluations and do not qualify this candidate for SuperInfer reference equivalence or residency promotion."
+  ],
+  "runtime_change": false,
+  "s03f_02_status": "engineering_blocked_on_S03"
+}

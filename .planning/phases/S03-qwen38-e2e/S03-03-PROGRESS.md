@@ -337,3 +337,12 @@ capture differed from the incumbent, but its reference comparison worsened from
 `0.5856843/0.0430106/0.0568142` to `0.8269062/0.0435945/0.0570161` for max/mean/RMSE, with
 four failing rows rather than two. The isolated build was discarded and the production kernel was
 restored unchanged. Evidence is recorded in `artifacts/S03/qwen38-kahan-probe.json`.
+
+An opt-in oracle probe then rounded the exact semantic operation boundaries that the lowering
+materializes through BF16: embedding, input norm, token mixer, attention residual, post norm, MLP,
+layer residual, and final norm. Against the same 60-row target capture, this produced
+`0.8422465/0.0466893/0.0633060` max/mean/RMSE with 14 failing rows, compared with the incumbent
+`0.5856843/0.0430106/0.0568142` and two failing rows. The semantic-boundary storage hypothesis
+is rejected; the opt-in reference flag is retained as a reusable diagnostic and no acceptance
+contract or production runtime changed. Evidence is recorded in
+`artifacts/S03/qwen38-semantic-boundary-rounding-probe.json`.

@@ -1,0 +1,56 @@
+{
+  "kind": "qwen38_reference_semantic_boundary_rounding_probe",
+  "status": "rejected_hypothesis",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": {
+    "case": "chat-template",
+    "rows": 60,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a"
+  },
+  "reference": {
+    "script": "tools/qwen38_corpus_reference.py",
+    "transformers_version": "5.12.1",
+    "torch_version": "2.13.0+cu130",
+    "device": "cuda:0",
+    "checkpoint": "/srv/models/hf/Qwen3.8-27B-NVFP4-RTX5090-LMHead4",
+    "flags": [
+      "--round-semantic-boundaries",
+      "--round-embedding",
+      "--round-final-norm",
+      "--round-kv",
+      "--round-linear-state"
+    ],
+    "capture": "build/evidence/reference-semantic-boundaries-v1/chat-template.f32",
+    "capture_sha256": "f0e9e68278d7051f9badd8d1ac2e0d6cba27f4168fd35343e6acd73a0e9a68c8"
+  },
+  "semantic_boundaries": [
+    "embedding output",
+    "input RMSNorm output",
+    "token mixer output",
+    "attention residual input",
+    "post-attention RMSNorm output",
+    "MLP output",
+    "layer residual output",
+    "final RMSNorm output"
+  ],
+  "comparison": {
+    "target_capture": "build/evidence/qwen38-s03-acceptance-deployment-v8/chat-template/run-0-base.f32 plus run-0-continuation.f32",
+    "target_capture_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99",
+    "contract": {"max_abs": 0.5, "mean_abs": 0.1, "rmse": 0.15},
+    "semantic_boundaries": {
+      "max_abs": 0.8422465324,
+      "mean_abs": 0.0466893092,
+      "rmse": 0.0633060222,
+      "failing_rows": [12, 13, 18, 23, 24, 25, 27, 28, 29, 31, 32, 35, 54, 55]
+    },
+    "incumbent_deployment_v8": {
+      "max_abs": 0.5856842995,
+      "mean_abs": 0.0430105747,
+      "rmse": 0.0568142491,
+      "failing_rows": [23, 29]
+    }
+  },
+  "conclusion": "Rounding the exact semantic operation boundaries does not reproduce the target more closely; it worsens all aggregate error metrics and increases the failing-row set. The deployment-v8 oracle contract remains incumbent, no tolerance changed, and no production runtime change was made."
+}

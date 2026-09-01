@@ -68,6 +68,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="round the final RMSNorm output through BF16 before the LM head",
     )
     parser.add_argument(
+        "--round-semantic-boundaries", action="store_true",
+        help="round the exact authored operation boundaries through BF16",
+    )
+    parser.add_argument(
         "--round-kv", action="store_true",
         help="store every DynamicCache K/V update as BF16, then read it as FP32",
     )
@@ -115,6 +119,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
 def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Path,
                round_activations: bool,
                round_embedding: bool, round_final_norm: bool,
+               round_semantic_boundaries: bool,
                round_kv: bool, round_linear_state: bool,
                hidden_output: Path | None = None, hidden_case: str | None = None,
                hidden_step: int | None = None, boundaries_output: Path | None = None,
@@ -218,7 +223,7 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "id": case_id,
             "tokens": token_ids,
             "hidden": [((embedding[token].to(torch.bfloat16).to(torch.float32)
-                         if round_embedding else embedding[token]).reshape(1, 1, -1))
+                         if round_embedding or round_semantic_boundaries else embedding[token]).reshape(1, 1, -1))
                        for token in token_ids],
             "cache": (DeploymentStorageDynamicCache(
                 config=config, round_kv=round_kv, round_linear_state=round_linear_state
@@ -256,6 +261,38 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                             device=device, dtype=torch.float32)
             layer.load_state_dict(state_dict, strict=True)
             del state_dict
+
+            semantic_hooks = []
+            if round_semantic_boundaries:
+                def round_tensor(value: Any) -> Any:
+                    if torch.is_tensor(value):
+                        return value.to(torch.bfloat16).to(torch.float32)
+                    return value
+
+                def round_module_output(value: Any) -> Any:
+                    if isinstance(value, tuple) and value:
+                        return (round_tensor(value[0]), *value[1:])
+                    return round_tensor(value)
+
+                def round_first_input(module: Any, inputs: tuple[Any, ...]) -> tuple[Any, ...]:
+                    if not inputs:
+                        return inputs
+                    return (round_tensor(inputs[0]), *inputs[1:])
+
+                token_mixer = getattr(layer, "linear_attn", None) or getattr(layer, "self_attn", None)
+                if token_mixer is None:
+                    raise ValueError(f"layer {layer_index} has no token mixer")
+                semantic_hooks.extend([
+                    layer.input_layernorm.register_forward_hook(
+                        lambda _module, _inputs, output: round_module_output(output)),
+                    token_mixer.register_forward_hook(
+                        lambda _module, _inputs, output: round_module_output(output)),
+                    layer.post_attention_layernorm.register_forward_pre_hook(round_first_input),
+                    layer.post_attention_layernorm.register_forward_hook(
+                        lambda _module, _inputs, output: round_module_output(output)),
+                    layer.mlp.register_forward_hook(
+                        lambda _module, _inputs, output: round_module_output(output)),
+                ])
 
             if round_linear_state and hasattr(layer, "linear_attn"):
                 # The deployment causal-convolution kernel stores the current qkv row as BF16
@@ -307,7 +344,7 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                         attention_boundary_count += 1
                     elif attention_boundaries_output is not None:
                         mixer_outputs.clear()
-                    if round_activations:
+                    if round_activations or round_semantic_boundaries:
                         updated = updated.to(torch.bfloat16).to(torch.float32)
                     if (boundaries_output is not None and state["id"] == boundary_case and
                             (boundary_step is None or position == boundary_step)):
@@ -355,6 +392,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                 state["hidden"] = next_hidden
             if mixer_hook is not None:
                 mixer_hook.remove()
+            for hook in semantic_hooks:
+                hook.remove()
             del layer
             gc.collect()
 
@@ -366,7 +405,7 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
         for state in states:
             for position, hidden in enumerate(state["hidden"]):
                 normalized = reference._rms_norm(hidden, final_norm, config.rms_norm_eps)
-                if round_final_norm:
+                if round_final_norm or round_semantic_boundaries:
                     normalized = normalized.to(torch.bfloat16).to(torch.float32)
                 if (hidden_output is not None and state["id"] == hidden_case and
                         (hidden_step is None or position == hidden_step)):
@@ -469,6 +508,7 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "round_activations": round_activations,
             "round_embedding": round_embedding,
             "round_final_norm": round_final_norm,
+            "round_semantic_boundaries": round_semantic_boundaries,
             "round_kv": round_kv,
             "round_linear_state": round_linear_state,
             "device": str(device),
@@ -523,7 +563,7 @@ def main() -> int:
     corpus = json.loads(args.corpus.read_text())
     report = _run_cases(args.model_dir, select_cases(corpus, args.case_ids), args.output_dir,
         args.round_activations,
-                        args.round_embedding, args.round_final_norm,
+        args.round_embedding, args.round_final_norm, args.round_semantic_boundaries,
                         args.round_kv, args.round_linear_state,
                         args.hidden_output,
                         args.hidden_case, args.hidden_step, args.boundaries_output,

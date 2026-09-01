@@ -1,0 +1,42 @@
+{
+  "kind": "qwen38_cuda_fmad_off_probe",
+  "status": "rejected_hypothesis",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": {
+    "case": "chat-template",
+    "tokens": 30,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a"
+  },
+  "experiment": {
+    "isolated_build": "build/cuda-sm120a-fmad-off",
+    "compiler_flag": "--fmad=false",
+    "production_change_kept": false,
+    "hypothesis": "CUDA FMA contraction differences are the primary cause of accumulated long-context drift"
+  },
+  "captures": {
+    "fmad_off_sha256": "02093aac92c41387feb73d391c611ade1e356035e5df3d53db031a5aa99f1587",
+    "incumbent_first_30_sha256": "367b47fc5c40705f0d584f4b428f63985ef18ca784ef951f74399a3fb5ab70a7",
+    "fmad_off_vs_incumbent_max_abs": 0.984375,
+    "fmad_off_vs_incumbent_mean_abs": 0.0487877615,
+    "fmad_off_vs_incumbent_rmse": 0.0665996075
+  },
+  "reference_comparison": {
+    "reference": "build/evidence/reference-deployment-v8/chat-template.f32 first 30 rows",
+    "contract": {"max_abs": 0.5, "mean_abs": 0.1, "rmse": 0.15},
+    "fmad_off": {
+      "max_abs": 0.5925693512,
+      "mean_abs": 0.0434431210,
+      "rmse": 0.0570750982,
+      "failing_rows": [21, 24, 28, 29]
+    },
+    "incumbent": {
+      "max_abs": 0.5856842995,
+      "mean_abs": 0.0430105776,
+      "rmse": 0.0568142496,
+      "failing_rows": [23, 29]
+    }
+  },
+  "conclusion": "Disabling FMA contraction materially changes the capture and worsens the numerical contract. The isolated build was discarded; no production kernel or tolerance changed."
+}

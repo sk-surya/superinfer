@@ -137,6 +137,7 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
 - The final two-session S03 acceptance refresh is recorded in `artifacts/S03/qwen38-s03-final-acceptance-refresh.json`: all corpus greedy tokens and captures are repeatable, but chat-template and varied-length still fail the unchanged numerical contract.
 - The authoritative deployment-v8 two-session acceptance is recorded in `artifacts/S03/qwen38-s03-deployment-v8-acceptance.json`: plain/Unicode/special pass; chat-template and varied-length are greedy-correct and repeatable but numerically fail. Post-attention/state localization is recorded in `artifacts/S03/qwen38-post-attention-state-localization-v8.json`.
 - A reference-only per-layer BF16 output-rounding probe worsened the chat max error to `1.0134909153` and is rejected; no production change was made.
+- An isolated CUDA `--fmad=false` build materially changed the 30-token capture and worsened the reference comparison; FMA contraction is rejected as the primary drift correction. Evidence: `artifacts/S03/qwen38-fmad-off-probe.json`.
 - If acceptable full expert residency across two 5090s is not feasible, S03F-04 may not invent silent expert paging. Record a capacity/residency ADR first.
 - Dual-GPU runtime work must validate actual peer-access topology and retain a pinned-host staged fallback; peer access is not assumed from GPU model alone.
 - Flash-Next vision and MTP are explicitly outside S03F.

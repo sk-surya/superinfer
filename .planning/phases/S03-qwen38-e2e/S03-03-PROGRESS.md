@@ -322,3 +322,11 @@ Evidence is recorded in `artifacts/S03/qwen38-post-attention-state-localization-
 S03 remains open: the numerical contract and tolerances are unchanged, no production kernel was
 modified, and S03F-02 remains engineering-blocked until the contract is resolved or formally
 superseded by an approved evidence-backed decision.
+
+A compiler arithmetic probe built the CUDA target with `--fmad=false` and replayed the first 30
+chat-template tokens. The capture changed materially from the incumbent (`max_abs=0.984375`),
+and its reference comparison worsened to max/RMSE `0.5925694/0.0570751` with failing rows
+`21,24,28,29`; the incumbent has max/RMSE `0.5856843/0.0568142` with failing rows `23,29`.
+FMA contraction is therefore rejected as the primary correction. The isolated build was not
+promoted and no production kernel changed. Evidence is recorded in
+`artifacts/S03/qwen38-fmad-off-probe.json`.

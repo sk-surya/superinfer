@@ -413,3 +413,26 @@ S03 remains open because the unchanged numerical contract still fails on the lon
 acceptance cases. The next closure boundary is a reviewed root-cause correction or a separately
 reviewed, independently justified superseding numerical contract, followed by the final
 acceptance bundle and fresh re-review.
+
+## First full-attention jump localization
+
+The next planned diagnostic captured the first full-attention layer at chat-template step 29,
+where all-layer tracing previously showed the first material boundary jump. The explicit physical
+trace covers input RMSNorm, q/gate projection, K/V projections, Q/K norms, partial RoPE,
+cache-backed grouped attention, sigmoid output gate, output projection, token-mixer residual,
+post-attention RMSNorm, all MLP stages, and the layer residual. The independent Transformers
+trace uses the same deployment-v8 storage contract; split, SiLU-product, and final-residual
+values are derived only from captured reference tensors.
+
+Every full-attention operation remains bounded: input RMSNorm max `0.0361`, Q/gate projection
+`0.0335`, attended output `0.0106`, output projection `0.0171`, token-mixer residual `0.0723`,
+and final layer residual `0.0699`. The target's gated MLP product self-check is max `0.00000006`;
+its residual self-check is max `0.005619`. This rules out a standalone KV, RoPE, GQA, output
+gate, full-attention, or MLP implementation defect at the first jump. The jump is inherited
+activation error entering the block. Evidence is recorded in
+`artifacts/S03/qwen38-full-attention-operation-localization-v10.json`, with raw captures under
+`build/evidence/trace-chat29-full-attention/` and
+`build/evidence/reference-chat29-full-attention/`.
+
+S03 remains open under the unchanged numerical contract. The remaining technical question is
+the accumulated pre-layer-3 activation drift, not full-attention correctness.

@@ -1,0 +1,60 @@
+{
+  "kind": "qwen38_full_attention_operation_localization",
+  "status": "standalone_path_passes_upstream_error_inherited",
+  "case": "chat-template",
+  "step": 29,
+  "model_layer": 3,
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "reference": {
+    "implementation": "Transformers 5.12.1 Qwen3_5DecoderLayer",
+    "torch": "2.13.0+cu130",
+    "storage_contract": [
+      "BF16 embedding I/O",
+      "BF16 KV cache",
+      "BF16 causal-convolution state",
+      "FP32 recurrent state",
+      "BF16 final-norm I/O"
+    ]
+  },
+  "gpu": "GPU 0 RTX 5090 sm_120a",
+  "physical_trace": {
+    "target_path": "build/evidence/trace-chat29-full-attention/trace-explicit.f32",
+    "target_sha256": "0ba222b395a52756360cc78cf8b26deaec32e0dbccbc8467b47ed21141ec35db",
+    "reference_path": "build/evidence/reference-chat29-full-attention/trace-explicit.f32",
+    "reference_sha256": "0c9636a9d01436145f8d23407b1e602b907b422ebad2437dd591ede3de9830f3",
+    "comparison": [
+      {"request": "120:1861 input RMSNorm", "max_abs": 0.03610420, "mean_abs": 0.00139214, "rmse": 0.00204919},
+      {"request": "123:1864 q/gate projection", "max_abs": 0.03346825, "mean_abs": 0.00627596, "rmse": 0.00805989},
+      {"request": "125:1867 K projection", "max_abs": 0.01456034, "mean_abs": 0.00267090, "rmse": 0.00350665},
+      {"request": "126:1868 V projection", "max_abs": 0.01310134, "mean_abs": 0.00216313, "rmse": 0.00271103},
+      {"request": "127:1869 Q norm", "max_abs": 0.01442671, "mean_abs": 0.00272272, "rmse": 0.00348361},
+      {"request": "128:1870 K norm", "max_abs": 0.01624715, "mean_abs": 0.00311609, "rmse": 0.00405200},
+      {"request": "129:1871 Q RoPE", "max_abs": 0.01442671, "mean_abs": 0.00272560, "rmse": 0.00348361},
+      {"request": "130:1872 K RoPE", "max_abs": 0.01624811, "mean_abs": 0.00311349, "rmse": 0.00405200},
+      {"request": "132:1873 attended output", "max_abs": 0.01063854, "mean_abs": 0.00108232, "rmse": 0.00141558},
+      {"request": "133:1874 sigmoid output gate", "max_abs": 0.00395894, "mean_abs": 0.00004154, "rmse": 0.00009259},
+      {"request": "134:1863 output projection", "max_abs": 0.01707649, "mean_abs": 0.00008915, "rmse": 0.00026346},
+      {"request": "138:1885 token-mixer residual", "max_abs": 0.07232285, "mean_abs": 0.00027143, "rmse": 0.00106776},
+      {"request": "141:1887 post-attention RMSNorm", "max_abs": 0.00748420, "mean_abs": 0.00068053, "rmse": 0.00091187},
+      {"request": "144:1890 MLP gate projection", "max_abs": 0.00420031, "mean_abs": 0.00062276, "rmse": 0.00078319},
+      {"request": "145:1891 MLP up projection", "max_abs": 0.00516075, "mean_abs": 0.00060587, "rmse": 0.00076222},
+      {"request": "146:1892 MLP SiLU product", "max_abs": 0.00567365, "mean_abs": 0.00005669, "rmse": 0.00011155},
+      {"request": "147:1889 MLP down projection", "max_abs": 0.00244623, "mean_abs": 0.00015615, "rmse": 0.00020082},
+      {"request": "151:1901 layer residual", "max_abs": 0.06990433, "mean_abs": 0.00034255, "rmse": 0.00106998}
+    ]
+  },
+  "invariants_checked": {
+    "target_silu_product": {"max_abs": 0.00000006, "rmse": 0.00000000},
+    "target_layer_residual": {"max_abs": 0.00561898, "mean_abs": 0.00008647, "rmse": 0.00015725},
+    "reference_derived_residual": {"definition": "post-token-mixer residual plus MLP down projection"}
+  },
+  "conclusion": [
+    "The first full-attention layer's authored projections, norms, RoPE, cache-backed attention, output gate, output projection, MLP, and residual are externally differential at small bounded error.",
+    "The layer-3 boundary jump is inherited from accumulated hidden-state error entering the block; it is not a standalone KV, RoPE, GQA, output-gate, or full-attention kernel defect.",
+    "No production kernel or tolerance change is justified by this probe."
+  ],
+  "follow_up": "Keep S03 open and investigate the source of accumulated pre-layer-3 activation drift or prepare a separately reviewed, independently justified quantized-reference contract."
+}

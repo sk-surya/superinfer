@@ -14,6 +14,7 @@ from superinfer.convert.flash_next import (
     blocked_source_evidence,
     classify_tensor_bytes,
     estimate_runtime_state_and_workspace,
+    inspect_gguf_source,
     official_contract,
     validate_source,
 )
@@ -65,6 +66,39 @@ def _write_source(root: Path, *, config_overrides: dict[str, object] | None = No
         json.dumps({"weight_map": {name: "model-00001-of-00001.safetensors" for name in tensors}}),
         encoding="utf-8",
     )
+
+
+def _write_gguf(path: Path, tensors: list[tuple[str, tuple[int, ...], int]], *,
+                split_no: int, split_count: int) -> None:
+    def string(value: str) -> bytes:
+        encoded = value.encode()
+        return struct.pack("<Q", len(encoded)) + encoded
+
+    def value(value: object) -> bytes:
+        if isinstance(value, str):
+            return struct.pack("<I", 8) + string(value)
+        if isinstance(value, int):
+            return struct.pack("<I", 4) + struct.pack("<i", value)
+        raise TypeError(value)
+
+    metadata = [
+        ("general.architecture", "qwen4exp"),
+        ("general.alignment", 32),
+        ("split.no", split_no),
+        ("split.count", split_count),
+    ]
+    tensor_info = bytearray()
+    payload_size = 0
+    for name, shape, tensor_type in tensors:
+        tensor_info += string(name)
+        tensor_info += struct.pack("<I", len(shape))
+        tensor_info += struct.pack("<" + "Q" * len(shape), *shape)
+        tensor_info += struct.pack("<I Q", tensor_type, payload_size)
+        payload_size += {0: 4 * 4, 7: 24, 22: 82}[tensor_type]
+    kv = b"".join(string(name) + value(item) for name, item in metadata)
+    header = struct.pack("<4s I Q Q", b"GGUF", 3, len(tensors), len(metadata)) + kv + tensor_info
+    data_offset = (len(header) + 31) // 32 * 32
+    path.write_bytes(header + b"\0" * (data_offset - len(header)) + b"\0" * payload_size)
 
 
 class FlashNextContractTests(unittest.TestCase):
@@ -126,6 +160,39 @@ class FlashNextContractTests(unittest.TestCase):
 
 
 class FlashNextLedgerTests(unittest.TestCase):
+    def test_inspects_complete_gguf_shards_and_classifies_packed_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_gguf(root / "model-00001-of-00002.gguf", [
+                ("token_embd.weight", (4,), 0),
+                ("blk.0.ffn_gate_exps.weight", (256,), 22),
+            ], split_no=0, split_count=2)
+            _write_gguf(root / "model-00002-of-00002.gguf", [
+                ("per_layer_token_embd.weight", (32,), 7),
+                ("blk.0.ffn_gate_shexp.weight", (4,), 0),
+            ], split_no=1, split_count=2)
+            inventory = inspect_gguf_source(root)
+            self.assertEqual(inventory["shard_count"], 2)
+            self.assertEqual(inventory["tensor_count"], 4)
+            self.assertEqual(inventory["category_bytes"]["embedding_lm_head"], 16)
+            self.assertEqual(inventory["category_bytes"]["ple"], 24)
+            self.assertEqual(inventory["category_bytes"]["routed_experts"], 82)
+            self.assertEqual(inventory["category_bytes"]["shared_experts"], 16)
+            self.assertEqual(inventory["tensor_payload_bytes"], 138)
+            self.assertEqual(inventory["split_numbers"], [0, 1])
+            self.assertEqual(inventory["metadata"]["general.architecture"], "qwen4exp")
+
+    def test_gguf_inventory_rejects_missing_shard_and_unknown_tensor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_gguf(root / "model-00001-of-00002.gguf", [("mystery", (4,), 0)],
+                        split_no=0, split_count=2)
+            with self.assertRaisesRegex(FlashNextValidationError, "shards"):
+                inspect_gguf_source(root)
+            _write_gguf(root / "model-00002-of-00002.gguf", [], split_no=1, split_count=2)
+            with self.assertRaisesRegex(FlashNextValidationError, "unclassified"):
+                inspect_gguf_source(root)
+
     def test_runtime_state_and_workspace_formula_is_deterministic(self) -> None:
         config = {
             "num_hidden_layers": 4,

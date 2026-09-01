@@ -22,7 +22,16 @@
     "local_candidate": "/srv/models/hf/Qwen3.8-Flash-Next-NVFP4",
     "local_candidate_complete_layers": "0-20 and 22; layer 21 incomplete",
     "reference_repository": "QwenLM/Qwen3.8-Flash-Next",
-    "reference_revision": "69885871a64393807d988b27b1b5e380e8f28526"
+    "reference_revision": "69885871a64393807d988b27b1b5e380e8f28526",
+    "local_packed_candidate_evidence": "flash-next-gguf-candidate-inventory.json"
+  },
+  "local_packed_candidate": {
+    "status": "complete_packed_inventory_quality_unqualified",
+    "artifact": "flash-next-gguf-candidate-inventory.json",
+    "tensor_payload_bytes": 94514368000,
+    "ple_bytes": 38435205120,
+    "computational_tensor_bytes": 56079162880,
+    "quality_evidence": "not_available"
   },
   "reason": "The official config/index are pinned, but the complete checkpoint headers/payload and executable reference are unavailable locally; no partial or parameter-count estimate is substituted.",
   "source_evidence": "flash-next-source-evidence.json",

@@ -32,7 +32,7 @@ s03f_01_status: research_complete_capacity_quality_blocked
 | S01 | Complete — Gate A reached | 3 | [S01-01](phases/S01-artifact-ir/S01-01-SUMMARY.md), [S01-02](phases/S01-artifact-ir/S01-02-SUMMARY.md), [S01-03](phases/S01-artifact-ir/S01-03-SUMMARY.md) |
 | S02 | Complete — Gate B reached | 3 | [S02-03](phases/S02-sm120-baseline/S02-03-SUMMARY.md) |
 | S03 | In progress | 3 | S03-01 and S03-02 complete; S03-03 acceptance is blocked by accumulated numerical drift |
-| S03F | Planned; S03F-01 may run research-only in parallel | 6 | [design](FLASH-NEXT-DESIGN.md); capacity/model-contract evidence pending |
+| S03F | Planned; S03F-01 may run research-only in parallel | 6 | [design](FLASH-NEXT-DESIGN.md); official quality decision pending; local packed candidate inventoried |
 | S04 | Planned; blocked on S03F correctness | 3 | Pending |
 | S05 | Planned | 3 | Pending |
 | S06 | Planned | 2 | Pending |
@@ -43,7 +43,7 @@ s03f_01_status: research_complete_capacity_quality_blocked
 
 S03 remains the primary implementation lane. The corrected deployment oracle now bounds the long-context chat result: the deterministic 60-token SuperInfer replay matches all 60 Transformers greedy tokens but fails the unchanged 0.5 max-abs logit contract on rows 23, 29, and 30 while passing mean/RMSE limits. Full CPU repository validation passes. GPU 0 is available for controlled diagnostics; GPU 1 remains occupied by the user-owned NInfer service. The latest state/liveness probes are recorded in `artifacts/S03/qwen38-long-replay-diagnostic-round2.json`.
 
-The approved S03F amendment adds Flash-Next after S03 and before S04. **Only S03F-01 may begin before S03 closes**, and it is research-only: pin reference/model revisions, inventory exact packed tensors, produce a capacity ledger, and evaluate quantization/residency recipes. S03F-01 has pinned official model/source identity and metadata, and now records exact header evidence from the incomplete RadixArk NVFP4 candidate: 32.20 GiB of routed-expert tensor bytes over 23 layers and a bounded 48-layer projection of 67.95 GiB from 22 matching complete layers. It remains capacity/quality blocked because the complete checkpoint and executable reference are unavailable locally, and no upstream serving metric substitutes for SuperInfer qualification. It did not modify Physical Plan, MemoryPlanner, runtime or kernels.
+The approved S03F amendment adds Flash-Next after S03 and before S04. **Only S03F-01 may begin before S03 closes**, and it is research-only: pin reference/model revisions, inventory exact packed tensors, produce a capacity ledger, and evaluate quantization/residency recipes. S03F-01 has pinned official model/source identity and metadata, records the incomplete RadixArk NVFP4 candidate, and now inventories a complete local AtomicChat GGUF conversion with exact shard hashes and packed tensor bytes. The local conversion fits a two-device capacity projection with host-mmap PLE and 4 GiB headroom per GPU, but it is not the official checkpoint and has no SuperInfer quality evidence. Official capacity/quality selection remains blocked, and no upstream serving metric substitutes for SuperInfer qualification. The research tooling did not modify Physical Plan, MemoryPlanner, runtime or kernels.
 
 The current S03 reference is pinned to the actually qualified Transformers `5.12.1` / torch
 `2.13.0+cu130` environment. Its deployment-storage correction models cached GDN decode from
@@ -133,7 +133,7 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
   `artifacts/S03/qwen38-layer42-input-amplification.json`.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
-- S03F-01 has pinned immutable Flash-Next model/reference revisions and now records formula-only text state/workspace estimates, but must compute exact packed-byte residency from a complete authenticated artifact and obtain executable-reference quality evidence before implementation assumes expert fit.
+- S03F-01 has pinned immutable Flash-Next model/reference revisions, exact formula-only state/workspace estimates, and a complete authenticated local GGUF conversion inventory. Its capacity-only projection fits with host-mmap PLE and 4 GiB per-GPU headroom, but the conversion is not the pinned official artifact and has no executable-reference quality evidence; no expert residency implementation may assume support until that decision is resolved.
 - The final two-session S03 acceptance refresh is recorded in `artifacts/S03/qwen38-s03-final-acceptance-refresh.json`: all corpus greedy tokens and captures are repeatable, but chat-template and varied-length still fail the unchanged numerical contract.
 - The authoritative deployment-v8 two-session acceptance is recorded in `artifacts/S03/qwen38-s03-deployment-v8-acceptance.json`: plain/Unicode/special pass; chat-template and varied-length are greedy-correct and repeatable but numerically fail. Post-attention/state localization is recorded in `artifacts/S03/qwen38-post-attention-state-localization-v8.json`.
 - A reference-only per-layer BF16 output-rounding probe worsened the chat max error to `1.0134909153` and is rejected; no production change was made.

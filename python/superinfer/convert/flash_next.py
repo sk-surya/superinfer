@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import struct
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -24,6 +25,27 @@ OFFICIAL_INDEX_SHA256 = "99e815241ef03325536b0aaa4441deea45174c17fae31e10f0bb456
 
 class FlashNextValidationError(ValueError):
     """Stable, fail-closed source or capacity diagnostic."""
+
+
+_GGUF_QUANT_SIZES: dict[int, tuple[int, int]] = {
+    0: (1, 4), 1: (1, 2), 2: (32, 18), 3: (32, 20), 6: (32, 22), 7: (32, 24),
+    8: (32, 34), 9: (32, 40), 10: (256, 84), 11: (256, 110), 12: (256, 144),
+    13: (256, 176), 14: (256, 210), 15: (256, 292), 16: (256, 66),
+    17: (256, 74), 18: (256, 98), 19: (256, 56), 20: (32, 18), 21: (256, 110),
+    22: (256, 82), 23: (256, 136), 24: (1, 1), 25: (1, 2), 26: (1, 4),
+    27: (1, 8), 28: (1, 8), 29: (256, 56), 30: (1, 2), 34: (256, 54),
+    35: (256, 66), 39: (32, 17), 40: (64, 36), 41: (128, 18), 42: (64, 18),
+}
+_GGUF_TYPE_NAMES = {
+    0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1", 6: "Q5_0", 7: "Q5_1",
+    8: "Q8_0", 9: "Q8_1", 10: "Q2_K", 11: "Q3_K", 12: "Q4_K", 13: "Q5_K",
+    14: "Q6_K", 15: "Q8_K", 16: "IQ2_XXS", 17: "IQ2_XS", 18: "IQ3_XXS",
+    19: "IQ1_S", 20: "IQ4_NL", 21: "IQ3_S", 22: "IQ2_S", 23: "IQ4_XS",
+    24: "I8", 25: "I16", 26: "I32", 27: "I64", 28: "F64", 29: "IQ1_M",
+    30: "BF16", 34: "TQ1_0", 35: "TQ2_0", 39: "MXFP4", 40: "NVFP4",
+    41: "Q1_0", 42: "Q2_0",
+}
+_GGUF_SHARD_RE = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$")
 
 
 @dataclass(frozen=True)
@@ -99,6 +121,27 @@ class FlashNextInventory:
         return hashlib.sha256(self.canonical_json().encode()).hexdigest()
 
 
+def _classify_tensor_name(name: str) -> str:
+    lowered = name.lower()
+    if "visual" in lowered or "vision" in lowered:
+        return "vision"
+    if ".mtp" in lowered or lowered.startswith("mtp"):
+        return "mtp"
+    if "per_layer_token_embd" in lowered or ".ple_" in lowered or lowered.startswith("ple"):
+        return "ple"
+    if ".indexer." in lowered or "router" in lowered or ".ffn_gate_inp" in lowered:
+        return "router_indexer"
+    if "shared_expert" in lowered or "_shexp" in lowered:
+        return "shared_experts"
+    if ".experts." in lowered or ".expert." in lowered or "_exps" in lowered:
+        return "routed_experts"
+    if lowered in {"output.weight", "token_embd.weight"} or "embed" in lowered or "lm_head" in lowered:
+        return "embedding_lm_head"
+    if lowered.startswith(("model.", "language_model.", "transformer.", "blk.", "output_hc")):
+        return "non_expert_text"
+    raise FlashNextValidationError(f"unclassified_tensor [{name}]")
+
+
 def _read_json(path: Path, label: str) -> Mapping[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -150,6 +193,221 @@ def _sha256_file(path: Path) -> str:
     except (FileNotFoundError, OSError) as error:
         raise FlashNextValidationError(f"missing_file [{path.name}]") from error
     return digest.hexdigest()
+
+
+class _GgufReader:
+    """Small metadata-only GGUF reader used for reproducible inventory evidence."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        try:
+            self.stream = path.open("rb")
+        except (FileNotFoundError, OSError) as error:
+            raise FlashNextValidationError(f"missing_file [{path.name}]") from error
+
+    def __enter__(self) -> "_GgufReader":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.stream.close()
+
+    def read(self, size: int) -> bytes:
+        value = self.stream.read(size)
+        if len(value) != size:
+            raise FlashNextValidationError(f"truncated_gguf [{self.path.name}]")
+        return value
+
+    def unpack(self, format_string: str) -> tuple[Any, ...]:
+        size = struct.calcsize(format_string)
+        try:
+            return struct.unpack(format_string, self.read(size))
+        except struct.error as error:
+            raise FlashNextValidationError(f"invalid_gguf [{self.path.name}]") from error
+
+    def string(self) -> str:
+        length = self.unpack("<Q")[0]
+        if length > 1 << 30:
+            raise FlashNextValidationError(f"invalid_gguf_string [{self.path.name}]")
+        try:
+            return self.read(length).decode("utf-8")
+        except UnicodeError as error:
+            raise FlashNextValidationError(f"invalid_gguf_string [{self.path.name}]") from error
+
+    def value(self, type_id: int) -> Any:
+        formats = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i",
+                   6: "<f", 7: "<?", 10: "<Q", 11: "<q", 12: "<d"}
+        if type_id == 8:
+            return self.string()
+        if type_id == 9:
+            element_type = self.unpack("<I")[0]
+            count = self.unpack("<Q")[0]
+            for _ in range(count):
+                self.skip_value(element_type)
+            return None
+        if type_id not in formats:
+            raise FlashNextValidationError(f"unsupported_gguf_value [{type_id}]")
+        return self.unpack(formats[type_id])[0]
+
+    def skip_value(self, type_id: int) -> None:
+        formats = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i",
+                   6: "<f", 7: "<?", 10: "<Q", 11: "<q", 12: "<d"}
+        if type_id == 8:
+            length = self.unpack("<Q")[0]
+            self.read(length)
+            return
+        if type_id == 9:
+            element_type = self.unpack("<I")[0]
+            count = self.unpack("<Q")[0]
+            for _ in range(count):
+                self.skip_value(element_type)
+            return
+        if type_id not in formats:
+            raise FlashNextValidationError(f"unsupported_gguf_value [{type_id}]")
+        self.read(struct.calcsize(formats[type_id]))
+
+
+def _align(value: int, alignment: int) -> int:
+    return (value + alignment - 1) // alignment * alignment
+
+
+def _read_gguf_shard(path: Path) -> dict[str, Any]:
+    with _GgufReader(path) as reader:
+        if reader.read(4) != b"GGUF":
+            raise FlashNextValidationError(f"invalid_gguf_magic [{path.name}]")
+        version, tensor_count, kv_count = reader.unpack("<I Q Q")
+        if version != 3:
+            raise FlashNextValidationError(f"unsupported_gguf_version [{version}]")
+        metadata: dict[str, Any] = {}
+        for _ in range(kv_count):
+            key = reader.string()
+            type_id = reader.unpack("<I")[0]
+            metadata[key] = reader.value(type_id)
+        tensors: list[dict[str, Any]] = []
+        for _ in range(tensor_count):
+            name = reader.string()
+            dimensions = reader.unpack("<I")[0]
+            if dimensions > 4:
+                raise FlashNextValidationError(f"invalid_gguf_dimensions [{name}]")
+            shape = tuple(reader.unpack("<Q")[0] for _ in range(dimensions))
+            tensor_type, offset = reader.unpack("<I Q")
+            if tensor_type not in _GGUF_QUANT_SIZES:
+                raise FlashNextValidationError(f"unsupported_gguf_tensor_type [{tensor_type}]")
+            block_size, type_size = _GGUF_QUANT_SIZES[tensor_type]
+            elements = 1
+            for dimension in shape:
+                elements *= dimension
+            if elements % block_size != 0:
+                raise FlashNextValidationError(f"invalid_gguf_shape [{name}]")
+            nbytes = elements * type_size // block_size
+            tensors.append({
+                "name": name,
+                "dtype": _GGUF_TYPE_NAMES[tensor_type],
+                "shape": list(shape),
+                "offset": offset,
+                "nbytes": nbytes,
+            })
+        alignment = metadata.get("general.alignment", 32)
+        if not isinstance(alignment, int) or alignment <= 0:
+            raise FlashNextValidationError(f"invalid_gguf_alignment [{path.name}]")
+        data_offset = _align(reader.stream.tell(), alignment)
+        file_size = path.stat().st_size
+        for tensor in tensors:
+            start = data_offset + tensor["offset"]
+            end = start + tensor["nbytes"]
+            if start < data_offset or end > file_size:
+                raise FlashNextValidationError(f"tensor_out_of_bounds [{tensor['name']}]")
+            tensor["data_start"] = start
+            tensor["data_end"] = end
+        match = _GGUF_SHARD_RE.search(path.name)
+        if match is None:
+            raise FlashNextValidationError(f"invalid_gguf_shard_name [{path.name}]")
+        file_number = int(match.group(1))
+        file_count = int(match.group(2))
+        split_no = metadata.get("split.no", file_number - 1)
+        metadata_split_count = metadata.get("split.count", file_count)
+        if not isinstance(split_no, int) or not isinstance(metadata_split_count, int):
+            raise FlashNextValidationError(f"invalid_gguf_split_metadata [{path.name}]")
+        if split_no != file_number - 1 or metadata_split_count != file_count:
+            raise FlashNextValidationError(f"inconsistent_gguf_split_metadata [{path.name}]")
+        return {
+            "name": path.name,
+            "file_size": file_size,
+            "sha256": _sha256_file(path),
+            "split_no": split_no,
+            "split_count": metadata_split_count,
+            "metadata": metadata,
+            "data_offset": data_offset,
+            "tensor_count": tensor_count,
+            "tensor_payload_bytes": sum(tensor["nbytes"] for tensor in tensors),
+            "tensors": tensors,
+        }
+
+
+def inspect_gguf_source(model_dir: Path, manifest_path: Path | None = None) -> dict[str, Any]:
+    """Inspect a complete split GGUF set without materializing any tensor payload.
+
+    The returned object is deterministic and includes exact packed tensor bytes. If a checksum
+    manifest is supplied, every listed shard is verified and the manifest must be complete.
+    """
+    model_root = model_dir.resolve()
+    paths = sorted(model_root.glob("*.gguf"))
+    if not paths:
+        raise FlashNextValidationError("missing_gguf_shards")
+    shards = [_read_gguf_shard(path) for path in paths]
+    split_count = shards[0]["split_count"]
+    if split_count != len(shards) or sorted(shard["split_no"] for shard in shards) != list(range(split_count)):
+        raise FlashNextValidationError("invalid_gguf_shards")
+    for shard in shards:
+        if shard["split_count"] != split_count:
+            raise FlashNextValidationError("inconsistent_gguf_shards")
+    metadata = shards[0]["metadata"]
+    comparable_metadata = {
+        key: value for key, value in metadata.items()
+        if key not in {"split.no", "split.count", "split.tensors.count"} and value is not None
+    }
+    for shard in shards[1:]:
+        shard_metadata = {
+            key: value for key, value in shard["metadata"].items()
+            if key not in {"split.no", "split.count", "split.tensors.count"} and value is not None
+        }
+        if shard_metadata and shard_metadata != comparable_metadata:
+            raise FlashNextValidationError(f"inconsistent_gguf_metadata [{shard['name']}]")
+    if manifest_path is not None:
+        expected: dict[str, str] = {}
+        for line in manifest_path.read_text(encoding="utf-8").splitlines():
+            fields = line.split()
+            if len(fields) == 2:
+                expected[fields[1]] = fields[0]
+        actual = {shard["name"]: shard["sha256"] for shard in shards}
+        if expected != actual:
+            raise FlashNextValidationError("gguf_manifest_mismatch")
+    tensors: list[dict[str, Any]] = []
+    category_bytes = {key: 0 for key in (
+        "embedding_lm_head", "mtp", "non_expert_text", "ple", "routed_experts",
+        "router_indexer", "shared_experts", "vision")}
+    type_counts: dict[str, int] = {}
+    for shard in shards:
+        for tensor in shard["tensors"]:
+            category = _classify_tensor_name(tensor["name"])
+            category_bytes[category] += tensor["nbytes"]
+            type_counts[tensor["dtype"]] = type_counts.get(tensor["dtype"], 0) + 1
+            tensors.append({**tensor, "shard": shard["name"], "category": category})
+    return {
+        "schema": "superinfer.s03f.flash-next-gguf-inventory.v1",
+        "model_dir": str(model_root),
+        "metadata": {key: value for key, value in sorted(metadata.items()) if value is not None},
+        "shard_count": len(shards),
+        "split_numbers": [shard["split_no"] for shard in shards],
+        "tensor_count": len(tensors),
+        "tensor_payload_bytes": sum(tensor["nbytes"] for tensor in tensors),
+        "physical_file_bytes": sum(shard["file_size"] for shard in shards),
+        "category_bytes": category_bytes,
+        "tensor_type_counts": dict(sorted(type_counts.items())),
+        "shards": [{key: shard[key] for key in (
+            "name", "file_size", "sha256", "split_no", "split_count", "data_offset",
+            "tensor_count", "tensor_payload_bytes")} for shard in shards],
+        "tensors": sorted(tensors, key=lambda tensor: (tensor["shard"], tensor["name"])),
+    }
 
 
 def validate_source(model_dir: Path, contract: FlashNextContract) -> FlashNextInventory:
@@ -240,25 +498,7 @@ def classify_tensor_bytes(inventory: FlashNextInventory) -> dict[str, int]:
         "router_indexer": 0, "routed_experts": 0, "shared_experts": 0, "vision": 0,
     }
     for tensor in inventory.tensors:
-        name = tensor.name.lower()
-        if "visual" in name or "vision" in name:
-            category = "vision"
-        elif ".mtp" in name or name.startswith("mtp"):
-            category = "mtp"
-        elif "ple" in name or "ngram" in name:
-            category = "ple"
-        elif "shared_expert" in name:
-            category = "shared_experts"
-        elif ".experts." in name or ".expert." in name or name.startswith("experts."):
-            category = "routed_experts"
-        elif "router" in name or "indexer" in name:
-            category = "router_indexer"
-        elif "embed" in name or "lm_head" in name:
-            category = "embedding_lm_head"
-        elif name.startswith(("model.", "language_model.", "transformer.")) or name == "lm_head.weight":
-            category = "non_expert_text"
-        else:
-            raise FlashNextValidationError(f"unclassified_tensor [{tensor.name}]")
+        category = _classify_tensor_name(tensor.name)
         totals[category] += tensor.nbytes
     return {key: totals[key] for key in sorted(totals)}
 
@@ -445,5 +685,6 @@ __all__ = [
     "OFFICIAL_MODEL_REVISION", "OFFICIAL_REFERENCE_REPOSITORY", "OFFICIAL_REFERENCE_REVISION",
     "blocked_source_evidence", "build_residency_options", "classify_tensor_bytes",
     "estimate_runtime_state_and_workspace",
+    "inspect_gguf_source",
     "official_contract", "validate_source",
 ]

@@ -5,7 +5,8 @@
 The official model and source identities are now pinned, but capacity/quality qualification remains
 blocked because the complete checkpoint is not local and the official repository has no executable
 reference checkout. Nearby Qwen3.8-DFlash2 and Qwen3-Coder-Next GGUF artifacts were inspected and
-excluded as non-matches.
+excluded as non-matches. A complete local AtomicChat GGUF conversion is now separately inventoryable,
+but it is not substituted for the official source or quality oracle.
 
 ## Work completed
 
@@ -26,6 +27,12 @@ excluded as non-matches.
   residency.
 - No Physical Plan, IR, compiler, specializer, runtime, CUDA, kernel, or memory-planner files were
   changed. S03F-02 remains blocked until S03 closes.
+- Added a metadata-only GGUF split reader and reproducible inventory command. The 33-shard AtomicChat
+  candidate passes its supplied SHA256 manifest, contains 1,224 tensors and 94,514,368,000 packed tensor
+  bytes, and leaves 56,079,162,880 computational bytes when the 38,435,205,120-byte PLE table remains
+  host-mmap resident.
+- A deterministic capacity-only projection with 4 GiB headroom per 32-GiB card places layers 0–25 on
+  device 0 and 26–47 on device 1. This is not an official residency or quality decision.
 
 ## Evidence and verification
 
@@ -68,3 +75,11 @@ and AIME26 `pass@1 0.9875` / `majority@8 1.0`. These are upstream serving evalua
 SuperInfer reference-equivalence evidence and not authorization for residency selection.
 The detailed, hash-bound observation is
 `artifacts/S03F/flash-next-partial-nvfp4-ledger.json`. It does not change D-019 or unblock S03F-02.
+
+## Complete local GGUF candidate update
+
+The complete local conversion is recorded in `artifacts/S03F/flash-next-gguf-candidate-inventory.json`.
+It is authenticated by `/srv/models/qwen3.8-flash-next/service/evidence/SHA256SUMS` and pinned to
+llama.cpp `6c84c7d5d8833c6e0df69628f75a0f599797934e`. The inventory is exact for this packed
+conversion, but no official-checkpoint equivalence or SuperInfer quality result is claimed. The
+candidate therefore improves capacity evidence without changing D-019 or opening S03F-02.

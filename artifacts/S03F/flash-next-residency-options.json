@@ -6,7 +6,20 @@
     "model_revision": "de4b8e4d43b917e7706784d8bb445c9af86a3540",
     "reference_repository": "QwenLM/Qwen3.8-Flash-Next",
     "reference_revision": "69885871a64393807d988b27b1b5e380e8f28526",
-    "local_candidate_is_partial": true
+    "local_candidate_is_partial": true,
+    "local_packed_candidate_evidence": "flash-next-gguf-candidate-inventory.json"
+  },
+  "local_packed_candidate_capacity_only": {
+    "status": "fits_with_host_mmap_ple_and_4gib_headroom_per_gpu",
+    "artifact": "flash-next-gguf-candidate-inventory.json",
+    "full_expert_residency_feasible": true,
+    "quality_evidence": "not_available",
+    "partition": [
+      {"device": 0, "first_layer": 0, "last_layer": 25,
+       "projected_bytes": 29881144832},
+      {"device": 1, "first_layer": 26, "last_layer": 47,
+       "projected_bytes": 26198018048}
+    ]
   },
   "reason": "Residency cannot be evaluated without complete packed tensor bytes and executable-reference quality measurements for the pinned source; no partial candidate is promoted.",
   "status": "blocked",

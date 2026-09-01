@@ -453,3 +453,19 @@ hashes are recorded in `artifacts/S03/qwen38-gdn-z-projection-localization-v11.j
 S03 remains open because the unchanged numerical contract still fails on long replay. The next
 closure boundary is root-cause correction or a separately reviewed, independently justified
 quantized-reference contract, followed by final acceptance packaging and fresh review.
+
+## Activation-reuse localization
+
+The diagnostic tree next disabled lifetime-based activation reuse for a 30-token chat-template
+replay while keeping the artifact, command schedule, GPU, and state initialization unchanged. The
+diagnostic capture was byte-identical to the incumbent capture (`byte_difference_max_abs=0.0`), and
+both plans had the same oracle comparison: max `0.5856843`, mean `0.0430106`, RMSE `0.0568142`,
+with greedy tokens matching and rows `23,29` outside the unchanged max-absolute contract. This
+rejects activation lifetime aliasing as the source of the long-context drift. No production plan,
+memory policy, tolerance, or acceptance criterion changed. Evidence is recorded in
+`artifacts/S03/qwen38-activation-reuse-localization-v12.json`; raw diagnostic output remains under
+`build/evidence/no-alias-chat30/`.
+
+S03 remains open under the unchanged numerical contract. The next boundary is continued
+localization of accumulated whole-model arithmetic drift or a separately reviewed, independently
+justified quantized-reference contract.

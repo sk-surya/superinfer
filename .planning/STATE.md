@@ -146,6 +146,10 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
   independent oracle at max `0.01321268` / RMSE `0.00264875`; QKV, convolution, and recurrent-core
   comparisons remain bounded. The standalone z-projection hypothesis is rejected and no
   production change was made. See `artifacts/S03/qwen38-gdn-z-projection-localization-v11.json`.
+  A 30-token chat replay with activation lifetime reuse disabled is byte-identical to the
+  incumbent plan and retains the same oracle error (`max_abs=0.5856843`, `RMSE=0.0568142`,
+  failing rows 23 and 29). Activation aliasing is rejected as the drift source; no production
+  memory policy changed. See `artifacts/S03/qwen38-activation-reuse-localization-v12.json`.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
 - S03F-01 has pinned immutable Flash-Next model/reference revisions, exact formula-only state/workspace estimates, and a complete authenticated local GGUF conversion inventory. Its capacity-only projection fits with host-mmap PLE and 4 GiB per-GPU headroom, but the conversion is not the pinned official artifact and has no executable-reference quality evidence; no expert residency implementation may assume support until that decision is resolved.

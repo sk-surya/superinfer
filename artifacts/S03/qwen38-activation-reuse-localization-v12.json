@@ -1,0 +1,45 @@
+{
+  "kind": "qwen38_activation_reuse_localization",
+  "status": "hypothesis_rejected",
+  "purpose": "Determine whether lifetime-based activation aliasing changes the long-replay numerical result.",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "workload": {
+    "case": "chat-template",
+    "tokens": 30,
+    "reference": "build/evidence/reference-chat-deployment-v7/chat-template.f32, first 30 rows",
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a"
+  },
+  "plans": {
+    "incumbent": "activation lifetime reuse enabled",
+    "diagnostic": "SUPERINFER_QWEN38_DISABLE_ACTIVATION_REUSE=1",
+    "diagnostic_stdout": "build/evidence/no-alias-chat30/stdout.txt"
+  },
+  "captures": {
+    "diagnostic_base_sha256": "504a599b16fa09b07986e15251348a6cac28ee2be1e457730d37731504ea653d",
+    "diagnostic_continuation_sha256": "2f6b09dd449780dc1da3cacf727db1e061e712a03baa791a55e9929824a0348a",
+    "incumbent_combined_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99",
+    "diagnostic_combined_sha256": "367b47fc5c40705f0d584f4b428f63985ef18ca784ef951f74399a3fb5ab70a7",
+    "byte_difference_max_abs": 0.0
+  },
+  "reference_comparison": {
+    "max_abs": 0.5856842995,
+    "mean_abs": 0.0430105747,
+    "rmse": 0.0568142491,
+    "failing_rows": [23, 29],
+    "greedy_tokens_match": true
+  },
+  "interpretation": {
+    "conclusion": "Disabling activation reuse produces the exact same capture as the incumbent. Lifetime aliasing is not causing the observed long-replay drift.",
+    "production_change": false,
+    "tolerance_change": false
+  },
+  "acceptance": {
+    "S03_closed": false,
+    "next_boundary": "continue localizing accumulated whole-model numerical drift or prepare a separately reviewed, independently justified quantized-reference contract"
+  }
+}

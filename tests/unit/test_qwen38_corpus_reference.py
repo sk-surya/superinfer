@@ -76,6 +76,18 @@ class Qwen38CorpusReferenceTests(unittest.TestCase):
         )
         self.assertTrue(args.round_semantic_boundaries)
 
+    def test_reference_cli_exposes_bf16_weight_storage_diagnostic(self) -> None:
+        parser = build_argument_parser()
+        args = parser.parse_args(
+            [
+                "--model-dir", "/model",
+                "--corpus", "/corpus.json",
+                "--output-dir", "/output",
+                "--round-bf16-weights",
+            ]
+        )
+        self.assertTrue(args.round_bf16_weights)
+
     def test_reference_cli_can_capture_one_normalized_hidden_row(self) -> None:
         parser = build_argument_parser()
         args = parser.parse_args(

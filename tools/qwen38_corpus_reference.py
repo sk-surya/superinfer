@@ -72,6 +72,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="round the exact authored operation boundaries through BF16",
     )
     parser.add_argument(
+        "--round-bf16-weights", action="store_true",
+        help="round non-quantized BF16 checkpoint weights through BF16 before FP32 compute",
+    )
+    parser.add_argument(
         "--round-kv", action="store_true",
         help="store every DynamicCache K/V update as BF16, then read it as FP32",
     )
@@ -120,6 +124,7 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                round_activations: bool,
                round_embedding: bool, round_final_norm: bool,
                round_semantic_boundaries: bool,
+               round_bf16_weights: bool,
                round_kv: bool, round_linear_state: bool,
                hidden_output: Path | None = None, hidden_case: str | None = None,
                hidden_step: int | None = None, boundaries_output: Path | None = None,
@@ -257,8 +262,10 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                     state_dict[key] = reference._nvfp4(model_dir, index, source_name).to(device)
                 else:
                     with safe_open(str(model_dir / index[source_name]), framework="pt", device="cpu") as handle:
-                        state_dict[key] = handle.get_tensor(source_name).to(
-                            device=device, dtype=torch.float32)
+                        value = handle.get_tensor(source_name)
+                        if round_bf16_weights and value.dtype == torch.bfloat16:
+                            value = value.to(torch.bfloat16).to(torch.float32)
+                        state_dict[key] = value.to(device=device, dtype=torch.float32)
             layer.load_state_dict(state_dict, strict=True)
             del state_dict
 
@@ -397,8 +404,10 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             del layer
             gc.collect()
 
-        final_norm = reference._tensor(model_dir, index, "model.language_model.norm.weight").to(
-            device=device, dtype=torch.float32)
+        final_norm = reference._tensor(model_dir, index, "model.language_model.norm.weight")
+        if round_bf16_weights and final_norm.dtype == torch.bfloat16:
+            final_norm = final_norm.to(torch.bfloat16).to(torch.float32)
+        final_norm = final_norm.to(device=device, dtype=torch.float32)
         lm_head = reference._nvfp4(model_dir, index, "lm_head.weight").to(device)
         hidden_payload = bytearray()
         hidden_capture_metadata: dict[str, Any] | None = None
@@ -509,6 +518,7 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "round_embedding": round_embedding,
             "round_final_norm": round_final_norm,
             "round_semantic_boundaries": round_semantic_boundaries,
+            "round_bf16_weights": round_bf16_weights,
             "round_kv": round_kv,
             "round_linear_state": round_linear_state,
             "device": str(device),
@@ -564,6 +574,7 @@ def main() -> int:
     report = _run_cases(args.model_dir, select_cases(corpus, args.case_ids), args.output_dir,
         args.round_activations,
         args.round_embedding, args.round_final_norm, args.round_semantic_boundaries,
+        args.round_bf16_weights,
                         args.round_kv, args.round_linear_state,
                         args.hidden_output,
                         args.hidden_case, args.hidden_step, args.boundaries_output,

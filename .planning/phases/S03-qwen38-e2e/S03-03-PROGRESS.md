@@ -353,3 +353,11 @@ max error from `0.5856843` to `0.7053003` and increased failing rows from two to
 is rejected by the max-abs correctness gate, the isolated build was discarded, and the production
 kernel was restored unchanged. Evidence is recorded in
 `artifacts/S03/qwen38-nvfp4-pairwise-probe.json`.
+
+The oracle was also run with every non-quantized BF16 checkpoint weight explicitly round-tripped
+through BF16 before FP32 computation. This produced the same greedy sequence and the same
+`0.5856843/0.0390874/0.0522504` max/mean/RMSE and failing rows `23,29,30` as deployment-v8.
+Because the source values are already BF16-representable, weight storage is ruled out as the
+remaining drift source. The opt-in flag is retained for contract diagnostics; no acceptance or
+production change was made. Evidence is recorded in
+`artifacts/S03/qwen38-bf16-weight-roundtrip-probe.json`.

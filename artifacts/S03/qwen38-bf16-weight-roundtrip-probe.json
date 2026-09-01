@@ -1,0 +1,41 @@
+{
+  "kind": "qwen38_reference_bf16_weight_roundtrip_probe",
+  "status": "rejected_hypothesis",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": {
+    "case": "chat-template",
+    "rows": 60,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a"
+  },
+  "reference": {
+    "script": "tools/qwen38_corpus_reference.py",
+    "transformers_version": "5.12.1",
+    "torch_version": "2.13.0+cu130",
+    "device": "cuda:0",
+    "checkpoint": "/srv/models/hf/Qwen3.8-27B-NVFP4-RTX5090-LMHead4",
+    "flags": [
+      "--round-bf16-weights",
+      "--round-embedding",
+      "--round-final-norm",
+      "--round-kv",
+      "--round-linear-state"
+    ],
+    "capture": "build/evidence/reference-bf16-weights-v1/chat-template.f32",
+    "capture_sha256": "9d7fae75cfaf9978b0827520194089bf25a768cdd506cc22154b4d784d32aa88"
+  },
+  "comparison": {
+    "target_capture": "build/evidence/qwen38-s03-acceptance-deployment-v8/chat-template/run-0-base.f32 plus run-0-continuation.f32",
+    "target_capture_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99",
+    "contract": {"max_abs": 0.5, "mean_abs": 0.1, "rmse": 0.15},
+    "reference_comparison": {
+      "max_abs": 0.5856842995,
+      "mean_abs": 0.0390873517,
+      "rmse": 0.0522503709,
+      "failing_rows": [23, 29, 30],
+      "greedy_tokens_match": true
+    }
+  },
+  "conclusion": "Round-tripping all non-quantized BF16 checkpoint weights before FP32 computation leaves the deployment-v8 comparison unchanged. The checkpoint values are already BF16-representable, so weight storage is not the remaining drift source; no acceptance or production contract changed."
+}

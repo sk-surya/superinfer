@@ -361,3 +361,19 @@ Because the source values are already BF16-representable, weight storage is rule
 remaining drift source. The opt-in flag is retained for contract diagnostics; no acceptance or
 production change was made. Evidence is recorded in
 `artifacts/S03/qwen38-bf16-weight-roundtrip-probe.json`.
+
+## Diagnostic trace output contract
+
+The test-only command trace API previously copied the final declared command operand, which is
+not always the result buffer: RMSNorm places its scale after the output, and KV append places the
+cache operands after the input rows. The API now accepts explicit `(command_id, buffer_id)` trace
+requests while retaining the legacy final-operand overload for compatibility. A BF16 KV append
+regression captures the position-zero key-cache row and passes on GPU 0 RTX 5090. This changes no
+production execution, numerical contract, tolerance, or plan representation. Evidence is recorded
+in `artifacts/S03/qwen38-command-trace-output-contract.json`.
+
+The existing real-state layer-3 differential remains the strongest isolated attention evidence:
+with target layer-3 input and prior KV state supplied at position 28, the artifact layer matches
+the independent quantized Transformers oracle at max absolute error `3.8147e-6`. The whole-model
+acceptance failure therefore remains upstream deterministic accumulation/amplification; S03 is
+still open.

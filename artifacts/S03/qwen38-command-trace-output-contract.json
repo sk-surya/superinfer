@@ -1,0 +1,24 @@
+{
+  "schema": "superinfer.qwen38.s03.command-trace-output-contract.v1",
+  "status": "pass",
+  "scope": "diagnostic_only",
+  "change": {
+    "commit": "43df933",
+    "api": "CudaPlanSession::execute_at_position_for_test(explicit trace requests)",
+    "contract": "each request names a command ID and a buffer ID belonging to that command",
+    "reason": "a Physical Command's final declared operand is not necessarily its result"
+  },
+  "regression": {
+    "test": "superinfer_sm120_cuda_plan_executor",
+    "fixture": "BF16 KV cache append",
+    "request": "capture key-cache buffer rather than the value-cache final operand",
+    "assertion": "position-zero key row contains BF16 encodings for 1.0 and 2.0",
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "physical_gpu": 0,
+    "cuda_visible_devices": "0",
+    "result": "pass"
+  },
+  "production_execution_changed": false,
+  "numerical_contract_changed": false,
+  "s03_status": "open_long_context_numerical_drift"
+}

@@ -469,3 +469,16 @@ memory policy, tolerance, or acceptance criterion changed. Evidence is recorded 
 S03 remains open under the unchanged numerical contract. The next boundary is continued
 localization of accumulated whole-model arithmetic drift or a separately reviewed, independently
 justified quantized-reference contract.
+
+## LM-head localization
+
+The final projection was tested independently by applying the exact target final-hidden row at
+chat-template position 29 to a chunked NVFP4 dequantization oracle. The production logits differed
+by max `0.0312481`, mean `0.00343881`, RMSE `0.00486861` before the output-storage boundary, and
+by max `0.03125`, mean `0.00000104`, RMSE `0.00013125` after BF16 storage emulation. This is far
+below the full-model outlier and rejects the LM-head kernel as its source. No production code,
+tolerance, or acceptance criterion changed. Evidence is recorded in
+`artifacts/S03/qwen38-lm-head-localization-v13.json`.
+
+S03 remains open: the unresolved error is accumulated in the decoder hidden state before the
+final projection.

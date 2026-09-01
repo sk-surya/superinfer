@@ -62,6 +62,10 @@ The following independent checks constrain the remaining failure:
   `0.01321268` / RMSE `0.00264875`; QKV, convolution, and recurrent core stay
   bounded. The standalone z path is not the source of the cliff; see
   `artifacts/S03/qwen38-gdn-z-projection-localization-v11.json`.
+- An independent chunked NVFP4 LM-head replay on the exact target final-hidden
+  row differs by at most `0.03125`, ruling out final projection arithmetic as
+  the source of the full-model outlier; see
+  `artifacts/S03/qwen38-lm-head-localization-v13.json`.
 - Per-layer traces show gradual accumulated drift, with a layer-42
   amplification, rather than one isolated failing command.
 
@@ -74,6 +78,7 @@ Primary evidence:
 - `artifacts/S03/qwen38-long-replay-diagnostic-round2.json`
 - `artifacts/S03/qwen38-gdn-z-projection-localization-v11.json`
 - `artifacts/S03/qwen38-activation-reuse-localization-v12.json`
+- `artifacts/S03/qwen38-lm-head-localization-v13.json`
 
 ## Required closure condition
 

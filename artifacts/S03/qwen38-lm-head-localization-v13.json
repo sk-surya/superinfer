@@ -1,0 +1,52 @@
+{
+  "kind": "qwen38_lm_head_localization",
+  "status": "hypothesis_rejected",
+  "purpose": "Separate final NVFP4 LM-head arithmetic from upstream decoder hidden-state drift.",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "workload": {
+    "case": "chat-template",
+    "position": 29,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a",
+    "reference": "chunked independent NVFP4 dequantization and FP32 dot products"
+  },
+  "inputs": {
+    "hidden_sha256": "b0df0d1fccdc01cb463100c76e9a2bea182b2c642fa70720ec0dba5479500121",
+    "target_logits_sha256": "82a91092f3e179930d3b2732bf63c631ba186d59783843b09a62798ed8832e8d",
+    "hidden_elements": 5120,
+    "logit_elements": 248320,
+    "tensor_scale": 0.00012715657067019492
+  },
+  "comparison": {
+    "target_vs_fp32_nvfp4_reference": {
+      "max_abs": 0.0312480927,
+      "mean_abs": 0.0034388052,
+      "rmse": 0.0048686088,
+      "reference_sha256": "a694e4f8d9915ac1dc0e9cf18563eaae83e8084d9668ea88adb9530ef42fe40e"
+    },
+    "target_vs_bf16_stored_reference": {
+      "max_abs": 0.03125,
+      "mean_abs": 0.00000103866,
+      "rmse": 0.0001312479,
+      "reference_sha256": "c51d7eebb52e5f8ead654530b395ff4e20af0ef713abcbe4e739800ec96c4125"
+    }
+  },
+  "interpretation": {
+    "conclusion": "The final LM-head projection agrees closely when evaluated on the exact target hidden row. The long-replay outlier is therefore inherited from decoder hidden-state drift, not an LM-head implementation defect.",
+    "production_change": false,
+    "tolerance_change": false
+  },
+  "evidence": {
+    "metadata": "build/evidence/lm-head-localization/metadata.json",
+    "reference_fp32": "build/evidence/lm-head-localization/reference.f32",
+    "reference_bf16": "build/evidence/lm-head-localization/reference-bf16.f32"
+  },
+  "acceptance": {
+    "S03_closed": false,
+    "next_boundary": "continue decoder hidden-state drift localization or prepare a separately reviewed, independently justified quantized-reference contract"
+  }
+}

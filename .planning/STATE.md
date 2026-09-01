@@ -150,6 +150,10 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
   incumbent plan and retains the same oracle error (`max_abs=0.5856843`, `RMSE=0.0568142`,
   failing rows 23 and 29). Activation aliasing is rejected as the drift source; no production
   memory policy changed. See `artifacts/S03/qwen38-activation-reuse-localization-v12.json`.
+  An exact-target-hidden LM-head replay using independent chunked NVFP4 dequantization differs by
+  max `0.0312481` before BF16 output storage and `0.03125` after storage, ruling out the final
+  projection as the source of the full-model outlier. See
+  `artifacts/S03/qwen38-lm-head-localization-v13.json`.
 - The first real deployment plan specializes KV capacity to 4,096 positions; the authored 262,144-token
   capacity does not fit alongside the full Qwen payload in a 32-GiB RTX 5090 envelope.
 - S03F-01 has pinned immutable Flash-Next model/reference revisions, exact formula-only state/workspace estimates, and a complete authenticated local GGUF conversion inventory. Its capacity-only projection fits with host-mmap PLE and 4 GiB per-GPU headroom, but the conversion is not the pinned official artifact and has no executable-reference quality evidence; no expert residency implementation may assume support until that decision is resolved.

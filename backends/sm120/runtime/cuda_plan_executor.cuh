@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <sm120/runtime/cuda_ownership.cuh>
@@ -1588,19 +1589,54 @@ class CudaPlanSession final {
    * Executes one continuation segment and copies selected command output buffers after launch.
    *
    * This is a diagnostic-only entry point. It synchronizes at each selected command and may
-   * allocate host vectors, so it must never be used by production execution. Each captured
-   * command contributes the bytes of its final declared buffer in command order.
+   * allocate host vectors, so it must never be used by production execution. This compatibility
+   * overload captures the final declared buffer; callers that need a semantic result must use
+   * the explicit-output overload below.
    */
   base::Status execute_at_position_for_test(
       std::uint32_t position, const std::vector<ir::physical::CommandId>& trace_commands,
       std::vector<std::vector<std::byte>>& trace_captures) noexcept {
+    std::vector<std::pair<ir::physical::CommandId, ir::physical::BufferId>> trace_requests;
+    trace_requests.reserve(trace_commands.size());
+    for (const auto command_id : trace_commands) {
+      if (command_id.value() >= commands_plan_.size()) {
+        return base::Status::invalid_argument("CUDA trace command is undefined");
+      }
+      const auto& command = commands_plan_[command_id.value()];
+      if (command.buffers.empty()) {
+        return base::Status::failed_precondition("diagnostic command has no output buffer");
+      }
+      trace_requests.emplace_back(command_id, command.buffers.back());
+    }
+    return execute_at_position_for_test(position, trace_requests, trace_captures);
+  }
+
+  /**
+   * Executes one continuation segment and copies explicitly selected command result buffers.
+   *
+   * This diagnostic-only entry point makes the captured physical buffer explicit because a
+   * command's last operand is not necessarily its result (for example RMSNorm weights and KV
+   * cache operands are declared after the result). Requests must be ordered by command ID and
+   * name a buffer belonging to the requested command. It is never used by production execution.
+   */
+  base::Status execute_at_position_for_test(
+      std::uint32_t position,
+      const std::vector<std::pair<ir::physical::CommandId, ir::physical::BufferId>>& trace_requests,
+      std::vector<std::vector<std::byte>>& trace_captures) noexcept {
     if (poisoned_) return base::Status::failed_precondition("CUDA session is poisoned");
     trace_captures.clear();
-    trace_captures.reserve(trace_commands.size());
-    for (std::size_t index = 0; index < trace_commands.size(); ++index) {
-      if (trace_commands[index].value() >= commands_plan_.size() ||
-          (index != 0 && trace_commands[index - 1].value() >= trace_commands[index].value())) {
+    trace_captures.reserve(trace_requests.size());
+    for (std::size_t index = 0; index < trace_requests.size(); ++index) {
+      const auto command_id = trace_requests[index].first;
+      const auto output_id = trace_requests[index].second;
+      if (command_id.value() >= commands_plan_.size() ||
+          (index != 0 && trace_requests[index - 1].first.value() >= command_id.value())) {
         return base::Status::invalid_argument("CUDA trace commands must be unique and ordered");
+      }
+      const auto& command = commands_plan_[command_id.value()];
+      if (std::find(command.buffers.begin(), command.buffers.end(), output_id) ==
+          command.buffers.end()) {
+        return base::Status::invalid_argument("CUDA trace output buffer is not a command operand");
       }
     }
     std::uint32_t cache_capacity = 0;
@@ -1636,15 +1672,12 @@ class CudaPlanSession final {
         const cudaError_t record_error = cudaEventRecord(events_[command_index].get(), stream);
         if (record_error != cudaSuccess) return poison(record_error, "cudaEventRecord");
       }
-      if (next_trace < trace_commands.size() &&
-          trace_commands[next_trace].value() == command.id.value()) {
+      if (next_trace < trace_requests.size() &&
+          trace_requests[next_trace].first.value() == command.id.value()) {
         ++lifecycle_trace_->device_synchronizations;
         const cudaError_t sync_error = cudaDeviceSynchronize();
         if (sync_error != cudaSuccess) return poison(sync_error, "diagnostic command trace synchronization");
-        if (command.buffers.empty()) {
-          return base::Status::failed_precondition("diagnostic command has no output buffer");
-        }
-        const ir::physical::BufferId output_id = command.buffers.back();
+        const ir::physical::BufferId output_id = trace_requests[next_trace].second;
         if (output_id.value() >= plan_.buffers().size()) {
           return base::Status::out_of_range("diagnostic command output buffer is undefined");
         }
@@ -1660,7 +1693,7 @@ class CudaPlanSession final {
       ++trace_.commands_executed;
       ++trace_.launches;
     }
-    if (next_trace != trace_commands.size()) {
+    if (next_trace != trace_requests.size()) {
       return base::Status::failed_precondition("diagnostic command was not scheduled");
     }
     return {};

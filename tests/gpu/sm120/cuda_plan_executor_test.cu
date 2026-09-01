@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
 #include <utility>
 #include <vector>
 
@@ -607,6 +608,27 @@ int main() {
                 reinterpret_cast<const std::byte*>(cache_values.data()), sizeof(cache_values))}}}) {
     assert(cache_append.value().copy_to_device(upload.first, upload.second).ok());
   }
+  auto traced_cache_append = sm120::cuda_runtime::CudaPlanSession::create(
+      cache_append_plan, 120, "baseline-v1");
+  assert(traced_cache_append.has_value());
+  for (const auto& upload : std::array<std::pair<ir::physical::BufferId, base::ConstByteView>, 2>{
+           {{ir::physical::BufferId{0}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(cache_keys.data()), sizeof(cache_keys))},
+            {ir::physical::BufferId{1}, base::ConstByteView(
+                reinterpret_cast<const std::byte*>(cache_values.data()), sizeof(cache_values))}}}) {
+    assert(traced_cache_append.value().copy_to_device(upload.first, upload.second).ok());
+  }
+  std::vector<std::vector<std::byte>> trace_captures;
+  const auto trace_request = std::vector<std::pair<ir::physical::CommandId,
+                                                    ir::physical::BufferId>>{
+      {cache_append_plan.commands().front().id, ir::physical::BufferId{2}}};
+  assert(traced_cache_append.value().execute_at_position_for_test(
+      0, trace_request, trace_captures).ok());
+  assert(trace_captures.size() == 1 && trace_captures.front().size() == 8);
+  std::array<std::uint16_t, 4> traced_key_bits{};
+  std::memcpy(traced_key_bits.data(), trace_captures.front().data(),
+              sizeof(traced_key_bits));
+  assert(traced_key_bits[0] == 0x3f80 && traced_key_bits[1] == 0x4000);
   assert(cache_append.value().execute().ok());
   assert(cache_append.value().synchronize_for_test().ok());
   std::array<std::uint16_t, 4> cache_key_bits{};

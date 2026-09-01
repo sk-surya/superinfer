@@ -482,3 +482,26 @@ tolerance, or acceptance criterion changed. Evidence is recorded in
 
 S03 remains open: the unresolved error is accumulated in the decoder hidden state before the
 final projection.
+
+## Physical materialization and RMSNorm arithmetic probes
+
+The explicit physical-plan trace was extended with a test-only full-plan command dump and used to
+capture 48 provider-result/materialization pairs at chat-template continuation step 29 across
+layers 0--5, 42, and 63. Every FP32 provider output was finite, and every following BF16 buffer,
+when re-expanded to FP32, exactly matched independent round-to-nearest-even conversion of the
+provider output. This rejects a physical buffer binding or FP32-to-BF16 materialization defect as
+the source of the remaining drift. Evidence is recorded in
+`artifacts/S03/qwen38-materialization-localization-v14.json`; raw trace inputs remain under
+`build/evidence/cast-pair-chat29/`.
+
+An isolated CUDA A/B build changed kernel-12 BF16-scale RMSNorm from `sqrtf` followed by division
+to `rsqrtf` followed by multiplication, then replayed the first 30 chat-template tokens. The
+candidate changed the capture but worsened the unchanged reference comparison from incumbent
+max/mean/RMSE `0.5856843/0.0430106/0.0568142` with failing rows `23,29` to
+`0.6775799/0.0430284/0.0570885` with failing rows `20,23,25,28`; greedy tokens remained aligned.
+Production code was restored to `sqrtf`/division and rebuilt. Evidence is recorded in
+`artifacts/S03/qwen38-rmsnorm-rsqrt-probe-v15.json`.
+
+S03 remains open under the unchanged numerical contract. The remaining evidence points to
+deterministic accumulated arithmetic drift in the decoder hidden state; no production correction
+has yet been justified. S03F-02 remains engineering-blocked.

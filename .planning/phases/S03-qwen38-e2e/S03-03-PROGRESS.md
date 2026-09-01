@@ -386,3 +386,30 @@ with target layer-3 input and prior KV state supplied at position 28, the artifa
 the independent quantized Transformers oracle at max absolute error `3.8147e-6`. The whole-model
 acceptance failure therefore remains upstream deterministic accumulation/amplification; S03 is
 still open.
+
+## Layer-42 post-path localization
+
+The test-only command trace was extended to accept explicit `command_id:buffer_id` requests so
+multi-operand commands can be captured at their authored result buffer. A minimized varied-length
+run captured layer 42 at continuation step 36 on GPU 0, including GDN RMSNorm, gated output,
+output projection, token-mixer residual, post-attention RMSNorm, MLP projections/product, and
+layer residual. The matching independent Transformers trace uses the deployment-v8 storage
+contract and the pinned Transformers 5.12.1 / torch 2.13.0+cu130 environment.
+
+The operation-level comparison shows that the recurrent GDN core is not the isolated source of
+the apparent layer-42 cliff: the prior core trace was max `0.0005254` / RMSE `0.0000190`, while
+the post-core path progresses through max errors `0.4607` (GDN RMSNorm), `1.3200` (SiLU gate),
+`0.6370` (output projection), `0.9009` (token-mixer residual), and `1.6383` (layer residual).
+The target residual command independently satisfies its captured-input sum within max
+`0.0198853` / RMSE `0.0011967`, consistent with its explicit BF16/F32 materialization path.
+This is deterministic upstream drift amplified by the nonlinear gated path, not evidence of an
+uninitialized read, activation-aliasing defect, or corrupted recurrent state. No production
+kernel, tolerance, or acceptance criterion changed. Full evidence and hashes are recorded in
+`artifacts/S03/qwen38-layer42-post-path-localization-v9.json`; raw captures remain under
+`build/evidence/trace-var36-layer42-ops/` and
+`build/evidence/reference-var36-layer42-post/`.
+
+S03 remains open because the unchanged numerical contract still fails on the long-context
+acceptance cases. The next closure boundary is a reviewed root-cause correction or a separately
+reviewed, independently justified superseding numerical contract, followed by the final
+acceptance bundle and fresh re-review.

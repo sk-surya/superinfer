@@ -102,6 +102,35 @@ std::vector<std::uint32_t> parse_token_list(const char* encoded) {
   return tokens;
 }
 
+std::vector<std::pair<superinfer::ir::physical::CommandId,
+                      superinfer::ir::physical::BufferId>>
+parse_trace_requests(const char* encoded) {
+  using superinfer::ir::physical::BufferId;
+  using superinfer::ir::physical::CommandId;
+  std::vector<std::pair<CommandId, BufferId>> requests;
+  if (encoded == nullptr) return requests;
+  const char* cursor = encoded;
+  while (*cursor != '\0') {
+    while (*cursor == ',' || *cursor == ' ') ++cursor;
+    if (*cursor == '\0') break;
+    const char* command_end = cursor;
+    while (*command_end != '\0' && *command_end != ':') ++command_end;
+    if (*command_end != ':') return {};
+    std::uint32_t command = 0;
+    const auto command_result = std::from_chars(cursor, command_end, command);
+    if (command_result.ec != std::errc{} || command_result.ptr != command_end) return {};
+    const char* buffer_begin = command_end + 1;
+    const char* buffer_end = buffer_begin;
+    while (*buffer_end != '\0' && *buffer_end != ',') ++buffer_end;
+    std::uint32_t buffer = 0;
+    const auto buffer_result = std::from_chars(buffer_begin, buffer_end, buffer);
+    if (buffer_result.ec != std::errc{} || buffer_result.ptr != buffer_end) return {};
+    requests.emplace_back(CommandId{command}, BufferId{buffer});
+    cursor = buffer_end;
+  }
+  return requests;
+}
+
 int skip(const char* message) {
   std::cerr << "SKIP: " << message << '\n';
   return 77;
@@ -613,8 +642,11 @@ int main() {
   const char* layer_trace_path = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_F32");
   const char* layer_trace_stage = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_STAGE");
   const char* command_trace_ids = std::getenv("SUPERINFER_QWEN38_COMMAND_TRACE_IDS");
+  const char* command_trace_outputs = std::getenv("SUPERINFER_QWEN38_COMMAND_TRACE_OUTPUTS");
   std::optional<std::uint32_t> layer_trace_step;
   std::vector<superinfer::ir::physical::CommandId> layer_trace_commands;
+  std::vector<std::pair<superinfer::ir::physical::CommandId,
+                        superinfer::ir::physical::BufferId>> layer_trace_requests;
   std::vector<std::vector<std::byte>> layer_trace_captures;
   if (layer_trace_path != nullptr) {
     const char* encoded_step = std::getenv("SUPERINFER_QWEN38_LAYER_TRACE_STEP");
@@ -630,7 +662,13 @@ int main() {
       return 1;
     }
     layer_trace_step = parsed_step;
-    if (command_trace_ids != nullptr) {
+    if (command_trace_outputs != nullptr) {
+      layer_trace_requests = parse_trace_requests(command_trace_outputs);
+      if (layer_trace_requests.empty()) {
+        std::cerr << "invalid SUPERINFER_QWEN38_COMMAND_TRACE_OUTPUTS\n";
+        return 1;
+      }
+    } else if (command_trace_ids != nullptr) {
       const auto encoded_ids = parse_token_list(command_trace_ids);
       if (encoded_ids.empty()) {
         std::cerr << "invalid SUPERINFER_QWEN38_COMMAND_TRACE_IDS\n";
@@ -835,8 +873,11 @@ int main() {
       const std::uint32_t position = static_cast<std::uint32_t>(step + 1);
       const auto continuation_status =
           layer_trace_step.has_value() && layer_trace_step.value() == position
-              ? session.execute_at_position_for_test(position, layer_trace_commands,
-                                                      layer_trace_captures)
+              ? (layer_trace_requests.empty()
+                     ? session.execute_at_position_for_test(position, layer_trace_commands,
+                                                            layer_trace_captures)
+                     : session.execute_at_position_for_test(position, layer_trace_requests,
+                                                            layer_trace_captures))
               : session.execute_at_position_for_test(position);
       if (!continuation_status.ok()) {
         std::cerr << "Qwen continuation launch failed: " << continuation_status.message() << '\n';
@@ -897,14 +938,17 @@ int main() {
     }
   }
   if (layer_trace_path != nullptr) {
-    if (!layer_trace_step.has_value() || layer_trace_captures.size() != layer_trace_commands.size()) {
+    const std::size_t expected_captures =
+        layer_trace_requests.empty() ? layer_trace_commands.size() : layer_trace_requests.size();
+    if (!layer_trace_step.has_value() || layer_trace_captures.size() != expected_captures) {
       std::cerr << "layer trace step was not executed\n";
       return 1;
     }
     std::ofstream capture{layer_trace_path, std::ios::binary | std::ios::trunc};
     if (!capture.good()) return 1;
     for (const auto& bytes : layer_trace_captures) {
-      if (command_trace_ids == nullptr && bytes.size() != 5120U * sizeof(float)) {
+      if (command_trace_ids == nullptr && command_trace_outputs == nullptr &&
+          bytes.size() != 5120U * sizeof(float)) {
         std::cerr << "layer trace output is not F32[5120]\n";
         return 1;
       }
@@ -918,10 +962,17 @@ int main() {
              << " contract " << ((layer_trace_stage != nullptr &&
                                     std::string_view{layer_trace_stage} == "post_attention")
                                        ? "post_token_mixer_residual"
-                                       : (command_trace_ids != nullptr ? "command_outputs"
+                                       : (command_trace_ids != nullptr || command_trace_outputs != nullptr
+                                              ? "command_outputs"
                                                                          : "post_mlp_residual"))
              << "\n";
-    for (const auto command : layer_trace_commands) metadata << command.value() << '\n';
+    if (layer_trace_requests.empty()) {
+      for (const auto command : layer_trace_commands) metadata << command.value() << '\n';
+    } else {
+      for (const auto& [command, buffer] : layer_trace_requests) {
+        metadata << command.value() << ':' << buffer.value() << '\n';
+      }
+    }
     if (!metadata.good()) return 1;
   }
   std::cout << "qwen38 e2e token=" << token << " greedy=" << best << " logit=" << best_value

@@ -1,0 +1,73 @@
+{
+  "kind": "qwen38_layer42_post_path_localization",
+  "status": "evidence_bounded_no_production_fix",
+  "case": "varied-length",
+  "step": 36,
+  "model_layer": 42,
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "reference": {
+    "implementation": "Transformers 5.12.1 Qwen3_5DecoderLayer",
+    "torch": "2.13.0+cu130",
+    "storage_contract": [
+      "BF16 embedding I/O",
+      "BF16 KV cache",
+      "BF16 causal-convolution state",
+      "FP32 recurrent state",
+      "BF16 final-norm I/O"
+    ]
+  },
+  "gpu": "GPU 0 RTX 5090 sm_120a",
+  "physical_trace": {
+    "target_path": "build/evidence/trace-var36-layer42-ops/trace-post.f32",
+    "target_sha256": "4c683b2865fb5953b8381f5fc93fa7394cd0fb5682861a2e783b61f606750a26",
+    "reference_path": "build/evidence/reference-var36-layer42-post/trace-post.f32",
+    "reference_sha256": "e86b38e5b3a359e85b6a4d35b6bf0038db7b425aea9e124fb8094df824491e45",
+    "requests": [
+      "1608:3688 GDN RMSNorm output",
+      "1609:3689 GDN SiLU gate output",
+      "1610:3675 GDN output projection",
+      "1614:3703 token-mixer residual",
+      "1617:3705 post-attention RMSNorm",
+      "1620:3708 MLP gate projection",
+      "1621:3709 MLP up projection",
+      "1622:3710 MLP SiLU product",
+      "1623:3707 MLP down projection",
+      "1627:3719 layer residual"
+    ],
+    "comparison": [
+      {"request": "1608:3688", "max_abs": 0.46065915, "mean_abs": 0.00655283, "rmse": 0.01585098},
+      {"request": "1609:3689", "max_abs": 1.32004356, "mean_abs": 0.00315344, "rmse": 0.01834406},
+      {"request": "1610:3675", "max_abs": 0.63698626, "mean_abs": 0.01202592, "rmse": 0.01774338},
+      {"request": "1614:3703", "max_abs": 0.90090561, "mean_abs": 0.02277195, "rmse": 0.03153276},
+      {"request": "1617:3705", "max_abs": 0.83009624, "mean_abs": 0.02481824, "rmse": 0.03325359},
+      {"request": "1620:3708", "max_abs": 0.32817173, "mean_abs": 0.02191903, "rmse": 0.02777971},
+      {"request": "1621:3709", "max_abs": 0.70837402, "mean_abs": 0.02159817, "rmse": 0.02830951},
+      {"request": "1622:3710", "max_abs": 1.72646046, "mean_abs": 0.00628911, "rmse": 0.01833689},
+      {"request": "1623:3707", "max_abs": 1.06646252, "mean_abs": 0.01759690, "rmse": 0.02826126},
+      {"request": "1627:3719", "max_abs": 1.63830376, "mean_abs": 0.02851392, "rmse": 0.04456990}
+    ]
+  },
+  "invariants_checked": {
+    "target_residual_output_equals_captured_inputs": {
+      "max_abs": 0.01988530,
+      "mean_abs": 0.00073246,
+      "rmse": 0.00119669,
+      "note": "small difference is consistent with the target residual command's BF16/F32 materialization path"
+    },
+    "recurrent_gdn_core_prior_trace": {
+      "max_abs": 0.00052542,
+      "rmse": 0.00001899,
+      "source": "qwen38-layer42-operation trace at command 1607:3687"
+    }
+  },
+  "conclusion": [
+    "The recurrent GDN state update is not an isolated source of the layer-42 cliff.",
+    "The target/reference difference is already present in the layer input and projections, then is amplified through gated normalization and subsequent residual/MLP computation.",
+    "No reproducible uninitialized read, activation-aliasing defect, or state corruption was found by this trace.",
+    "The strict S03 numerical contract remains unresolved; no tolerance or production kernel change is justified by this evidence."
+  ],
+  "follow_up": "Keep S03 open. Any acceptance closure requires either a root-cause correction satisfying the unchanged contract or a separately reviewed, evidence-backed superseding numerical contract."
+}

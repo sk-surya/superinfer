@@ -1,0 +1,42 @@
+{
+  "kind": "qwen38_reference_nonlinear_formula_probe",
+  "status": "rejected_hypothesis",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": {
+    "case": "varied-length",
+    "tokens": 37,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a"
+  },
+  "reference": {
+    "script": "tools/qwen38_corpus_reference.py",
+    "transformers_version": "5.12.1",
+    "torch_version": "2.13.0+cu130",
+    "device": "cpu",
+    "storage_contract": "BF16 embedding, BF16 KV, current-row BF16 GDN convolution state, FP32 recurrent state, BF16 final-norm output",
+    "capture": "build/evidence/reference-var36-target-nonlinear/varied-length.f32",
+    "capture_sha256": "a3692ca7a4865fa6747ac65e97bcfe7b132112eedcc7ef0f92d07544bfdbb8fd",
+    "formula_override": "F.silu(x)=x/(1+exp(-x)); sigmoid(x)=1/(1+exp(-x))"
+  },
+  "comparison": {
+    "target_capture": "build/evidence/qwen38-s03-acceptance-deployment-v8/varied-length/run-0-base.f32 plus run-0-continuation.f32, first 37 rows",
+    "numerical_contract": {
+      "max_abs": 0.5,
+      "mean_abs": 0.1,
+      "rmse": 0.15
+    },
+    "formula_override": {
+      "max_abs": 0.8213219643,
+      "mean_abs": 0.0253997281,
+      "rmse": 0.0405700535,
+      "result": "worse_than_incumbent"
+    },
+    "deployment_v8_incumbent": {
+      "max_abs": 0.7084438801,
+      "mean_abs": 0.0248902879,
+      "rmse": 0.0381293100
+    }
+  },
+  "conclusion": "Matching the target's explicit SiLU and sigmoid algebra in the independent reference worsens the long-prefix comparison. The nonlinear-form hypothesis is rejected; no production change or tolerance change was made."
+}

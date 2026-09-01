@@ -139,6 +139,15 @@ fallback only for tiny structural fixtures. A missing final RMSNorm and missing 
 
 ## Next boundary
 
+The current acceptance review is recorded in `S03-03-REVIEW-LATEST.md`. The
+deployment-v8 report has two fresh, byte-identical target sessions: all five
+corpus cases select the reference greedy tokens, while `chat-template` and
+`varied-length` fail the unchanged FP32-logit contract. Existing probes rule
+out current nondeterminism, activation aliasing, isolated GDN recurrence, and
+standalone long-context full-attention/cache defects. This is an evidence-
+bounded accumulated-drift blocker, not a reason to loosen tolerances or close
+S03 on token agreement alone.
+
 The two-token continuation now executes successfully on GPU 0. The test-only position replay path
 reuses the validated 2,424-command schedule, mutates only cache append/RoPE/full-attention position
 fields, and completes with 4,848 command launches. The greedy sequence is `49276, 2349`, matching

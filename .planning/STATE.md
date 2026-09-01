@@ -61,6 +61,10 @@ Post-attention/state localization at varied-length step 36 shows deterministic a
 before the MLP, a layer-42 amplification, and no isolated recurrent-state corruption; see
 `artifacts/S03/qwen38-post-attention-state-localization-v8.json`. S03 remains open and S03F-02
 is still blocked.
+The current acceptance review is recorded in
+`.planning/phases/S03-qwen38-e2e/S03-03-REVIEW-LATEST.md`: token agreement and replay
+repeatability are not being substituted for the unchanged numerical contract. Closure requires a
+root-cause fix or a separately reviewed, independently justified quantized numerical contract.
 
 After S03 closes, S03F proceeds through multi-device placement, host-resident PLE, MoE, QSA/gated residual and final dual-5090 text correctness. Broad kernel optimization remains S04 work.
 

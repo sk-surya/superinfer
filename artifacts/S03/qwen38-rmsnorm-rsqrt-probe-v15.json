@@ -1,0 +1,33 @@
+{
+  "kind": "qwen38_rmsnorm_reciprocal_sqrt_probe",
+  "status": "hypothesis_rejected",
+  "artifact": {
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "workload": {
+    "case": "chat-template",
+    "tokens": 30,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a",
+    "reference": "build/evidence/reference-deployment-v8/chat-template.f32 first 30 rows"
+  },
+  "candidate": {
+    "kernel": "kernel 12 BF16-scale RMSNorm",
+    "change": "rsqrtf(sum_squares / hidden + epsilon) followed by multiplication",
+    "incumbent": "sqrtf(sum_squares / hidden + epsilon) followed by division",
+    "candidate_capture_sha256": "b634d59fddf131e710442ca2cc076de7d9520e475777566148b46a76b160f80c"
+  },
+  "comparison": {
+    "incumbent_max_abs": 0.5856843,
+    "incumbent_mean_abs": 0.0430106,
+    "incumbent_rmse": 0.0568142,
+    "incumbent_failing_rows": [23, 29],
+    "candidate_max_abs": 0.6775799,
+    "candidate_mean_abs": 0.0430284,
+    "candidate_rmse": 0.0570885,
+    "candidate_failing_rows": [20, 23, 25, 28],
+    "greedy_tokens_match": true
+  },
+  "conclusion": "The rsqrtf/multiply formulation changes the output and worsens the unchanged numerical contract. Production code was restored to sqrtf/division; no tolerance or acceptance criterion changed."
+}

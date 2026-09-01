@@ -41,6 +41,10 @@ The following independent checks constrain the remaining failure:
   arena poison patterns, and a no-alias activation plan produced stable
   captures. The current failure is not reproduced nondeterminism, an obvious
   uninitialized read, or activation-lifetime reuse.
+- A 30-token chat replay with activation reuse disabled is byte-identical to
+  the incumbent capture and has the same row-23/29 numerical outliers. This
+  independently rejects lifetime aliasing as the source of the failure; see
+  `artifacts/S03/qwen38-activation-reuse-localization-v12.json`.
 - The deployment-matched Transformers oracle uses BF16 embedding, BF16 KV,
   current-row BF16 GDN convolution state, FP32 recurrent state, and BF16 final
   norm output. Changing these reference storage boundaries does not remove the
@@ -53,6 +57,11 @@ The following independent checks constrain the remaining failure:
   complete-layer output within its local contract. The full-model layer-42
   cliff is therefore upstream error amplification, not proof of a corrupt
   layer-42 state transition.
+- The layer-42 GDN `in_proj_z` projection also matches an independent oracle
+  on the exact target hidden input and recurrent state at max absolute error
+  `0.01321268` / RMSE `0.00264875`; QKV, convolution, and recurrent core stay
+  bounded. The standalone z path is not the source of the cliff; see
+  `artifacts/S03/qwen38-gdn-z-projection-localization-v11.json`.
 - Per-layer traces show gradual accumulated drift, with a layer-42
   amplification, rather than one isolated failing command.
 
@@ -63,6 +72,8 @@ Primary evidence:
 - `artifacts/S03/qwen38-layer3-long-context-differential.json`
 - `artifacts/S03/qwen38-gdn-long-context-differential.json`
 - `artifacts/S03/qwen38-long-replay-diagnostic-round2.json`
+- `artifacts/S03/qwen38-gdn-z-projection-localization-v11.json`
+- `artifacts/S03/qwen38-activation-reuse-localization-v12.json`
 
 ## Required closure condition
 

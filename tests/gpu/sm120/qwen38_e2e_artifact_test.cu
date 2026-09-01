@@ -238,6 +238,21 @@ int main() {
     std::cerr << "specialization failed: " << specialized.error().message() << '\n';
     return 1;
   }
+  if (std::getenv("SUPERINFER_QWEN38_DUMP_PLAN_COMMANDS") != nullptr) {
+    for (const auto& command : specialized.value().plan.commands()) {
+      std::cout << "id=" << command.id.value() << " kernel=" << command.kernel.value()
+                << " buffers=";
+      for (std::size_t index = 0; index < command.buffers.size(); ++index) {
+        if (index != 0) std::cout << ',';
+        const auto buffer_id = command.buffers[index];
+        const auto& buffer = specialized.value().plan.buffers()[buffer_id.value()];
+        std::cout << buffer_id.value() << ':' << buffer.size << ':'
+                  << static_cast<int>(buffer.tensor.dtype);
+      }
+      std::cout << '\n';
+    }
+    return 0;
+  }
   if (const char* encoded_dump_layer = std::getenv("SUPERINFER_QWEN38_DUMP_LAYER_COMMANDS");
       encoded_dump_layer != nullptr) {
     std::uint32_t dump_layer = 0;

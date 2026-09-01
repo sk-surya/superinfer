@@ -1,0 +1,26 @@
+{
+  "schema": "superinfer.qwen38.s03.materialization-localization.v14",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "case": "chat-template",
+  "prefill_token_id": 248045,
+  "continuation_step": 29,
+  "reference_contract": "Transformers 5.12.1 / torch 2.13.0+cu130",
+  "gpu": "NVIDIA GeForce RTX 5090, CUDA device 0",
+  "probe": {
+    "description": "Capture each selected FP32 provider output and its immediately following BF16 materialization at the same physical-plan boundary, then compare the materialization re-expanded to FP32 with independent RN-even FP32-to-BF16 conversion.",
+    "layers": [0, 1, 2, 3, 4, 5, 42, 63],
+    "boundaries_per_layer": 6,
+    "pairs_checked": 48,
+    "trace_sha256": "721816b7229589bd9c4c8e7f7ad5baf20f696a596aa89d729f3babe4acf4b4ab",
+    "request_sha256": "9f80e95ac1e47777271c617446b4a416e0ed7dc3b05444f3b121686a8e84d6b4"
+  },
+  "result": {
+    "provider_outputs_finite": true,
+    "materialized_outputs_finite": true,
+    "total_element_mismatches": 0,
+    "max_abs_reexpanded_vs_independent_round": 0.0,
+    "mean_abs_reexpanded_vs_independent_round": 0.0,
+    "status": "rejected-hypothesis"
+  },
+  "conclusion": "The selected physical FP32-to-BF16 materialization and buffer binding are exact at representative early, GDN, and final layers. They are not the source of the deterministic long-context numerical drift. Continue localization at arithmetic/state boundaries."
+}

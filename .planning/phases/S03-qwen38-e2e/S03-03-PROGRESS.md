@@ -505,3 +505,11 @@ Production code was restored to `sqrtf`/division and rebuilt. Evidence is record
 S03 remains open under the unchanged numerical contract. The remaining evidence points to
 deterministic accumulated arithmetic drift in the decoder hidden state; no production correction
 has yet been justified. S03F-02 remains engineering-blocked.
+
+An independent CUDA-oracle A/B run explicitly disabled both PyTorch TF32 paths and regenerated the
+30-token deployment-matched chat reference. The reference capture was byte-identical to the
+incumbent (same SHA), and the target comparison remained max/mean/RMSE
+`0.5856843/0.0430106/0.0568142` with failing rows `23,29`; greedy tokens remained aligned.
+Reference TF32 policy is therefore rejected as the source of the drift. Evidence is recorded in
+`artifacts/S03/qwen38-reference-tf32-probe-v16.json`; raw output remains under
+`build/evidence/reference-tf32-off-chat30/`.

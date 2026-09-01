@@ -1,0 +1,30 @@
+{
+  "kind": "qwen38_reference_tf32_policy_probe",
+  "status": "hypothesis_rejected",
+  "artifact": {
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "workload": {
+    "case": "chat-template",
+    "tokens_compared": 30,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a",
+    "reference": "Transformers 5.12.1 / torch 2.13.0+cu130, deployment-v8 storage flags"
+  },
+  "candidate": {
+    "change": "torch.backends.cuda.matmul.allow_tf32=False and torch.backends.cudnn.allow_tf32=False",
+    "capture_sha256": "937bc3df9483f713fb5a9b67906c71510b19784b7beb36e7bf82fc7ced6e5b96",
+    "comparison_reference": "build/evidence/reference-deployment-v8/chat-template.f32 first 30 rows"
+  },
+  "comparison": {
+    "candidate_vs_incumbent_reference_max_abs": 0.0,
+    "candidate_vs_incumbent_reference_mean_abs": 0.0,
+    "target_max_abs": 0.5856843,
+    "target_mean_abs": 0.0430106,
+    "target_rmse": 0.0568142,
+    "target_failing_rows": [23, 29],
+    "greedy_tokens_match": true
+  },
+  "conclusion": "Explicitly disabling TF32 leaves the oracle byte-identical and does not change the target comparison. Reference TF32 policy is not the source of the remaining drift; no acceptance or production contract changed."
+}

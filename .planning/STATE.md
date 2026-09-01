@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: S03
 status: autonomous_execution
-last_updated: "2026-08-31T18:08:44Z"
+last_updated: "2026-09-01T00:00:00Z"
 progress:
   total_phases: 10
   completed_phases: 3
@@ -138,6 +138,7 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
 - The authoritative deployment-v8 two-session acceptance is recorded in `artifacts/S03/qwen38-s03-deployment-v8-acceptance.json`: plain/Unicode/special pass; chat-template and varied-length are greedy-correct and repeatable but numerically fail. Post-attention/state localization is recorded in `artifacts/S03/qwen38-post-attention-state-localization-v8.json`.
 - A reference-only per-layer BF16 output-rounding probe worsened the chat max error to `1.0134909153` and is rejected; no production change was made.
 - An isolated CUDA `--fmad=false` build materially changed the 30-token capture and worsened the reference comparison; FMA contraction is rejected as the primary drift correction. Evidence: `artifacts/S03/qwen38-fmad-off-probe.json`.
+- A temporary Kahan-style FP32 accumulation probe inside `nvfp4_linear_f32` materially changed the first 30-token capture and worsened the reference comparison (`max/mean/RMSE=0.8269062/0.0435945/0.0570161` versus incumbent `0.5856843/0.0430106/0.0568142`); the hypothesis is rejected and the production kernel was restored. Evidence: `artifacts/S03/qwen38-kahan-probe.json`.
 - If acceptable full expert residency across two 5090s is not feasible, S03F-04 may not invent silent expert paging. Record a capacity/residency ADR first.
 - Dual-GPU runtime work must validate actual peer-access topology and retain a pinned-host staged fallback; peer access is not assumed from GPU model alone.
 - Flash-Next vision and MTP are explicitly outside S03F.

@@ -330,3 +330,10 @@ and its reference comparison worsened to max/RMSE `0.5925694/0.0570751` with fai
 FMA contraction is therefore rejected as the primary correction. The isolated build was not
 promoted and no production kernel changed. Evidence is recorded in
 `artifacts/S03/qwen38-fmad-off-probe.json`.
+
+A compensated-summation probe then rebuilt the CUDA target with a temporary Kahan-style FP32
+accumulator inside `nvfp4_linear_f32` and replayed the first 30 chat-template tokens. The probe
+capture differed from the incumbent, but its reference comparison worsened from
+`0.5856843/0.0430106/0.0568142` to `0.8269062/0.0435945/0.0570161` for max/mean/RMSE, with
+four failing rows rather than two. The isolated build was discarded and the production kernel was
+restored unchanged. Evidence is recorded in `artifacts/S03/qwen38-kahan-probe.json`.

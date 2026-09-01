@@ -1,0 +1,46 @@
+{
+  "kind": "qwen38_cuda_kahan_probe",
+  "status": "rejected_hypothesis",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": {
+    "case": "chat-template",
+    "tokens": 30,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a"
+  },
+  "experiment": {
+    "source_commit": "c4803bd",
+    "isolated_build": "build/cuda-sm120a-kahan",
+    "compiler_define": "SUPERINFER_EXPERIMENT_KAHAN",
+    "production_change_kept": false,
+    "hypothesis": "Compensated FP32 accumulation in repeated NVFP4 projections is the primary cause of accumulated long-context drift"
+  },
+  "captures": {
+    "kahan_sha256": "220aeeb24ab589771d460c284b5c47d06ada67cadb5e1581ca6f714c174ffa07",
+    "incumbent_first_30_sha256": "367b47fc5c40705f0d584f4b428f63985ef18ca784ef951f74399a3fb5ab70a7",
+    "reference_first_30_sha256": "937bc3df9483f713fb5a9b67906c71510b19784b7beb36e7bf82fc7ced6e5b96",
+    "kahan_vs_incumbent": {
+      "max_abs": 0.78125,
+      "mean_abs": 0.0479182933,
+      "rmse": 0.0649055384
+    }
+  },
+  "reference_comparison": {
+    "reference": "build/evidence/reference-deployment-v8/chat-template.f32 first 30 rows",
+    "contract": {"max_abs": 0.5, "mean_abs": 0.1, "rmse": 0.15},
+    "kahan": {
+      "max_abs": 0.8269062042,
+      "mean_abs": 0.0435945025,
+      "rmse": 0.0570160956,
+      "failing_rows": [23, 25, 28, 29]
+    },
+    "incumbent": {
+      "max_abs": 0.5856842995,
+      "mean_abs": 0.0430105747,
+      "rmse": 0.0568142491,
+      "failing_rows": [23, 29]
+    }
+  },
+  "conclusion": "Compensated summation materially changes the capture but worsens the max, mean, RMSE, and failing-row set against the pinned reference. The isolated build was discarded; no production kernel or tolerance changed."
+}

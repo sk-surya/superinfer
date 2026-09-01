@@ -1,0 +1,46 @@
+{
+  "kind": "qwen38_cuda_nvfp4_pairwise_reduction_probe",
+  "status": "rejected_hypothesis",
+  "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+  "workload": {
+    "case": "chat-template",
+    "tokens": 30,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a"
+  },
+  "experiment": {
+    "source_commit": "f07f45b",
+    "isolated_build": "build/cuda-sm120a-pairwise",
+    "compiler_define": "SUPERINFER_EXPERIMENT_NVFP4_PAIRWISE",
+    "production_change_kept": false,
+    "hypothesis": "Interleaved partial sums with a pairwise final reduction better match the external GEMM arithmetic and reduce accumulated drift"
+  },
+  "captures": {
+    "pairwise_sha256": "9d83c2740f201bfda4a945cb3ab365111e5d5acc37fbf6530b2dbb3567e06384",
+    "incumbent_first_30_sha256": "367b47fc5c40705f0d584f4b428f63985ef18ca784ef951f74399a3fb5ab70a7",
+    "reference_first_30_sha256": "937bc3df9483f713fb5a9b67906c71510b19784b7beb36e7bf82fc7ced6e5b96",
+    "pairwise_vs_incumbent": {
+      "max_abs": 0.765625,
+      "mean_abs": 0.0489208533,
+      "rmse": 0.0659132073
+    }
+  },
+  "reference_comparison": {
+    "reference": "build/evidence/reference-deployment-v8/chat-template.f32 first 30 rows",
+    "contract": {"max_abs": 0.5, "mean_abs": 0.1, "rmse": 0.15},
+    "pairwise": {
+      "max_abs": 0.7053003311,
+      "mean_abs": 0.0429270759,
+      "rmse": 0.0561407672,
+      "failing_rows": [21, 23, 25, 28]
+    },
+    "incumbent": {
+      "max_abs": 0.5856842995,
+      "mean_abs": 0.0430105747,
+      "rmse": 0.0568142491,
+      "failing_rows": [23, 29]
+    }
+  },
+  "conclusion": "Pairwise/interleaved accumulation improves mean and RMSE slightly but worsens max error and increases the failing-row set. The candidate is rejected under the max-abs correctness gate; the isolated build was discarded and the production kernel was restored unchanged."
+}

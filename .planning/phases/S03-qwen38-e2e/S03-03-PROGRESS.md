@@ -346,3 +346,10 @@ layer residual, and final norm. Against the same 60-row target capture, this pro
 is rejected; the opt-in reference flag is retained as a reusable diagnostic and no acceptance
 contract or production runtime changed. Evidence is recorded in
 `artifacts/S03/qwen38-semantic-boundary-rounding-probe.json`.
+
+An isolated NVFP4 GEMV probe then used eight interleaved FP32 partial sums followed by a pairwise
+tree reduction. It changed the 30-token capture and slightly improved mean/RMSE, but worsened the
+max error from `0.5856843` to `0.7053003` and increased failing rows from two to four. The candidate
+is rejected by the max-abs correctness gate, the isolated build was discarded, and the production
+kernel was restored unchanged. Evidence is recorded in
+`artifacts/S03/qwen38-nvfp4-pairwise-probe.json`.

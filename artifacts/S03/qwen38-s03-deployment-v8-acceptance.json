@@ -1,0 +1,90 @@
+{
+  "schema": "superinfer.qwen38.s03.deployment-v8-acceptance.v1",
+  "status": "fail_numerical_contract",
+  "artifact": {
+    "name": "qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "corpus": {
+    "name": "tests/corpora/qwen38/s03-acceptance.json",
+    "sha256": "438fc893d13045df197c37d6e6aeed25eac5a2d6f698d032b7b7e6047a12cf03"
+  },
+  "reference": {
+    "directory": "build/evidence/reference-deployment-v8",
+    "transformers": "5.12.1",
+    "torch": "2.13.0+cu130",
+    "device": "cuda:0",
+    "contract": "BF16 embedding, BF16 KV, current-row BF16 GDN convolution state, FP32 recurrent state, BF16 final-norm output"
+  },
+  "target": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "sm_120a",
+    "physical_gpu": 0,
+    "sessions": 2,
+    "report": "build/evidence/qwen38-s03-acceptance-deployment-v8/acceptance.json",
+    "report_sha256": "2d8d4f338b89bdbbe9b6fc71ebfae078b0af2bb7d75cf1faf9102f6d7535ef84"
+  },
+  "numerical_contract": {
+    "max_abs": 0.5,
+    "mean_abs": 0.1,
+    "rmse": 0.15,
+    "unchanged": true
+  },
+  "cases": [
+    {
+      "id": "plain-short",
+      "rows": 6,
+      "token_match": true,
+      "numerical_match": true,
+      "repeatable": true,
+      "max_abs": 0.1910419460,
+      "mean_abs": 0.0196597967,
+      "rmse": 0.0262050889
+    },
+    {
+      "id": "unicode",
+      "rows": 11,
+      "token_match": true,
+      "numerical_match": true,
+      "repeatable": true,
+      "max_abs": 0.1657180786,
+      "mean_abs": 0.0157538354,
+      "rmse": 0.0201480873
+    },
+    {
+      "id": "special-tokens",
+      "rows": 3,
+      "token_match": true,
+      "numerical_match": true,
+      "repeatable": true,
+      "max_abs": 0.2842044830,
+      "mean_abs": 0.0309914239,
+      "rmse": 0.0400315747
+    },
+    {
+      "id": "varied-length",
+      "rows": 81,
+      "token_match": true,
+      "numerical_match": false,
+      "repeatable": true,
+      "failing_rows": [36, 43, 46, 52, 54, 56, 62, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79],
+      "max_abs": 4.5100712776,
+      "mean_abs": 0.0807379410,
+      "rmse": 0.1720535457,
+      "capture_sha256": "c0388fb24df7a6e1db5433953125f11ba1bf64e1ffd7043098c9dbc5ea74c6ce"
+    },
+    {
+      "id": "chat-template",
+      "rows": 60,
+      "token_match": true,
+      "numerical_match": false,
+      "repeatable": true,
+      "failing_rows": [23, 29, 30],
+      "max_abs": 0.5856842995,
+      "mean_abs": 0.0390873514,
+      "rmse": 0.0522503704,
+      "capture_sha256": "9d588484faff80567136daf86fcf31118fa54a2e2da07c9b25e6da1318ff3a99"
+    }
+  ],
+  "interpretation": "Both fresh target sessions are byte-identical and all greedy tokens match, but the unchanged numerical contract is exceeded by deterministic long-context drift. S03 remains open."
+}

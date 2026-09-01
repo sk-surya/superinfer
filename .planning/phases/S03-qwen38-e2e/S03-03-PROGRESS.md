@@ -293,3 +293,32 @@ boundaries. It worsened the chat-template comparison to global max `1.0134909153
 `0.0439874046`, and RMSE `0.0602338836`, versus the deployment-matched baseline max `0.6116333008`.
 The per-layer BF16 materialization hypothesis is rejected and no production change was made.
 Evidence is recorded in `artifacts/S03/qwen38-layer-output-rounding-probe.json`.
+
+## Deployment-v8 acceptance and post-attention localization
+
+The canonical two-session acceptance rerun completed against the deployment-matched CUDA
+Transformers 5.12.1 oracle. Plain-short, Unicode, and special-token cases pass numerical,
+greedy-token, and repeatability checks. Chat-template matches all 60 greedy tokens and is
+repeatable, but fails rows 23, 29, and 30 with max/mean/RMSE `0.5856843/0.0390874/0.0522504`.
+Varied-length matches all 81 greedy tokens and is repeatable, but fails rows
+`36,43,46,52,54,56,62,64,65,66,67,70,71,72,73,74,75,76,77,78,79` with
+max/mean/RMSE `4.5100713/0.0807379/0.1720535`. Both fresh target sessions have identical
+capture hashes. The tracked summary is `artifacts/S03/qwen38-s03-deployment-v8-acceptance.json`
+and raw evidence is under `build/evidence/qwen38-s03-acceptance-deployment-v8/`.
+
+A focused varied-length step-36 run captured all 64 post-token-mixer residuals and the model
+layer-42 state on GPU 0. Compared with a fresh CUDA Transformers oracle using the same BF16
+embedding/KV/convolution/final-norm contract, post-attention drift is already present at layer 0
+(`max_abs=0.0158510`, `RMSE=0.0002234`) and increases through layer 41. It jumps at layer 42
+(`max_abs=0.6800499`, `RMSE=0.0288765`) and reaches layer-63
+`max_abs=2.0009232`, `RMSE=0.2335027`. The layer-42 recurrent state remains close
+(`max_abs=0.0118160`, `RMSE=0.0000958`); the BF16 convolution-state difference is
+`max_abs=0.2109375`, `RMSE=0.0342077`, consistent with the already qualified storage contract.
+The state capture is byte-identical to the prior target diagnostic. This localizes the remaining
+failure to deterministic accumulated cross-layer numerical amplification; it does not identify a
+reproducible uninitialized read, activation-aliasing defect, or isolated layer-42 state corruption.
+Evidence is recorded in `artifacts/S03/qwen38-post-attention-state-localization-v8.json`.
+
+S03 remains open: the numerical contract and tolerances are unchanged, no production kernel was
+modified, and S03F-02 remains engineering-blocked until the contract is resolved or formally
+superseded by an approved evidence-backed decision.

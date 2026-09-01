@@ -1,0 +1,74 @@
+{
+  "kind": "qwen38_post_attention_state_localization",
+  "status": "pass_localization_remaining_full_model_drift",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "acceptance": {
+    "report": "build/evidence/qwen38-s03-acceptance-deployment-v8/acceptance.json",
+    "sha256": "2d8d4f338b89bdbbe9b6fc71ebfae078b0af2bb7d75cf1faf9102f6d7535ef84",
+    "target_sessions": 2,
+    "plain_unicode_special": "numerical_pass_and_repeatable",
+    "chat_template": "greedy_pass_repeatable_numerical_fail",
+    "varied_length": "greedy_pass_repeatable_numerical_fail"
+  },
+  "workload": {
+    "case": "varied-length",
+    "step": 36,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "cuda_visible_devices": "0",
+    "reference": "Transformers 5.12.1 Qwen3_5DecoderLayer with deployment BF16 state contract",
+    "reference_device": "cuda:0",
+    "reference_flags": {
+      "round_embedding": true,
+      "round_final_norm": true,
+      "round_kv": true,
+      "round_linear_state": true,
+      "round_activations": false
+    }
+  },
+  "captures": {
+    "target_post_attention": {
+      "path": "build/evidence/trace-var36-post-attn/trace.f32",
+      "sha256": "89ab932faa2fab0ca281efdacfd5885e1b5fe2b9f2eb3206a279d835cad3dec0",
+      "contract": "post_token_mixer_residual",
+      "elements": 327680
+    },
+    "reference_post_attention": {
+      "path": "build/evidence/reference-var36-post-attn-deployment-v8/attention-boundaries36.f32",
+      "sha256": "91ab6a31a737a52c952f7d5db6b525a38fe19e03e406d7b15620a9b48ff0eaa4",
+      "contract": "post_token_mixer_residual",
+      "elements": 327680
+    },
+    "target_layer42_state": {
+      "path": "build/evidence/trace-var36-post-attn/gdn42-state.f32",
+      "sha256": "23cc64b58ef387c8b8af016be3658300ef8a9e96ee52d1bb4fa23cf0551e494e",
+      "elements": 827392
+    },
+    "reference_layer42_state": {
+      "path": "build/evidence/reference-var36-post-attn-deployment-v8/gdn42-state.f32",
+      "sha256": "0accdbbf6f3a122d6af8424d2270dcb3bdeaa1aad73d50adaa678430eacdc3a1",
+      "elements": 827392
+    }
+  },
+  "post_attention_selected_layers": {
+    "layer_0": {"max_abs": 0.01585102, "mean_abs": 0.00002279846, "rmse": 0.00022336286},
+    "layer_41": {"max_abs": 0.26392365, "mean_abs": 0.01909104, "rmse": 0.02510880},
+    "layer_42": {"max_abs": 0.68004990, "mean_abs": 0.02127271, "rmse": 0.02887650},
+    "layer_43": {"max_abs": 1.23779869, "mean_abs": 0.02614046, "rmse": 0.03762500},
+    "layer_63": {"max_abs": 2.00092316, "mean_abs": 0.18137026, "rmse": 0.23350270}
+  },
+  "layer42_state_selected": {
+    "delta_recurrent": {"max_abs": 0.01181597, "mean_abs": 0.00004105, "rmse": 0.00009579},
+    "convolution_bf16_storage": {"max_abs": 0.21093750, "mean_abs": 0.02585258, "rmse": 0.03420768}
+  },
+  "interpretation": {
+    "finding": "post-attention drift is already present before the MLP and increases at layer 42; recurrent state remains close while convolution storage differs within the previously qualified deployment contract",
+    "conclusion": "The complete layer-42 state transition is not shown to be corrupt. The remaining acceptance failure is accumulated cross-layer numerical amplification, not a reproducible nondeterministic read or an isolated layer-42 kernel defect.",
+    "numerical_contract_changed": false,
+    "tolerance_changed": false,
+    "next_boundary": "fresh S03 review and acceptance packaging; do not start S03F-02 until the unchanged S03 numerical contract is resolved or formally superseded"
+  }
+}

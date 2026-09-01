@@ -150,12 +150,16 @@ def main() -> int:
     attention_outputs = []
     recurrent_states = []
     qkv_projections = []
+    z_projections = []
     convolved_outputs = []
     core_outputs = []
     gated_outputs = []
     if args.diagnostics:
         layer.linear_attn.in_proj_qkv.register_forward_hook(
             lambda _module, _inputs, output: qkv_projections.append(output.reshape(-1).detach().clone())
+        )
+        layer.linear_attn.in_proj_z.register_forward_hook(
+            lambda _module, _inputs, output: z_projections.append(output.reshape(-1).detach().clone())
         )
         original_conv_update = layer.linear_attn.causal_conv1d_update
 
@@ -222,6 +226,8 @@ def main() -> int:
     if args.diagnostics:
         torch.cat(qkv_projections).numpy().astype("float32").tofile(
             args.output.with_suffix(".qkv.bin"))
+        torch.cat(z_projections).numpy().astype("float32").tofile(
+            args.output.with_suffix(".z.bin"))
         torch.cat(convolved_outputs).numpy().astype("float32").tofile(
             args.output.with_suffix(".conv.bin"))
         torch.cat(core_outputs).numpy().astype("float32").tofile(
@@ -245,6 +251,7 @@ def main() -> int:
             if args.diagnostics else None,
             "qkv_shape": [10240],
             "segments": len(qkv_projections),
+            "z": str(args.output.with_suffix(".z.bin")),
             "convolution": str(args.output.with_suffix(".conv.bin"))
             if args.diagnostics else None,
             "core": str(args.output.with_suffix(".core.bin"))

@@ -1,0 +1,72 @@
+{
+  "kind": "qwen38_gdn_z_projection_localization",
+  "status": "hypothesis_rejected_upstream_activation_error",
+  "purpose": "Compare the GDN z projection with an independent Transformers oracle while holding the layer input and recurrent state fixed.",
+  "artifact": {
+    "path": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5"
+  },
+  "workload": {
+    "case": "varied-length",
+    "model_layer": 42,
+    "position": 36,
+    "physical_gpu": 0,
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "reference": "Transformers 5.12.1 Qwen3_5DecoderLayer with deployment BF16 convolution/state contract"
+  },
+  "inputs": {
+    "hidden_sha256": "62914fa791e82f9117debccb741749fe6c82d681d2e3655007cc0586d2dac2c4",
+    "state_sha256": "4cdf7607741beff4872ecd174e55339a20fe5d10f71fcbcf25d4dec6d6d41b8a",
+    "target_trace_sha256": "bcbc6abfc74d30e13cbb1d29a258d3aa15a63da154fc20bd0eba1a40bcb9ec61",
+    "reference_output_sha256": "447cd76a861b4e608e21b37c751a6187c6070e340a115efa803ec7fffdf1946f"
+  },
+  "operation_comparison": [
+    {
+      "operation": "qkv_projection",
+      "elements": 10240,
+      "max_abs": 0.0171461105,
+      "mean_abs": 0.00165697148,
+      "rmse": 0.0021420854,
+      "reference_sha256": "196fb2c61ee1b6fca1c90815052fe309068d0fff21408b1a2c30a195a0a1affe"
+    },
+    {
+      "operation": "causal_conv_silu",
+      "elements": 10240,
+      "max_abs": 0.00386416912,
+      "mean_abs": 0.0000215572631,
+      "rmse": 0.0000933096732,
+      "reference_sha256": "ddc3f4d85b480b8aecb0bf8ead671b3b24382f780fec97ecab8a2b38e6aec63e"
+    },
+    {
+      "operation": "z_projection",
+      "elements": 6144,
+      "max_abs": 0.0132126808,
+      "mean_abs": 0.00201810584,
+      "rmse": 0.0026487492,
+      "reference_sha256": "88a561f388dc85a8a53d7f5397e624f38d2a7949a831668ebd91df944a631fa3"
+    },
+    {
+      "operation": "gated_delta_core",
+      "elements": 6144,
+      "max_abs": 0.0000377702527,
+      "mean_abs": 0.000000525737137,
+      "rmse": 0.00000151205093,
+      "reference_sha256": "45a3af6878a02435fa51453042fdfd52f8ecef2973ff45c6d13ea766b2522e23"
+    }
+  ],
+  "interpretation": {
+    "z_projection_isolated": "The artifact z projection agrees with the independent oracle on the exact target hidden input; its error is bounded and materially smaller than the full-model layer-42 cliff.",
+    "conclusion": "The standalone in_proj_z path is not the source of the long-context divergence. The observed full-model error is inherited and amplified from upstream hidden-state drift.",
+    "production_change": false,
+    "tolerance_change": false
+  },
+  "evidence": {
+    "target_trace": "build/evidence/trace-var36-layer42-ops/trace-explicit.f32",
+    "reference_diagnostics": "build/evidence/reference-var42-target-input-z/",
+    "reference_metadata": "build/evidence/reference-var42-target-input-z/layer42-step36.json"
+  },
+  "acceptance": {
+    "S03_closed": false,
+    "next_boundary": "resolve or independently bound accumulated whole-model numerical drift before final S03 acceptance packaging"
+  }
+}

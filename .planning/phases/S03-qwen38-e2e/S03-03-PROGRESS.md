@@ -436,3 +436,20 @@ activation error entering the block. Evidence is recorded in
 
 S03 remains open under the unchanged numerical contract. The remaining technical question is
 the accumulated pre-layer-3 activation drift, not full-attention correctness.
+
+## GDN z-projection localization
+
+To test whether the layer-42 GDN `in_proj_z` path was responsible for the varied-length cliff, a
+diagnostic reference run replayed the exact target hidden input and recurrent state at position 36
+through the independent Transformers layer. The physical trace and reference captured the QKV,
+causal-convolution, z-projection, and recurrent-core outputs independently. The z projection
+comparison was max `0.0132127`, mean `0.00201811`, RMSE `0.00264875`; QKV was max `0.0171461`,
+convolution max `0.00386417`, and the recurrent core max `0.00003777`. This rejects the standalone
+z-projection hypothesis and confirms that the apparent full-model layer-42 cliff is inherited and
+amplified upstream. The diagnostic-only reference tool now records z captures for future GDN
+localization; no production kernel, tolerance, or acceptance contract changed. Evidence and input
+hashes are recorded in `artifacts/S03/qwen38-gdn-z-projection-localization-v11.json`.
+
+S03 remains open because the unchanged numerical contract still fails on long replay. The next
+closure boundary is root-cause correction or a separately reviewed, independently justified
+quantized-reference contract, followed by final acceptance packaging and fresh review.

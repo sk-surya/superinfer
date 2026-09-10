@@ -114,11 +114,11 @@
 
 ## D-017 — Flash-Next is the second flagship architecture proof
 
-**Status:** Accepted
+**Status:** Superseded in ordering by D-020
 **Supersedes:** D-007 ordering only
 **Decision:** Finish S03 Qwen3.8 correctness unchanged, then execute S03F Flash-Next bring-up before S04 kernel optimization. S03F-01 contract/capacity research may run in parallel with the tail of S03; S03F-02 through S03F-06 runtime work is blocked until S03 closes.
 **Why:** Flash-Next directly exercises extension points SuperInfer was designed to support—heterogeneous storage, stateful execution, MoE, sparse attention and multi-device specialization—while Qwen provides the simpler debugging ladder needed to validate the compiler/runtime first.
-**Consequence:** Gemma moves from “second model” to later model-family portability audit. Vision and MTP remain excluded from initial Flash-Next correctness.
+**Consequence:** Gemma moves from “second model” to later model-family portability audit. Vision and MTP remain excluded from initial Flash-Next correctness. D-020 later changes only when Flash-Next implementation occurs relative to the first Qwen performance proof; its architecture scope remains valid.
 
 ## D-018 — Initial Flash-Next placement uses contiguous layers and first-class PLE residency
 
@@ -133,3 +133,11 @@
 **Decision:** S03F-01 cannot select a full-expert residency or quantization recipe because the exact Flash-Next artifact and pinned reference revision are unavailable. Until that evidence is supplied, `full_expert_residency_feasible` is unknown, no quality-preserving quantization claim is made, and S03F implementation may not add expert staging, caching, or paging.
 **Why:** The checked-in evidence contains no exact Flash-Next safetensors headers, packed byte ranges, or reference evaluation. Parameter-count estimates and near-name model artifacts do not satisfy FN-001/FN-002.
 **Consequence:** S03F-02 remains engineering-blocked after the existing S03 dependency; the next research action is to provide the exact source/reference inputs and regenerate the canonical ledgers.
+
+## D-020 — Qwen performance proof precedes Flash-Next implementation
+
+**Status:** Accepted
+**Supersedes:** D-017 ordering only
+**Decision:** After S03 correctness closes, execute an early Qwen results-first lane consisting of a reproducible baseline/profile, one profiler-selected bottleneck optimization, and a reproduced end-to-end speedup before S03F-02+ Flash-Next runtime implementation. S03F-01 research evidence remains retained. Flash-Next remains a required V0 architecture proof unless separately superseded.
+**Why:** The current highest-value uncertainty is whether SuperInfer's hardware-specialization thesis produces measurable end-to-end Qwen improvement. Flash-Next is a broad six-plan architecture expansion and is independently quality-constrained by D-019; placing it before the first Qwen performance feedback loop delays the most decision-useful evidence.
+**Consequence:** D-006 correctness remains binding. D-019 remains binding. The first internal Qwen baseline may be captured immediately after S03 closes; broad S04 work and full autoresearch remain deferred until the results-first loop reproduces one positive end-to-end Qwen improvement.

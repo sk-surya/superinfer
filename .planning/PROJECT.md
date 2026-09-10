@@ -6,7 +6,7 @@ SuperInfer is an ahead-of-time model compiler and deliberately small inference r
 
 The product thesis is **composable at the control plane, ruthlessly specialized at the data plane**.
 
-The first proof is intentionally single-device Qwen3.8-27B. The second flagship architecture proof is text-only Flash-Next on 2x RTX 5090, because it exercises multi-device placement, heterogeneous PLE/N-gram residency, sparse attention, MoE, gated residual execution, and stateful Gated DeltaNet without changing the core thesis.
+The first proof is intentionally single-device Qwen3.8-27B. The second flagship architecture proof remains text-only Flash-Next on 2x RTX 5090 because it exercises multi-device placement, heterogeneous PLE/N-gram residency, sparse attention, MoE, gated residual execution, and stateful Gated DeltaNet without changing the core thesis. Under D-020, however, the first Qwen performance feedback loop occurs before Flash-Next runtime implementation.
 
 Project execution follows a second governance thesis: agents preserve velocity while understanding packets remain durable checkpoints. `.planning/UNDERSTANDING-GATES.md` defines the protocol; `.planning/UNDERSTANDING.md` records durable user knowledge and unknowns. D-014 permits autonomous execution past unpassed gates while retaining those packets for study.
 
@@ -28,35 +28,36 @@ Flash-Next adds a second problem the architecture must solve cleanly: not every 
 V0 ends when all of the following are true:
 
 1. Qwen3.8-27B converts from pinned Hugging Face inputs to a deterministic `.sinf` artifact.
-2. That artifact validates, loads, and generates correct tokens on an RTX 5090 through the `sm120` backend.
-3. Text-only Flash-Next produces reference-equivalent greedy generation on 2x RTX 5090 through a deterministic multi-device Physical Plan with PLE/N-gram tables host-resident.
-4. The runtime token path has no heap allocation, model-family branching, implicit checkpoint parsing, or unplanned device transfers.
-5. At least one specialized kernel portfolio beats its correctness baseline on a declared workload without numerical regression.
-6. A clean-machine benchmark recipe produces the first checked, machine-readable RTX 5090 performance graph.
-7. Gemma 4 26B-A4B later audits model-family extensibility through the intended extension surfaces and challenges accidental coupling introduced by Qwen/Flash-Next work.
+2. That artifact validates, loads, and generates correct tokens on an RTX 5090 through the `sm120` backend under an independently justified numerical contract.
+3. A reproducible Qwen baseline exists and at least one profiler-selected optimization produces a reproduced positive end-to-end decode improvement without correctness regression.
+4. Text-only Flash-Next produces reference-equivalent greedy generation on 2x RTX 5090 through a deterministic multi-device Physical Plan with PLE/N-gram tables host-resident.
+5. The runtime token path has no heap allocation, model-family branching, implicit checkpoint parsing, or unplanned device transfers.
+6. At least one specialized kernel portfolio beats its correctness baseline on a declared workload without numerical regression.
+7. A clean-machine benchmark recipe produces the first checked, machine-readable RTX 5090 performance graph.
+8. Gemma 4 26B-A4B later audits model-family extensibility through the intended extension surfaces and challenges accidental coupling introduced by Qwen/Flash-Next work.
 
 ## Critical Path
 
-The critical path is now two correctness proofs followed by optimization:
+The immediate critical path is results-first Qwen proof:
 
 ```text
 Qwen3.8-27B
   -> frontend -> Semantic IR -> Lowered IR -> Physical Plan -> .sinf
-  -> single-5090 correct generation
+  -> S03-R decisive same-artifact correctness closure
+  -> R01 reproducible single-5090 baseline + profiler decomposition
+  -> R02 exactly one profiler-selected dominant decode bottleneck
+  -> R03 reproduced positive end-to-end decode improvement
 
 then
 
-Flash-Next text path
-  -> exact capacity proof
-  -> multi-device placement + host-resident PLE + MoE + QSA + gated residual
-  -> dual-5090 correct generation
-
-then
-
-kernel portfolio -> autoresearch -> reproducible performance proof
+broader kernel/autoresearch work and Flash-Next architecture proof
+  -> S03F-02+ only under D-019 evidence
+  -> later model-family/release work
 ```
 
-S03F-01 capacity/model-contract research may run in parallel with the tail of S03. Runtime changes for S03F remain blocked until S03's existing acceptance closes.
+S03F-01 capacity/model-contract research remains retained. Runtime changes for S03F do not block the first Qwen performance proof and remain constrained by D-019.
+
+The first recovery stopping condition is evidence, not phase count: Qwen correctness is defensible, the current runtime is measured, one dominant bottleneck is improved, and the end-to-end gain reproduces in a second fresh session.
 
 ## Non-Goals for V0
 
@@ -73,7 +74,8 @@ S03F-01 capacity/model-contract research may run in parallel with the tail of S0
 
 ## Success Measures
 
-- correctness: reference-aligned intermediates/logits/tokens and repeatable state continuation;
+- correctness: reference-aligned intermediates/logits/tokens and repeatable state continuation under evidence-derived quantized-model contracts where applicable;
+- early performance proof: a controlled Qwen baseline, profiler-ranked bottleneck, targeted optimization, and reproduced positive end-to-end delta;
 - architecture: unusual Flash-Next requirements fit through generic IR/storage/placement contracts, and later Gemma model-family support does not require model-name runtime branching;
 - residency: placement decisions and transfer commands are explicit, auditable and derived from packed artifact bytes rather than hidden runtime heuristics;
 - research velocity: a kernel, storage or decode experiment can be expressed, gated, reproduced and promoted without hand-editing the runtime;
@@ -87,6 +89,7 @@ S03F-01 capacity/model-contract research may run in parallel with the tail of S0
 - C++20/CUDA for compiler and runtime; Python for model conversion, research orchestration and reporting;
 - artifacts and generated plans must be deterministic and versioned;
 - performance work never bypasses correctness gates;
+- the first internal Qwen performance checkpoint may occur before Flash-Next implementation, but public/release claims still obey `.planning/BENCHMARKS.md` and `.planning/QUALITY.md`;
 - PLE host residency is a first-class StoragePolicy/operator path, not generic CPU offload;
 - Flash-Next expert residency policy is decided from S03F-01 exact capacity/quality evidence; no silent expert paging is allowed;
 - legal/license/provenance metadata from source models is preserved in `.sinf` manifests.

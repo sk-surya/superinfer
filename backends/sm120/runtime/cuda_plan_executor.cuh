@@ -847,10 +847,15 @@ inline cudaError_t launch_cast_bf16_to_f32(const ir::physical::CommandDescriptor
   const auto& output = plan.buffers()[command.buffers[1].value()];
   if (input.size == 0 || input.size % sizeof(std::uint16_t) != 0 ||
       output.size != input.size * 2U) return cudaErrorInvalidValue;
-  cast_bf16_to_f32<<<1, 256, 0, stream>>>(
+  const std::size_t elements = static_cast<std::size_t>(input.size / sizeof(std::uint16_t));
+  // S04-P5: the kernel is elementwise and its loop is already grid-stride, so
+  // occupying the device is bit-identical; only the block count changes.
+  std::uint32_t blocks = static_cast<std::uint32_t>((elements + 255U) / 256U);
+  if (blocks == 0U) blocks = 1U;
+  if (blocks > 4096U) blocks = 4096U;
+  cast_bf16_to_f32<<<blocks, 256, 0, stream>>>(
       static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, input.id)),
-      static_cast<float*>(buffer_pointer(plan, arena, output.id)),
-      static_cast<std::size_t>(input.size / sizeof(std::uint16_t)));
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), elements);
   return cudaGetLastError();
 }
 
@@ -862,10 +867,13 @@ inline cudaError_t launch_cast_f32_to_bf16(const ir::physical::CommandDescriptor
   const auto& output = plan.buffers()[command.buffers[1].value()];
   if (input.size == 0 || input.size % sizeof(float) != 0 ||
       output.size != input.size / 2U) return cudaErrorInvalidValue;
-  cast_f32_to_bf16<<<1, 256, 0, stream>>>(
+  const std::size_t elements = static_cast<std::size_t>(input.size / sizeof(float));
+  std::uint32_t blocks = static_cast<std::uint32_t>((elements + 255U) / 256U);
+  if (blocks == 0U) blocks = 1U;
+  if (blocks > 4096U) blocks = 4096U;
+  cast_f32_to_bf16<<<blocks, 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
-      static_cast<std::uint16_t*>(buffer_pointer(plan, arena, output.id)),
-      static_cast<std::size_t>(input.size / sizeof(float)));
+      static_cast<std::uint16_t*>(buffer_pointer(plan, arena, output.id)), elements);
   return cudaGetLastError();
 }
 
@@ -898,7 +906,11 @@ inline cudaError_t launch_lm_head(const ir::physical::CommandDescriptor& command
   const auto& output = plan.buffers()[command.buffers[2].value()];
   const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
   const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
-  linear_f32<<<1, 256, 0, stream>>>(
+  // S04-P5: row-parallel launch (lm_head); each row reduction order is unchanged.
+  std::uint32_t blocks = static_cast<std::uint32_t>((output_elements + 255U) / 256U);
+  if (blocks == 0U) blocks = 1U;
+  if (blocks > 4096U) blocks = 4096U;
+  linear_f32<<<blocks, 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, weights.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,

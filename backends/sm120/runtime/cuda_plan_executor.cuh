@@ -327,6 +327,32 @@ __global__ inline void nvfp4_linear_f32(const float* input, const std::uint8_t* 
   }
 }
 
+/** Row-parallel NVFP4 projection (R02): identical per-row operation order to
+ * `nvfp4_linear_f32`, spread over up to 2048 blocks. Each output row is still
+ * reduced serially by exactly one thread in column order, so results are
+ * bit-identical to the baseline for every shape; only SM occupancy changes.
+ * The incumbent stays available as the promotion fallback.
+ */
+__global__ inline void nvfp4_linear_rows_f32(const float* input, const std::uint8_t* packed,
+                                            const std::uint8_t* scales,
+                                            const float* tensor_scale, float* output,
+                                            std::size_t input_elements,
+                                            std::size_t output_elements) {
+  for (std::size_t row = blockIdx.x * blockDim.x + threadIdx.x; row < output_elements;
+       row += blockDim.x * gridDim.x) {
+    float sum = 0.0F;
+    for (std::size_t column = 0; column < input_elements; ++column) {
+      const std::uint8_t packed_value = packed[(row * input_elements + column) / 2U];
+      const std::uint8_t code = (column % 2U == 0) ? (packed_value & 0x0FU) : (packed_value >> 4U);
+      const float weight = decode_e2m1_device(code) *
+                           decode_e4m3fn_device(scales[(row * input_elements + column) / 16U]) *
+                           *tensor_scale;
+      sum += weight * input[column];
+    }
+    output[row] = sum;
+  }
+}
+
 /** Reference-correct grouped-query attention over a pre-materialized contiguous KV window. */
 __global__ inline void grouped_attention_f32(const float* query, const float* keys,
                                              const float* values, float* output,
@@ -642,7 +668,15 @@ inline cudaError_t launch_nvfp4_linear(const ir::physical::CommandDescriptor& co
   const auto& output = plan.buffers()[command.buffers[4].value()];
   const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
   const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
-  nvfp4_linear_f32<<<1, 256, 0, stream>>>(
+  // Row-parallel launch (R02): one 256-thread block per 256 output rows keeps the
+  // per-row operation order bit-identical to the single-block baseline while
+  // occupying the device. Small shapes collapse to a single block, i.e. the
+  // exact baseline mapping.
+  std::uint32_t blocks =
+      static_cast<std::uint32_t>((output_elements + 255U) / 256U);
+  if (blocks == 0U) blocks = 1U;
+  if (blocks > 2048U) blocks = 2048U;
+  nvfp4_linear_rows_f32<<<blocks, 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id)),
       static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)),

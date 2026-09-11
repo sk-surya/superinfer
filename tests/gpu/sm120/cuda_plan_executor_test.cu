@@ -25,6 +25,70 @@ __global__ void injected_async_fault() {
   if (threadIdx.x == 0) *static_cast<volatile std::uint32_t*>(nullptr) = 1U;
 }
 
+void test_nvfp4_row_parallel_identity() {
+  // R02 differential: the row-parallel kernel must be bit-identical to the
+  // single-block baseline for every shape, because per-row operation order is
+  // unchanged. Deterministic LCG inputs; odd sizes exercise nibble/scale edges.
+  using namespace superinfer;
+  const std::array<std::pair<std::size_t, std::size_t>, 3> shapes{{{48, 512}, {1031, 513}, {4096, 2048}}};
+  for (const auto [outputs, inputs] : shapes) {
+    std::vector<float> host_input(inputs);
+    std::vector<std::uint8_t> host_packed((outputs * inputs + 1) / 2);
+    std::vector<std::uint8_t> host_scales(outputs * ((inputs + 15) / 16));
+    std::uint64_t state = 0x12345678ULL;
+    auto next_byte = [&]() -> std::uint8_t {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return static_cast<std::uint8_t>(state >> 33U);
+    };
+    for (auto& value : host_input)
+      value = (static_cast<float>(next_byte()) - 128.0F) / 128.0F;
+    for (auto& value : host_packed) value = next_byte();
+    for (auto& value : host_scales) value = static_cast<std::uint8_t>(0x20U | (next_byte() & 0x1FU));
+    const float host_scale = 0.5F;
+    float *device_input = nullptr, *device_out_base = nullptr, *device_out_rows = nullptr,
+          *device_scale = nullptr;
+    std::uint8_t *device_packed = nullptr, *device_scales = nullptr;
+    assert(cudaMalloc(&device_input, inputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&device_packed, host_packed.size()) == cudaSuccess);
+    assert(cudaMalloc(&device_scales, host_scales.size()) == cudaSuccess);
+    assert(cudaMalloc(&device_scale, sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&device_out_base, outputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&device_out_rows, outputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMemcpy(device_input, host_input.data(), inputs * sizeof(float),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(device_packed, host_packed.data(), host_packed.size(),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(device_scales, host_scales.data(), host_scales.size(),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(device_scale, &host_scale, sizeof(float), cudaMemcpyHostToDevice) ==
+           cudaSuccess);
+    sm120::cuda_runtime::detail::nvfp4_linear_f32<<<1, 256>>>(device_input, device_packed, device_scales,
+                                                     device_scale, device_out_base, inputs,
+                                                     outputs);
+    assert(cudaGetLastError() == cudaSuccess);
+    std::uint32_t blocks = static_cast<std::uint32_t>((outputs + 255U) / 256U);
+    if (blocks == 0U) blocks = 1U;
+    if (blocks > 2048U) blocks = 2048U;
+    sm120::cuda_runtime::detail::nvfp4_linear_rows_f32<<<blocks, 256>>>(
+        device_input, device_packed, device_scales, device_scale, device_out_rows, inputs,
+        outputs);
+    assert(cudaGetLastError() == cudaSuccess);
+    assert(cudaDeviceSynchronize() == cudaSuccess);
+    std::vector<float> out_base(outputs), out_rows(outputs);
+    assert(cudaMemcpy(out_base.data(), device_out_base, outputs * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(out_rows.data(), device_out_rows, outputs * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(out_base == out_rows);
+    cudaFree(device_input);
+    cudaFree(device_packed);
+    cudaFree(device_scales);
+    cudaFree(device_scale);
+    cudaFree(device_out_base);
+    cudaFree(device_out_rows);
+  }
+}
+
 superinfer::ir::physical::Plan make_plan() {
   using namespace superinfer;
   ir::physical::PlanBuilder builder;
@@ -908,6 +972,8 @@ int main() {
       ir::physical::BufferId{1},
       base::ByteView(reinterpret_cast<std::byte*>(f32_values.data()), sizeof(f32_values))).ok());
   assert((f32_values == std::array<float, 4>{1.0F, 2.0F, 3.0F, 4.0F}));
+
+  test_nvfp4_row_parallel_identity();
 
   const auto f32_to_bf16_plan = make_f32_to_bf16_cast_plan();
   auto f32_to_bf16 = sm120::cuda_runtime::CudaPlanSession::create(

@@ -155,7 +155,9 @@ The milestone deliberately narrows early work to a correct Qwen3.8 artifact/runt
 
 ### S04 — Kernel Portfolio and Specialization
 
-**Goal:** Replace correctness baselines with capability-selected, measured `sm120` candidates while retaining reliable fallback paths for the now-qualified model semantics. Under D-020 broad S04 work remains deferred until R03 proves one end-to-end optimization loop.
+**Goal:** Replace correctness baselines with capability-selected, measured `sm120` candidates while retaining reliable fallback paths for the now-qualified model semantics. R03 proved the first end-to-end loop; the recovery sprint is complete and S04 is now the **active** lane as a profiler-driven performance ladder (fresh profile -> one target -> correctness -> reproduced benchmark). Fleet target: >= 5 decode tok/s.
+
+**Active lane:** S04-P1 — profiler-driven manual optimization ladder. Repeat until no credible single/fused change offers >15% E2E gain: profile, select largest defensible E2E opportunity, optimize behind retained fallback + independent oracle, reproduce benchmark in a second fresh session. Do not optimize by name or roadmap order.
 
 **Understanding:** L2 Gate C repeats at mechanism transitions: C.1 dense GEMV/NVFP4/Tensor Cores, C.2 attention/KV/sparse attention, C.3 fusion/persistent/MoE mechanisms. Each packet covers roofline, memory hierarchy, Tensor versus CUDA cores, occupancy, fusion tradeoffs, likely failures, and a profiler prediction.
 

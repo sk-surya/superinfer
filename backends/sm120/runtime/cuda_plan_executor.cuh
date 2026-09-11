@@ -206,6 +206,98 @@ __global__ inline void grouped_attention_bf16_cache(
   }
 }
 
+__device__ inline float bf16_bits_to_float_device(std::uint16_t value) {
+  return __uint_as_float(static_cast<std::uint32_t>(value) << 16U);
+}
+
+/** KV-window attention with scores computed once (S04-P1).
+ *
+ * Bit-identical to `grouped_attention_bf16_cache`: the per-position Q·K score,
+ * the max, the per-position softmax numerator, and the per-dimension value
+ * accumulation all use the same operands in the same order. The only change is
+ * that Q·K is computed once instead of three times, and the value pass no
+ * longer recomputes it inside a per-dimension loop (removing an O(head_dim^2)
+ * factor). Grid: one block per query head; shared memory holds `positions`
+ * scores followed by `positions` probabilities.
+ */
+__global__ inline void grouped_attention_bf16_cache_cached(
+    const float* query, const std::uint16_t* keys, const std::uint16_t* values, float* output,
+    std::size_t query_heads, std::size_t kv_heads, std::size_t head_dimension,
+    std::size_t positions) {
+  extern __shared__ float shared[];
+  float* scores = shared;
+  float* probabilities = shared + positions;
+  const std::size_t group = query_heads / kv_heads;
+  const float scale = rsqrtf(static_cast<float>(head_dimension));
+  const std::size_t query_head = blockIdx.x;
+  if (query_head >= query_heads) return;
+  const std::size_t kv_head = query_head / group;
+  // Phase 1: Q.K score per position, once. Each thread keeps the incumbent's
+  // serial dimension accumulation for the positions it owns.
+  for (std::size_t position = threadIdx.x; position < positions; position += blockDim.x) {
+    float score = 0.0F;
+    for (std::size_t dimension = 0; dimension < head_dimension; ++dimension) {
+      const std::size_t cache_index =
+          (position * kv_heads + kv_head) * head_dimension + dimension;
+      score += query[query_head * head_dimension + dimension] *
+               bf16_bits_to_float_device(keys[cache_index]);
+    }
+    scores[position] = score;
+  }
+  __syncthreads();
+  // Max over positions: fmaxf is exact and order-independent, so any reduction
+  // order reproduces the incumbent's sequential maximum bit-for-bit.
+  __shared__ float reduction[256];
+  float local_max = -3.402823466e+38F;
+  for (std::size_t position = threadIdx.x; position < positions; position += blockDim.x) {
+    local_max = fmaxf(local_max, scores[position] * scale);
+  }
+  reduction[threadIdx.x] = local_max;
+  __syncthreads();
+  for (std::size_t stride = blockDim.x / 2U; stride > 0U; stride >>= 1U) {
+    if (threadIdx.x < stride) {
+      reduction[threadIdx.x] = fmaxf(reduction[threadIdx.x], reduction[threadIdx.x + stride]);
+    }
+    __syncthreads();
+  }
+  __shared__ float maximum_shared;
+  if (threadIdx.x == 0) maximum_shared = reduction[0];
+  __syncthreads();
+  const float maximum = maximum_shared;
+  // Phase 2: softmax numerator per position (parallel) then denominator summed
+  // sequentially by thread 0 to preserve the incumbent's summation order.
+  for (std::size_t position = threadIdx.x; position < positions; position += blockDim.x) {
+    probabilities[position] = expf(scores[position] * scale - maximum);
+  }
+  __syncthreads();
+  __shared__ float denominator_shared;
+  if (threadIdx.x == 0) {
+    float denominator = 0.0F;
+    for (std::size_t position = 0; position < positions; ++position) {
+      denominator += probabilities[position];
+    }
+    denominator_shared = denominator;
+  }
+  __syncthreads();
+  const float denominator = denominator_shared;
+  for (std::size_t position = threadIdx.x; position < positions; position += blockDim.x) {
+    probabilities[position] = probabilities[position] / denominator;
+  }
+  __syncthreads();
+  // Phase 4: value accumulation, dimension-outer/position-inner exactly as the
+  // incumbent, reusing the cached probabilities instead of recomputing Q.K.
+  for (std::size_t dimension = threadIdx.x; dimension < head_dimension;
+       dimension += blockDim.x) {
+    float result = 0.0F;
+    for (std::size_t position = 0; position < positions; ++position) {
+      const std::size_t value_index =
+          (position * kv_heads + kv_head) * head_dimension + dimension;
+      result += probabilities[position] * bf16_bits_to_float_device(values[value_index]);
+    }
+    output[query_head * head_dimension + dimension] = result;
+  }
+}
+
 __global__ inline void embedding_f32(const std::uint32_t* token, const float* table, float* output,
                                      std::size_t vocabulary, std::size_t hidden) {
   const std::uint32_t row = *token;
@@ -885,6 +977,28 @@ inline cudaError_t launch_attention_bf16_cache(
   const auto& values = plan.buffers()[command.buffers[2].value()];
   const auto& output = plan.buffers()[command.buffers[3].value()];
   const auto dimensions = command.attention;
+  // S04-P1: compute Q.K once per position (bit-identical, removes the
+  // O(head_dim^2) value pass). Guard on the shared-memory budget; fall back to
+  // the incumbent single-block kernel when the KV window cannot be cached.
+  const std::size_t cached_bytes = 2U * dimensions.positions * sizeof(float);
+  const std::size_t query_heads = dimensions.query_heads;
+  int maximum_shared_bytes = 0;
+  cudaDeviceGetAttribute(&maximum_shared_bytes, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0);
+  if (query_heads != 0 && cached_bytes <= static_cast<std::size_t>(maximum_shared_bytes)) {
+    if (cudaFuncSetAttribute(grouped_attention_bf16_cache_cached,
+                             cudaFuncAttributeMaxDynamicSharedMemorySize,
+                             static_cast<int>(cached_bytes)) != cudaSuccess) {
+      return cudaGetLastError();
+    }
+    grouped_attention_bf16_cache_cached<<<static_cast<std::uint32_t>(query_heads), 256,
+                                          cached_bytes, stream>>>(
+        static_cast<const float*>(buffer_pointer(plan, arena, query.id)),
+        static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, keys.id)),
+        static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, values.id)),
+        static_cast<float*>(buffer_pointer(plan, arena, output.id)), dimensions.query_heads,
+        dimensions.key_value_heads, dimensions.head_dimension, dimensions.positions);
+    return cudaGetLastError();
+  }
   grouped_attention_bf16_cache<<<1, 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, query.id)),
       static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, keys.id)),

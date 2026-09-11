@@ -21,6 +21,81 @@ superinfer::ir::physical::PhysicalTensorDescriptor typed_tensor(
           encoding};
 }
 
+void test_grouped_attention_cached_identity() {
+  // S04-P1 differential: the cached-score attention must be bit-identical to
+  // the incumbent recompute kernel for every shape and KV-window length.
+  using namespace superinfer;
+  struct Shape {
+    std::size_t query_heads;
+    std::size_t kv_heads;
+    std::size_t head_dim;
+    std::size_t positions;
+  };
+  const std::array<Shape, 5> shapes{{{24, 4, 256, 7}, {24, 4, 256, 64}, {8, 2, 128, 33},
+                                     {4, 1, 64, 1}, {24, 4, 256, 257}}};
+  for (const auto& shape : shapes) {
+    const std::size_t query_elements = shape.query_heads * shape.head_dim;
+    const std::size_t cache_elements = shape.positions * shape.kv_heads * shape.head_dim;
+    std::vector<float> host_query(query_elements);
+    std::vector<std::uint16_t> host_keys(cache_elements), host_values(cache_elements);
+    std::uint64_t state = 0x9E3779B97F4A7C15ULL;
+    auto next = [&]() -> std::uint32_t {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return static_cast<std::uint32_t>(state >> 33U);
+    };
+    for (auto& value : host_query) value = (static_cast<float>(next() % 2000U) - 1000.0F) / 500.0F;
+    auto to_bf16 = [](float value) -> std::uint16_t {
+      std::uint32_t bits = 0;
+      std::memcpy(&bits, &value, sizeof(bits));
+      return static_cast<std::uint16_t>(bits >> 16U);
+    };
+    for (std::size_t index = 0; index < cache_elements; ++index) {
+      host_keys[index] = to_bf16((static_cast<float>(next() % 2000U) - 1000.0F) / 500.0F);
+      host_values[index] = to_bf16((static_cast<float>(next() % 2000U) - 1000.0F) / 500.0F);
+    }
+    float *device_query = nullptr, *device_out_base = nullptr, *device_out_cached = nullptr;
+    std::uint16_t *device_keys = nullptr, *device_values = nullptr;
+    assert(cudaMalloc(&device_query, query_elements * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&device_keys, cache_elements * sizeof(std::uint16_t)) == cudaSuccess);
+    assert(cudaMalloc(&device_values, cache_elements * sizeof(std::uint16_t)) == cudaSuccess);
+    assert(cudaMalloc(&device_out_base, query_elements * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&device_out_cached, query_elements * sizeof(float)) == cudaSuccess);
+    assert(cudaMemcpy(device_query, host_query.data(), query_elements * sizeof(float),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(device_keys, host_keys.data(),
+                      cache_elements * sizeof(std::uint16_t), cudaMemcpyHostToDevice) ==
+           cudaSuccess);
+    assert(cudaMemcpy(device_values, host_values.data(),
+                      cache_elements * sizeof(std::uint16_t), cudaMemcpyHostToDevice) ==
+           cudaSuccess);
+    sm120::cuda_runtime::detail::grouped_attention_bf16_cache<<<1, 256>>>(
+        device_query, device_keys, device_values, device_out_base, shape.query_heads,
+        shape.kv_heads, shape.head_dim, shape.positions);
+    assert(cudaGetLastError() == cudaSuccess);
+    const std::size_t cached_bytes = 2U * shape.positions * sizeof(float);
+    assert(cudaFuncSetAttribute(sm120::cuda_runtime::detail::grouped_attention_bf16_cache_cached,
+                                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                static_cast<int>(cached_bytes)) == cudaSuccess);
+    sm120::cuda_runtime::detail::grouped_attention_bf16_cache_cached<<<
+        static_cast<std::uint32_t>(shape.query_heads), 256, cached_bytes>>>(
+        device_query, device_keys, device_values, device_out_cached, shape.query_heads,
+        shape.kv_heads, shape.head_dim, shape.positions);
+    assert(cudaGetLastError() == cudaSuccess);
+    assert(cudaDeviceSynchronize() == cudaSuccess);
+    std::vector<float> out_base(query_elements), out_cached(query_elements);
+    assert(cudaMemcpy(out_base.data(), device_out_base, query_elements * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(out_cached.data(), device_out_cached, query_elements * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(out_base == out_cached);
+    cudaFree(device_query);
+    cudaFree(device_keys);
+    cudaFree(device_values);
+    cudaFree(device_out_base);
+    cudaFree(device_out_cached);
+  }
+}
+
 __global__ void injected_async_fault() {
   if (threadIdx.x == 0) *static_cast<volatile std::uint32_t*>(nullptr) = 1U;
 }
@@ -974,6 +1049,7 @@ int main() {
   assert((f32_values == std::array<float, 4>{1.0F, 2.0F, 3.0F, 4.0F}));
 
   test_nvfp4_row_parallel_identity();
+  test_grouped_attention_cached_identity();
 
   const auto f32_to_bf16_plan = make_f32_to_bf16_cast_plan();
   auto f32_to_bf16 = sm120::cuda_runtime::CudaPlanSession::create(

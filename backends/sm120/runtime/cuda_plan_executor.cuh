@@ -615,6 +615,75 @@ __global__ inline void gated_delta_attention_f32(
   }
 }
 
+/** Gated DeltaNet with value-dimension parallelism (S04-P3).
+ *
+ * Bit-identical to `gated_delta_attention_f32`: each `value_index` is an
+ * independent recurrence column, so assigning one thread per (value head,
+ * value index) preserves every summation and update order. Only the head-level
+ * scalars (norms, scales, decay, beta) are shared to avoid redundant work; they
+ * are computed with the identical expressions.
+ */
+__global__ inline void gated_delta_attention_parallel_f32(
+    const float* query, const float* keys, const float* values, const float* log_decay,
+    const float* beta, float* state, float* output, std::size_t key_heads,
+    std::size_t value_heads, std::size_t key_dimension, std::size_t value_dimension,
+    std::size_t positions) {
+  const std::size_t head = blockIdx.x;
+  if (head >= value_heads) return;
+  const std::size_t heads_per_value = value_heads / key_heads;
+  const std::size_t key_head = head / heads_per_value;
+  const std::size_t state_base = head * key_dimension * value_dimension;
+  const float scale = rsqrtf(static_cast<float>(key_dimension));
+  __shared__ float shared_query_scale;
+  __shared__ float shared_key_scale;
+  __shared__ float shared_beta;
+  __shared__ float shared_decay;
+  for (std::size_t position = 0; position < positions; ++position) {
+    const std::size_t query_base = (position * key_heads + key_head) * key_dimension;
+    const std::size_t value_base = (position * value_heads + head) * value_dimension;
+    if (threadIdx.x == 0) {
+      float query_norm = 0.0F;
+      float key_norm = 0.0F;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        query_norm += query[query_base + key_index] * query[query_base + key_index];
+        key_norm += keys[query_base + key_index] * keys[query_base + key_index];
+      }
+      shared_query_scale = rsqrtf(query_norm + 1.0e-6F);
+      shared_key_scale = rsqrtf(key_norm + 1.0e-6F);
+      shared_beta = beta[position * value_heads + head];
+      shared_decay = expf(log_decay[position * value_heads + head]);
+    }
+    __syncthreads();
+    const float query_scale = shared_query_scale;
+    const float key_scale = shared_key_scale;
+    const float beta_value = shared_beta;
+    const float decay = shared_decay;
+    for (std::size_t value_index = threadIdx.x; value_index < value_dimension;
+         value_index += blockDim.x) {
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        state[state_base + key_index * value_dimension + value_index] *= decay;
+      }
+      float key_value = 0.0F;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        key_value += state[state_base + key_index * value_dimension + value_index] *
+                     (keys[query_base + key_index] * key_scale);
+      }
+      const float delta = (values[value_base + value_index] - key_value) * beta_value;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        state[state_base + key_index * value_dimension + value_index] +=
+            (keys[query_base + key_index] * key_scale) * delta;
+      }
+      float result = 0.0F;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        result += state[state_base + key_index * value_dimension + value_index] *
+                  (query[query_base + key_index] * query_scale);
+      }
+      output[value_base + value_index] = result * scale;
+    }
+    __syncthreads();
+  }
+}
+
 __global__ inline void rms_norm_f32(const float* input, const float* scale, float* output,
                                     std::size_t elements, std::size_t scale_elements,
                                     float epsilon, bool add_one_to_scale) {
@@ -886,6 +955,28 @@ inline cudaError_t launch_gated_delta_attention(
     void*, cudaStream_t stream) {
   if (command.buffers.size() != 7) return cudaErrorInvalidValue;
   const auto dimensions = command.attention;
+  // S04-P3: parallelize across value heads/dimensions when the shape permits;
+  // the single-block incumbent is the fallback.
+  const std::size_t block = dimensions.value_dimension == 0
+                                ? 0
+                                : (dimensions.value_dimension < 128
+                                       ? dimensions.value_dimension
+                                       : (dimensions.value_dimension < 256 ? 128U : 256U));
+  if (dimensions.value_heads != 0 && dimensions.key_value_heads != 0 && block != 0 &&
+      dimensions.value_heads <= 65535U) {
+    gated_delta_attention_parallel_f32<<<static_cast<std::uint32_t>(dimensions.value_heads),
+                                        static_cast<std::uint32_t>(block), 0, stream>>>(
+        static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[0].value()].id)),
+        static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[1].value()].id)),
+        static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[2].value()].id)),
+        static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[3].value()].id)),
+        static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[4].value()].id)),
+        static_cast<float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[5].value()].id)),
+        static_cast<float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[6].value()].id)),
+        dimensions.key_value_heads, dimensions.value_heads, dimensions.head_dimension,
+        dimensions.value_dimension, dimensions.positions);
+    return cudaGetLastError();
+  }
   gated_delta_attention_f32<<<1, 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[0].value()].id)),
       static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[1].value()].id)),

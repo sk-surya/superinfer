@@ -96,6 +96,90 @@ void test_grouped_attention_cached_identity() {
   }
 }
 
+void test_gated_delta_attention_parallel_identity() {
+  // S04-P3 differential: value-dimension-parallel GDN must be bit-identical to
+  // the sequential incumbent over identical state for every shape.
+  using namespace superinfer;
+  struct Shape {
+    std::size_t key_heads;
+    std::size_t value_heads;
+    std::size_t key_dim;
+    std::size_t value_dim;
+    std::size_t positions;
+  };
+  const std::array<Shape, 3> shapes{{{4, 48, 128, 128, 1},
+                                     {4, 48, 128, 128, 3},
+                                     {2, 8, 64, 96, 2}}};
+  for (const auto& shape : shapes) {
+    const std::size_t qk_elements = shape.positions * shape.key_heads * shape.key_dim;
+    const std::size_t v_elements = shape.positions * shape.value_heads * shape.value_dim;
+    const std::size_t state_elements = shape.value_heads * shape.key_dim * shape.value_dim;
+    std::vector<float> host_query(qk_elements), host_keys(qk_elements), host_values(v_elements),
+        host_decay(shape.positions * shape.value_heads), host_beta(shape.positions * shape.value_heads),
+        host_state(state_elements);
+    std::uint64_t state = 0x243F6A8885A308D3ULL;
+    auto next_float = [&]() -> float {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return (static_cast<float>((state >> 33U) % 2000U) - 1000.0F) / 500.0F;
+    };
+    for (auto& value : host_query) value = next_float();
+    for (auto& value : host_keys) value = next_float();
+    for (auto& value : host_values) value = next_float();
+    for (auto& value : host_decay) value = -0.05F - std::abs(next_float()) * 0.1F;
+    for (auto& value : host_beta) value = (next_float() + 2.0F) / 4.0F;
+    for (auto& value : host_state) value = next_float();
+    float *d_query = nullptr, *d_keys = nullptr, *d_values = nullptr, *d_decay = nullptr,
+          *d_beta = nullptr, *d_state_a = nullptr, *d_state_b = nullptr, *d_out_a = nullptr,
+          *d_out_b = nullptr;
+    auto alloc_copy = [](float** device, const std::vector<float>& host) {
+      assert(cudaMalloc(device, host.size() * sizeof(float)) == cudaSuccess);
+      assert(cudaMemcpy(*device, host.data(), host.size() * sizeof(float),
+                        cudaMemcpyHostToDevice) == cudaSuccess);
+    };
+    alloc_copy(&d_query, host_query);
+    alloc_copy(&d_keys, host_keys);
+    alloc_copy(&d_values, host_values);
+    alloc_copy(&d_decay, host_decay);
+    alloc_copy(&d_beta, host_beta);
+    alloc_copy(&d_state_a, host_state);
+    alloc_copy(&d_state_b, host_state);
+    assert(cudaMalloc(&d_out_a, v_elements * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&d_out_b, v_elements * sizeof(float)) == cudaSuccess);
+    sm120::cuda_runtime::detail::gated_delta_attention_f32<<<1, 256>>>(
+        d_query, d_keys, d_values, d_decay, d_beta, d_state_a, d_out_a, shape.key_heads,
+        shape.value_heads, shape.key_dim, shape.value_dim, shape.positions);
+    assert(cudaGetLastError() == cudaSuccess);
+    std::size_t block = shape.value_dim < 128 ? shape.value_dim : (shape.value_dim < 256 ? 128 : 256);
+    sm120::cuda_runtime::detail::gated_delta_attention_parallel_f32<<<
+        static_cast<std::uint32_t>(shape.value_heads), static_cast<std::uint32_t>(block)>>>(
+        d_query, d_keys, d_values, d_decay, d_beta, d_state_b, d_out_b, shape.key_heads,
+        shape.value_heads, shape.key_dim, shape.value_dim, shape.positions);
+    assert(cudaGetLastError() == cudaSuccess);
+    assert(cudaDeviceSynchronize() == cudaSuccess);
+    std::vector<float> state_a(state_elements), state_b(state_elements), out_a(v_elements),
+        out_b(v_elements);
+    assert(cudaMemcpy(state_a.data(), d_state_a, state_elements * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(state_b.data(), d_state_b, state_elements * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(out_a.data(), d_out_a, v_elements * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(out_b.data(), d_out_b, v_elements * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(state_a == state_b);
+    assert(out_a == out_b);
+    cudaFree(d_query);
+    cudaFree(d_keys);
+    cudaFree(d_values);
+    cudaFree(d_decay);
+    cudaFree(d_beta);
+    cudaFree(d_state_a);
+    cudaFree(d_state_b);
+    cudaFree(d_out_a);
+    cudaFree(d_out_b);
+  }
+}
+
 __global__ void injected_async_fault() {
   if (threadIdx.x == 0) *static_cast<volatile std::uint32_t*>(nullptr) = 1U;
 }
@@ -1059,6 +1143,7 @@ int main() {
 
   test_nvfp4_row_parallel_identity();
   test_grouped_attention_cached_identity();
+  test_gated_delta_attention_parallel_identity();
 
   const auto f32_to_bf16_plan = make_f32_to_bf16_cast_plan();
   auto f32_to_bf16 = sm120::cuda_runtime::CudaPlanSession::create(

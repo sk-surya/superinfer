@@ -445,6 +445,76 @@ __global__ inline void nvfp4_linear_rows_f32(const float* input, const std::uint
   }
 }
 
+/** Vectorized NVFP4 projection (S04-P2).
+ *
+ * Bit-identical to `nvfp4_linear_rows_f32`: the same per-row, per-column
+ * accumulation order is preserved. Only the memory access pattern and the
+ * redundant block-scale decode change:
+ *  - the FP8 block scale is decoded once per 16 columns instead of per column;
+ *  - packed weights are read 16 bytes at a time (32 codes) instead of one byte
+ *    per two columns.
+ * Falls back to the scalar incumbent when the row is not 32-element aligned or
+ * the packed pointer is not 16-byte aligned.
+ */
+__device__ inline void accumulate_nvfp4_code(std::uint8_t code, float scale, float tensor,
+                                             const float* input, std::size_t column,
+                                             float& sum) {
+  sum += (decode_e2m1_device(code) * scale * tensor) * input[column];
+}
+
+__global__ inline void nvfp4_linear_rows_vec_f32(const float* input,
+                                                 const std::uint8_t* packed,
+                                                 const std::uint8_t* scales,
+                                                 const float* tensor_scale, float* output,
+                                                 std::size_t input_elements,
+                                                 std::size_t output_elements) {
+  const float tensor = *tensor_scale;
+  for (std::size_t row = blockIdx.x * blockDim.x + threadIdx.x; row < output_elements;
+       row += blockDim.x * gridDim.x) {
+    const std::uint8_t* packed_row = packed + row * (input_elements / 2U);
+    const std::uint8_t* scale_row = scales + row * (input_elements / 16U);
+    float sum = 0.0F;
+    std::size_t column = 0;
+    // The 16-byte packed load requires each row to start 16-byte aligned, i.e.
+    // input_elements % 32 == 0. Otherwise the whole row takes the scalar path.
+    const bool vector_aligned = (input_elements % 32U == 0U) &&
+                                (reinterpret_cast<std::uintptr_t>(packed_row) % 16U == 0U);
+    for (; vector_aligned && column + 32U <= input_elements; column += 32U) {
+      const uint4 word = *reinterpret_cast<const uint4*>(packed_row + column / 2U);
+      const std::uint8_t bytes[16] = {
+          static_cast<std::uint8_t>(word.x), static_cast<std::uint8_t>(word.x >> 8U),
+          static_cast<std::uint8_t>(word.x >> 16U), static_cast<std::uint8_t>(word.x >> 24U),
+          static_cast<std::uint8_t>(word.y), static_cast<std::uint8_t>(word.y >> 8U),
+          static_cast<std::uint8_t>(word.y >> 16U), static_cast<std::uint8_t>(word.y >> 24U),
+          static_cast<std::uint8_t>(word.z), static_cast<std::uint8_t>(word.z >> 8U),
+          static_cast<std::uint8_t>(word.z >> 16U), static_cast<std::uint8_t>(word.z >> 24U),
+          static_cast<std::uint8_t>(word.w), static_cast<std::uint8_t>(word.w >> 8U),
+          static_cast<std::uint8_t>(word.w >> 16U), static_cast<std::uint8_t>(word.w >> 24U)};
+      const float scale0 = decode_e4m3fn_device(scale_row[column / 16U]);
+      const float scale1 = decode_e4m3fn_device(scale_row[column / 16U + 1U]);
+      for (std::size_t pair = 0; pair < 8U; ++pair) {
+        accumulate_nvfp4_code(bytes[pair] & 0x0FU, scale0, tensor, input, column + pair * 2U,
+                              sum);
+        accumulate_nvfp4_code(bytes[pair] >> 4U, scale0, tensor, input, column + pair * 2U + 1U,
+                              sum);
+      }
+      for (std::size_t pair = 8U; pair < 16U; ++pair) {
+        accumulate_nvfp4_code(bytes[pair] & 0x0FU, scale1, tensor, input, column + pair * 2U,
+                              sum);
+        accumulate_nvfp4_code(bytes[pair] >> 4U, scale1, tensor, input, column + pair * 2U + 1U,
+                              sum);
+      }
+    }
+    for (; column < input_elements; ++column) {
+      const std::uint8_t packed_value = packed_row[column / 2U];
+      const std::uint8_t code = (column % 2U == 0) ? (packed_value & 0x0FU) : (packed_value >> 4U);
+      accumulate_nvfp4_code(code, decode_e4m3fn_device(scale_row[column / 16U]), tensor, input,
+                            column, sum);
+    }
+    output[row] = sum;
+  }
+}
+
 /** Reference-correct grouped-query attention over a pre-materialized contiguous KV window. */
 __global__ inline void grouped_attention_f32(const float* query, const float* keys,
                                              const float* values, float* output,
@@ -768,6 +838,21 @@ inline cudaError_t launch_nvfp4_linear(const ir::physical::CommandDescriptor& co
       static_cast<std::uint32_t>((output_elements + 255U) / 256U);
   if (blocks == 0U) blocks = 1U;
   if (blocks > 2048U) blocks = 2048U;
+  // S04-P2: vectorized/scale-hoisted path when alignment permits; the scalar
+  // row-parallel incumbent is the fallback.
+  const auto* packed_pointer =
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id));
+  const bool vectorizable =
+      (input_elements % 32U == 0U) && (reinterpret_cast<std::uintptr_t>(packed_pointer) % 16U == 0U);
+  if (vectorizable) {
+    nvfp4_linear_rows_vec_f32<<<blocks, 256, 0, stream>>>(
+        static_cast<const float*>(buffer_pointer(plan, arena, input.id)), packed_pointer,
+        static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)),
+        static_cast<const float*>(buffer_pointer(plan, arena, tensor_scale.id)),
+        static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,
+        output_elements);
+    return cudaGetLastError();
+  }
   nvfp4_linear_rows_f32<<<blocks, 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id)),

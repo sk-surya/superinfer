@@ -105,7 +105,7 @@ void test_nvfp4_row_parallel_identity() {
   // single-block baseline for every shape, because per-row operation order is
   // unchanged. Deterministic LCG inputs; odd sizes exercise nibble/scale edges.
   using namespace superinfer;
-  const std::array<std::pair<std::size_t, std::size_t>, 3> shapes{{{48, 512}, {1031, 513}, {4096, 2048}}};
+  const std::array<std::pair<std::size_t, std::size_t>, 4> shapes{{{4, 32}, {48, 512}, {1031, 1024}, {4096, 2048}}};
   for (const auto [outputs, inputs] : shapes) {
     std::vector<float> host_input(inputs);
     std::vector<std::uint8_t> host_packed((outputs * inputs + 1) / 2);
@@ -121,7 +121,7 @@ void test_nvfp4_row_parallel_identity() {
     for (auto& value : host_scales) value = static_cast<std::uint8_t>(0x20U | (next_byte() & 0x1FU));
     const float host_scale = 0.5F;
     float *device_input = nullptr, *device_out_base = nullptr, *device_out_rows = nullptr,
-          *device_scale = nullptr;
+          *device_out_vec = nullptr, *device_scale = nullptr;
     std::uint8_t *device_packed = nullptr, *device_scales = nullptr;
     assert(cudaMalloc(&device_input, inputs * sizeof(float)) == cudaSuccess);
     assert(cudaMalloc(&device_packed, host_packed.size()) == cudaSuccess);
@@ -129,6 +129,7 @@ void test_nvfp4_row_parallel_identity() {
     assert(cudaMalloc(&device_scale, sizeof(float)) == cudaSuccess);
     assert(cudaMalloc(&device_out_base, outputs * sizeof(float)) == cudaSuccess);
     assert(cudaMalloc(&device_out_rows, outputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&device_out_vec, outputs * sizeof(float)) == cudaSuccess);
     assert(cudaMemcpy(device_input, host_input.data(), inputs * sizeof(float),
                       cudaMemcpyHostToDevice) == cudaSuccess);
     assert(cudaMemcpy(device_packed, host_packed.data(), host_packed.size(),
@@ -148,19 +149,27 @@ void test_nvfp4_row_parallel_identity() {
         device_input, device_packed, device_scales, device_scale, device_out_rows, inputs,
         outputs);
     assert(cudaGetLastError() == cudaSuccess);
+    sm120::cuda_runtime::detail::nvfp4_linear_rows_vec_f32<<<blocks, 256>>>(
+        device_input, device_packed, device_scales, device_scale, device_out_vec, inputs,
+        outputs);
+    assert(cudaGetLastError() == cudaSuccess);
     assert(cudaDeviceSynchronize() == cudaSuccess);
-    std::vector<float> out_base(outputs), out_rows(outputs);
+    std::vector<float> out_base(outputs), out_rows(outputs), out_vec(outputs);
     assert(cudaMemcpy(out_base.data(), device_out_base, outputs * sizeof(float),
                       cudaMemcpyDeviceToHost) == cudaSuccess);
     assert(cudaMemcpy(out_rows.data(), device_out_rows, outputs * sizeof(float),
                       cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(out_vec.data(), device_out_vec, outputs * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
     assert(out_base == out_rows);
+    assert(out_base == out_vec);
     cudaFree(device_input);
     cudaFree(device_packed);
     cudaFree(device_scales);
     cudaFree(device_scale);
     cudaFree(device_out_base);
     cudaFree(device_out_rows);
+    cudaFree(device_out_vec);
   }
 }
 

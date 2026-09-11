@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: S04-P1
+current_phase: S04-P2
 status: autonomous_execution
 last_updated: "2026-09-11T00:00:00Z"
 progress:
   total_phases: 14
   completed_phases: 9
   total_plans: 35
-completed_plans: 17
+completed_plans: 18
 current_phase_name: results-first-performance-ladder
 parallel_research_phase: none
 s03f_01_status: research_complete_capacity_quality_blocked
@@ -22,7 +22,7 @@ s03f_01_status: research_complete_capacity_quality_blocked
 **Status:** RECOVERY SPRINT COMPLETE (success path). S03/S03-R complete under D-021; R01 baseline captured; R02 one profiler-selected optimization with retained fallback; R03 reproduced positive end-to-end decode gain in a second fresh session.
 **Current lane:** S04-P1 — profiler-driven performance ladder (iterate fresh profile -> one target -> correctness -> reproduced benchmark). Fleet target: **>= 5 decode tok/s**.
 **Branch:** `sol/results-first-recovery` (draft PR #1)
-**Recovery headline:** decode **0.032 -> 0.19 tok/s** (TPOT 31 s -> 5.3 s); R02 NVFP4 row-parallel 33x local; 7.6–9.4x E2E reproduced.
+**Recovery headline:** decode **0.032 -> 0.42 tok/s** cumulatively (TPOT 31 s -> ~2.4 s at 100-token context); loop 1 NVFP4 row-parallel 33x local; loop 2 KV-attention score caching 4,320x local; E2E 1.72-2.41x per loop, all under D-021.
 
 ## Operational Truth
 
@@ -37,14 +37,14 @@ s03f_01_status: research_complete_capacity_quality_blocked
 | R02 first bottleneck | **Complete** | `R02-PLAN.md`; row-parallel NVFP4, 33x local, bit-identical |
 | R03 first speed proof | **Complete — PASS** | `R03-SUMMARY.md`; `benchmarks/runs/R03/`; 7.6–9.4x E2E reproduced |
 | Recovery sprint | **Complete** | stop condition met |
-| S04 performance ladder | **Active (S04-P1)** | fresh profile -> one target -> correctness -> reproduced benchmark |
+| S04 performance ladder | **Active (S04-P1 complete -> S04-P2)** | `S04-P1/`; attention 48.8%->0%, E2E 1.72-2.41x, D-021 pass, byte-identical |
 | S03F Flash-Next | S03F-01 retained; S03F-02+ deferred (D-019 binding, D-020 ordering) | `FLASH-NEXT-DESIGN.md`; capacity/quality blocked |
 | S05 autoresearch | Deferred until 3 manual loops exist | design from proven loop, not generic |
 | S06/S07/S08 | Planned | Pending |
 
 ## Current Focus
 
-S03 correctness is closed and the first optimization loop is proven. The active lane is the profiler-driven S04 performance ladder: repeatedly (1) take a fresh profile of the current binary, (2) select the change with the largest defensible E2E opportunity, (3) optimize exactly that behind a retained fallback and an independent correctness oracle, (4) reproduce the benchmark in a second fresh session. Do not optimize by name or roadmap order. Full autoresearch scaffolding is deferred until three real manual loops exist.
+S03 correctness is closed and the first optimization loop is proven. The active lane is the profiler-driven S04 performance ladder: repeatedly (1) take a fresh profile of the current binary, (2) select the change with the largest defensible E2E opportunity, (3) optimize exactly that behind a retained fallback and an independent correctness oracle, (4) reproduce the benchmark in a second fresh session. Do not optimize by name or roadmap order. Full autoresearch scaffolding is deferred until three real manual loops exist. Loop 1 (NVFP4 row-parallel) and loop 2 (KV-attention score caching) are complete; loop 3 is active against NVFP4 (`nvfp4_linear_rows_f32`, 58.8% of post-loop-2 decode GPU time).
 
 Reference: `.planning/phases/R03-first-speed-proof/R03-SUMMARY.md`, `.planning/phases/R01-qwen-baseline/R01-SUMMARY.md`.
 

@@ -21,8 +21,8 @@ Cumulative across loops 1–5 vs the R01 baseline (31.3 s/token): **~0.032 -> ~4
 
 | Kernel | Before | After | Speedup |
 |---|---|---|---|
-| `rms_norm_f32_bf16_scale` -> `_parallel` | 6.80 s | (see post-profile) | >20x |
-| **Total GPU (60 tokens)** | 20.78 s | (see post-profile) | — |
+| `rms_norm_f32_bf16_scale` -> `_parallel` | 6.80 s | 0.31 s | **21.9x** |
+| **Total GPU (60 tokens)** | 20.78 s | 14.31 s | **1.45x** |
 
 ## Correctness
 
@@ -37,6 +37,17 @@ Cumulative across loops 1–5 vs the R01 baseline (31.3 s/token): **~0.032 -> ~4
 Fixed per-process cost (18 GB artifact load + 19.2 GB arena upload, ~25-30 s) now dominates wall time on
 short runs. The honest decode metric is the marginal slope (0.238 s/token). Load/materialization is a
 separate optimization axis from decode TPOT.
+
+## New #1 bottleneck (post-P4, 14.31 s GPU)
+
+| Kernel | share | launches | avg |
+|---|---:|---:|---:|
+| `nvfp4_linear_rows_vec_f32` | **64.8%** | 24,060 | 385 us |
+| `cast_bf16_to_f32` | 19.0% | 45,240 | 60 us |
+| `linear_f32` | 7.7% | 5,760 | 192 us |
+| `rms_norm_f32_bf16_scale_parallel` | 2.2% | 12,540 | 25 us |
+
+Decode is now purely GPU-bound: 14.31 s / 60 tokens = 0.238 s/token, matching the wall marginal.
 
 ## Evidence
 

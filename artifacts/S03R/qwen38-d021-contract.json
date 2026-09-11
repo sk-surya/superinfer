@@ -1,0 +1,20 @@
+{
+  "schema": "superinfer.qwen38.d021.contract.v1",
+  "decision": "D-021",
+  "floor": "bf16-ulp-of-reference-winner",
+  "tie_top_k": 5,
+  "tie_min_overlap": 0.8,
+  "tie_max_js": 0.001,
+  "max_js": 0.005,
+  "max_rmse": 2.0,
+  "max_mean_abs": 0.9,
+  "outlier_max_abs_trigger": 5.0,
+  "derivation": "2x in-scope p99 rounded up to one significant digit, verified to clear the in-scope maximum over 252 session-1 rows (JS p99 0.0012/max 0.0022; RMSE p99 0.53/max 0.77; mean p99 0.43/max 0.61)",
+  "outlier_rows": [
+    {
+      "case": "seeded-long-103",
+      "from_row": 37,
+      "reason": "degenerate 6x17-token repetition drives bilateral activation explosion (~400 hidden); oracle-vs-oracle degrades 200x (0.008 to 1.5); per-layer traces show smooth relative growth with no disproportional operation; repetition robustness is S04+ research"
+    }
+  ]
+}

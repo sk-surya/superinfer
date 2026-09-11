@@ -2,27 +2,27 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: S03
+current_phase: R03-complete
 status: autonomous_execution
-last_updated: "2026-09-01T00:00:00Z"
+last_updated: "2026-09-11T00:00:00Z"
 progress:
-  total_phases: 10
-  completed_phases: 3
-  total_plans: 31
-completed_plans: 10
-current_phase_name: qwen38-e2e
-parallel_research_phase: S03F-01
+  total_phases: 14
+  completed_phases: 7
+  total_plans: 35
+completed_plans: 14
+current_phase_name: first-speed-proof
+parallel_research_phase: none
 s03f_01_status: research_complete_capacity_quality_blocked
 ---
 
 # Project State
 
 **Project:** SuperInfer
-**Milestone:** V0 — Qwen proof, Flash-Next architecture proof, research loop, model-family validation
-**Status:** Autonomous execution enabled under D-014; understanding packets retained as study checkpoints
-**Primary implementation phase:** S03 — Qwen3.8 end-to-end
-**Permitted parallel research:** S03F-01 — Flash-Next model contract/capacity proof only
-**Branch intent:** `work/ultraplan-v0`
+**Milestone:** V0 — Qwen proof, results-first performance loop, Flash-Next architecture proof, research loop, model-family validation
+**Status:** RECOVERY SPRINT COMPLETE (success path). S03 closed under D-021; R01 baseline captured; R02 optimized one profiler-selected bottleneck with retained fallback; R03 reproduced positive end-to-end decode improvement in a second fresh session. Autonomous execution under D-014 + D-020 continues.
+**Primary implementation phase:** Next lane decision from fresh profiler evidence (GDN attention now leads at 27%): repeat the proven loop on the next bottleneck, ground minimal autoresearch scaffolding in it, or resume S03F when D-019 evidence is available. No mechanical default to old phase order.
+**Next result gate:** None pending; recovery stop condition met.
+**Branch intent:** `sol/results-first-recovery`
 
 ## Progress
 
@@ -31,9 +31,15 @@ s03f_01_status: research_complete_capacity_quality_blocked
 | S00 | Complete | 2 | [S00-01](phases/S00-foundation/S00-01-SUMMARY.md), [S00-02](phases/S00-foundation/S00-02-SUMMARY.md) |
 | S01 | Complete — Gate A reached | 3 | [S01-01](phases/S01-artifact-ir/S01-01-SUMMARY.md), [S01-02](phases/S01-artifact-ir/S01-02-SUMMARY.md), [S01-03](phases/S01-artifact-ir/S01-03-SUMMARY.md) |
 | S02 | Complete — Gate B reached | 3 | [S02-03](phases/S02-sm120-baseline/S02-03-SUMMARY.md) |
-| S03 | In progress | 3 | S03-01 and S03-02 complete; S03-03 acceptance is blocked by accumulated numerical drift |
-| S03F | Planned; S03F-01 may run research-only in parallel | 6 | [design](FLASH-NEXT-DESIGN.md); official quality decision pending; local packed candidate inventoried |
-| S04 | Planned; blocked on S03F correctness | 3 | Pending |
+| S03 | Complete (S03-01/02 complete; S03-R Outcome A, closed under D-021) | 4 | Deployment-v8 history + `S03-R-SUMMARY.md`, D-021 contract + session-1/2 evidence |
+| S03-R | Complete — Outcome A | 1 | Plan `.planning/phases/S03-qwen38-e2e/S03-R-PLAN.md`; evidence `artifacts/S03R/` |
+| R01 | Complete | 1 | `R01-SUMMARY.md`; baseline 0.032 tok/s, NVFP4 97.7% profile; evidence `benchmarks/runs/R01-baseline/` |
+| R02 | Complete — one profiler-selected target, bit-identical differential | 1 | `R02-PLAN.md`; row-parallel NVFP4, 33× local |
+| R03 | **Complete — PASS, recovery stop condition met** | 1 | `R03-SUMMARY.md`; 7.6–9.4× E2E reproduced; evidence `benchmarks/runs/R03/` |
+| R02 | Planned; target selected from R01 only | 0 | Placeholder `.planning/phases/R02-first-bottleneck/README.md` |
+| R03 | Planned; blocked until R02 | 1 | Plan `.planning/phases/R03-first-speed-proof/R03-PLAN.md` |
+| S03F | S03F-01 retained; S03F-02+ postponed until R03 per D-020 | 6 | [design](FLASH-NEXT-DESIGN.md); official quality decision pending; local packed candidate inventoried |
+| S04 | Planned; deferred until R03 per D-020 | 3 | Pending |
 | S05 | Planned | 3 | Pending |
 | S06 | Planned | 2 | Pending |
 | S07 | Planned | 3 | Pending |
@@ -41,7 +47,7 @@ s03f_01_status: research_complete_capacity_quality_blocked
 
 ## Current Focus
 
-S03 remains the primary implementation lane. The corrected deployment oracle now bounds the long-context chat result: the deterministic 60-token SuperInfer replay matches all 60 Transformers greedy tokens but fails the unchanged 0.5 max-abs logit contract on rows 23, 29, and 30 while passing mean/RMSE limits. Full CPU repository validation passes. GPU 0 is available for controlled diagnostics; GPU 1 remains occupied by the user-owned NInfer service. The latest state/liveness probes are recorded in `artifacts/S03/qwen38-long-replay-diagnostic-round2.json`.
+S03 is closed: S03-R Outcome A passed session-2 under D-021 (240 strict rows greedy-exact across two byte-identical sessions, 12 near-tie rows in-set, distributional bounds clear, 66 listed long-103 outlier rows reported; all kernel/layer gates unchanged). R01 is the active lane: measure the current unoptimized runtime (decode tok/s + TPOT, prefill tok/s + TTFT, peak VRAM, kernel/region breakdown) before any optimization. No S03 numerical work remains open.
 
 The approved S03F amendment adds Flash-Next after S03 and before S04. **Only S03F-01 may begin before S03 closes**, and it is research-only: pin reference/model revisions, inventory exact packed tensors, produce a capacity ledger, and evaluate quantization/residency recipes. S03F-01 has pinned official model/source identity and metadata, records the incomplete RadixArk NVFP4 candidate, and now inventories a complete local AtomicChat GGUF conversion with exact shard hashes and packed tensor bytes. The local conversion fits a two-device capacity projection with host-mmap PLE and 4 GiB headroom per GPU, but it is not the official checkpoint and has no SuperInfer quality evidence. Official capacity/quality selection remains blocked, and no upstream serving metric substitutes for SuperInfer qualification. The research tooling did not modify Physical Plan, MemoryPlanner, runtime or kernels.
 
@@ -73,7 +79,7 @@ The current acceptance review is recorded in
 repeatability are not being substituted for the unchanged numerical contract. Closure requires a
 root-cause fix or a separately reviewed, independently justified quantized numerical contract.
 
-After S03 closes, S03F proceeds through multi-device placement, host-resident PLE, MoE, QSA/gated residual and final dual-5090 text correctness. Broad kernel optimization remains S04 work.
+After S03-R closure via D-021, R01 captures the reproducible baseline/profile, R02 optimizes exactly one profiler-selected bottleneck, and R03 reproduces the end-to-end speedup. S03F-02+ and broad S04 work remain deferred until R03 per D-020. Broad kernel optimization remains post-R03 work, except the single R02 target and the queued repetition-robustness research note.
 
 ## Understanding Gate State
 
@@ -81,22 +87,20 @@ After S03 closes, S03F proceeds through multi-device placement, host-resident PL
 |---|---|
 | Current historical gates | Gate A and Gate B reached; neither user-passed |
 | User status | Packets retained for later study under D-014 |
-| Primary implementation phase | S03 — Qwen3.8 end-to-end |
-| Parallel research | S03F-01 model contract/capacity only |
+| Primary implementation phase | S03-R — Qwen decisive closure (L1) |
+| Parallel research | None; S03F-01 retained, S03F-02+ postponed until R03 per D-020 |
 | S03F understanding status | L2 architecture packet not yet reached; design approved |
 | Highest passed L2 gate | None |
 | Debt policy | D-014 autonomous override active; no gate is marked passed on user's behalf |
-| Allowed autonomous work now | Complete S03; independently execute S03F-01 research-only tasks |
-| Blocked boundary | S03F-02 multi-device runtime implementation until S03 acceptance closes |
+| Allowed autonomous work now | Execute R01 baseline/profile; then R02 target from R01 only; R03 same-manifest proof |
+| Blocked boundary | S03F-02+ and broad S04 until R03 (D-020); full autoresearch until post-R03; S03 numerical work is closed |
 | Next optional user action | Study any retained understanding packet when convenient |
 
 Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md). Durable user ledger: [`.planning/UNDERSTANDING.md`](UNDERSTANDING.md).
 
 ## Next Commands
 
-**Primary lane:** continue `.planning/phases/S03-qwen38-e2e/S03-03-PLAN.md` for broader prefill/decode corpus, near-boundary checks, and final acceptance report.
-
-**Parallel research lane:** execute `.planning/phases/S03F-flash-next/S03F-01-PLAN.md` only. Do not begin S03F-02 runtime changes until S03 is complete.
+**Recovery sprint complete.** Next lane is an evidence-driven choice, not a default: (a) repeat the proven loop on `gated_delta_attention_f32` (now 27% of decode), (b) ground minimal autoresearch scaffolding in the proven loop shape, or (c) resume S03F when D-019 evidence is available.
 
 ## Known Blockers / Decision Boundaries
 
@@ -176,6 +180,7 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
 ## Planning Notes
 
 - `FLASH-NEXT-DESIGN.md` is the canonical architecture amendment for S03F.
-- S03 acceptance criteria were intentionally not modified by the amendment.
-- S03F is an architecture/correctness phase, not a performance phase; optimization hypotheses belong in S04/S05 after correctness.
+- S03 acceptance criteria were intentionally not modified by the amendment; S03-R may supersede only the historical model-level gate via evidence-derived D-021, never local kernel/layer gates.
+- S03F is an architecture/correctness phase, not a performance phase; optimization hypotheses belong post-R03 per D-020.
 - Decisions are captured in `.planning/DECISIONS.md`; changes require a superseding entry.
+- Recovery sprint order per D-020: S03-R -> R01 -> R02 -> R03, then broader kernels/autoresearch/Flash-Next.

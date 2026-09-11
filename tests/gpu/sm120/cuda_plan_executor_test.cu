@@ -180,6 +180,61 @@ void test_gated_delta_attention_parallel_identity() {
   }
 }
 
+void test_rms_norm_parallel_identity() {
+  // S04-P4 differential: parallel RMSNorm must reproduce the sequential
+  // denominator exactly (thread 0 accumulates in the original order).
+  using namespace superinfer;
+  const std::array<std::pair<std::size_t, std::size_t>, 3> shapes{{{1, 5120}, {4, 5120}, {64, 128}}};
+  for (const auto [rows, width] : shapes) {
+    const std::size_t elements = rows * width;
+    std::vector<float> host_input(elements);
+    std::vector<std::uint16_t> host_scale(width);
+    std::uint64_t state = 0xDEADBEEFCAFEF00DULL;
+    auto next = [&]() -> std::uint32_t {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return static_cast<std::uint32_t>(state >> 33U);
+    };
+    for (auto& value : host_input) value = (static_cast<float>(next() % 2000U) - 1000.0F) / 500.0F;
+    auto to_bf16 = [](float value) -> std::uint16_t {
+      std::uint32_t bits = 0;
+      std::memcpy(&bits, &value, sizeof(bits));
+      return static_cast<std::uint16_t>(bits >> 16U);
+    };
+    for (auto& value : host_scale) value = to_bf16((static_cast<float>(next() % 2000U) + 1000.0F) / 1000.0F);
+    const float epsilon = 1.0e-6F;
+    for (const bool add_one : {false, true}) {
+      float *d_input = nullptr, *d_out_seq = nullptr, *d_out_par = nullptr;
+      std::uint16_t* d_scale = nullptr;
+      assert(cudaMalloc(&d_input, elements * sizeof(float)) == cudaSuccess);
+      assert(cudaMalloc(&d_scale, width * sizeof(std::uint16_t)) == cudaSuccess);
+      assert(cudaMalloc(&d_out_seq, elements * sizeof(float)) == cudaSuccess);
+      assert(cudaMalloc(&d_out_par, elements * sizeof(float)) == cudaSuccess);
+      assert(cudaMemcpy(d_input, host_input.data(), elements * sizeof(float),
+                        cudaMemcpyHostToDevice) == cudaSuccess);
+      assert(cudaMemcpy(d_scale, host_scale.data(), width * sizeof(std::uint16_t),
+                        cudaMemcpyHostToDevice) == cudaSuccess);
+      sm120::cuda_runtime::detail::rms_norm_f32_bf16_scale<<<1, 1>>>(
+          d_input, d_scale, d_out_seq, elements, width, epsilon, add_one);
+      assert(cudaGetLastError() == cudaSuccess);
+      sm120::cuda_runtime::detail::rms_norm_f32_bf16_scale_parallel<<<
+          static_cast<std::uint32_t>(rows), 256>>>(
+          d_input, d_scale, d_out_par, elements, width, epsilon, add_one);
+      assert(cudaGetLastError() == cudaSuccess);
+      assert(cudaDeviceSynchronize() == cudaSuccess);
+      std::vector<float> out_seq(elements), out_par(elements);
+      assert(cudaMemcpy(out_seq.data(), d_out_seq, elements * sizeof(float),
+                        cudaMemcpyDeviceToHost) == cudaSuccess);
+      assert(cudaMemcpy(out_par.data(), d_out_par, elements * sizeof(float),
+                        cudaMemcpyDeviceToHost) == cudaSuccess);
+      assert(out_seq == out_par);
+      cudaFree(d_input);
+      cudaFree(d_scale);
+      cudaFree(d_out_seq);
+      cudaFree(d_out_par);
+    }
+  }
+}
+
 __global__ void injected_async_fault() {
   if (threadIdx.x == 0) *static_cast<volatile std::uint32_t*>(nullptr) = 1U;
 }
@@ -1144,6 +1199,7 @@ int main() {
   test_nvfp4_row_parallel_identity();
   test_grouped_attention_cached_identity();
   test_gated_delta_attention_parallel_identity();
+  test_rms_norm_parallel_identity();
 
   const auto f32_to_bf16_plan = make_f32_to_bf16_cast_plan();
   auto f32_to_bf16 = sm120::cuda_runtime::CudaPlanSession::create(

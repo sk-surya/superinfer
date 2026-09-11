@@ -684,6 +684,44 @@ __global__ inline void gated_delta_attention_parallel_f32(
   }
 }
 
+/** RMSNorm with BF16 scale, row-parallel (S04-P4).
+ *
+ * Bit-identical to `rms_norm_f32_bf16_scale`: the sum of squares is still
+ * accumulated sequentially in the original element order (thread 0 over a
+ * shared-memory staging of the row), so the denominator is bit-for-bit the
+ * same. The staging load and the output write are parallelised. One block per
+ * row.
+ */
+__global__ inline void rms_norm_f32_bf16_scale_parallel(
+    const float* input, const std::uint16_t* scale, float* output, std::size_t elements,
+    std::size_t scale_elements, float epsilon, bool add_one_to_scale) {
+  __shared__ float row_values[8192];
+  __shared__ float denominator_slot;
+  const std::size_t rows = elements / scale_elements;
+  const std::size_t row = blockIdx.x;
+  if (row >= rows) return;
+  const float* input_row = input + row * scale_elements;
+  float* output_row = output + row * scale_elements;
+  for (std::size_t index = threadIdx.x; index < scale_elements; index += blockDim.x) {
+    row_values[index] = input_row[index];
+  }
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    float sum_squares = 0.0F;
+    for (std::size_t index = 0; index < scale_elements; ++index) {
+      const float value = row_values[index];
+      sum_squares += value * value;
+    }
+    denominator_slot = sqrtf(sum_squares / static_cast<float>(scale_elements) + epsilon);
+  }
+  __syncthreads();
+  const float denominator = denominator_slot;
+  const float offset = add_one_to_scale ? 1.0F : 0.0F;
+  for (std::size_t index = threadIdx.x; index < scale_elements; index += blockDim.x) {
+    output_row[index] = row_values[index] / denominator * (bf16_to_float_device(scale[index]) + offset);
+  }
+}
+
 __global__ inline void rms_norm_f32(const float* input, const float* scale, float* output,
                                     std::size_t elements, std::size_t scale_elements,
                                     float epsilon, bool add_one_to_scale) {
@@ -1217,6 +1255,15 @@ inline cudaError_t launch_rms_norm_bf16(const ir::physical::CommandDescriptor& c
       scale.size == 0 || scale.size % sizeof(std::uint16_t) != 0 ||
       elements % scale_elements != 0) {
     return cudaErrorInvalidValue;
+  }
+  const std::size_t rows = elements / scale_elements;
+  if (scale_elements <= 8192U && rows != 0 && rows <= 65535U) {
+    rms_norm_f32_bf16_scale_parallel<<<static_cast<std::uint32_t>(rows), 256, 0, stream>>>(
+        static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+        static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, scale.id)),
+        static_cast<float*>(buffer_pointer(plan, arena, output.id)), elements, scale_elements,
+        command.epsilon, command.add_one_to_scale);
+    return cudaGetLastError();
   }
   rms_norm_f32_bf16_scale<<<1, 1, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),

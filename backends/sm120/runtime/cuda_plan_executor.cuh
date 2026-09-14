@@ -1031,11 +1031,14 @@ inline cudaError_t launch_nvfp4_linear(const ir::physical::CommandDescriptor& co
       static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id));
   const bool vectorizable =
       (input_elements % 32U == 0U) && (reinterpret_cast<std::uintptr_t>(packed_pointer) % 16U == 0U);
-  // P6 candidate B (tolerance-qualified, D-021-passing): warp-per-output-row is
-  // the default NVFP4 kernel. Set SUPERINFER_QWEN38_NVFP4_WARP=0 to select the
-  // bit-exact row-per-thread incumbent as a fallback.
+  // P7-0 shape-adaptive dispatch (verified in the P6/decode harness):
+  // warp-per-row wins on the many small/medium projections, while the
+  // row-per-thread vector kernel wins on the two very large ones (LM head and
+  // the 17408x5120 MLP). The choice is a deterministic function of the
+  // compile-time output size, not a model-name or environment decision.
   const char* warp_selector = std::getenv("SUPERINFER_QWEN38_NVFP4_WARP");
-  const bool use_warp = vectorizable &&
+  constexpr std::size_t kWarpMaxRows = 16384U;
+  const bool use_warp = vectorizable && output_elements < kWarpMaxRows &&
                         !(warp_selector != nullptr && warp_selector[0] == '0');
   if (use_warp) {
     std::uint32_t warp_blocks =

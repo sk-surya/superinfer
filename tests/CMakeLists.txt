@@ -156,6 +156,16 @@ if(SUPERINFER_CUDA_AVAILABLE)
   add_test(NAME superinfer.sm120.nvfp4_gemv_bench COMMAND superinfer_sm120_nvfp4_gemv_bench)
   set_tests_properties(superinfer.sm120.nvfp4_gemv_bench PROPERTIES SKIP_RETURN_CODE 77)
 
+  add_executable(superinfer_sm120_nvfp4_decode_bench gpu/sm120/nvfp4_decode_bench.cu)
+  target_compile_features(superinfer_sm120_nvfp4_decode_bench PRIVATE cuda_std_20)
+  target_include_directories(superinfer_sm120_nvfp4_decode_bench PRIVATE
+    "${CMAKE_SOURCE_DIR}/backends")
+  target_link_libraries(superinfer_sm120_nvfp4_decode_bench PRIVATE
+    superinfer_sm120_cuda_runtime CUDA::cudart)
+  set_target_properties(superinfer_sm120_nvfp4_decode_bench PROPERTIES CUDA_ARCHITECTURES "120a")
+  add_test(NAME superinfer.sm120.nvfp4_decode_bench COMMAND superinfer_sm120_nvfp4_decode_bench)
+  set_tests_properties(superinfer.sm120.nvfp4_decode_bench PROPERTIES SKIP_RETURN_CODE 77)
+
   add_executable(superinfer_sm120_qwen38_layer_artifact
     gpu/sm120/qwen38_layer_artifact_test.cu)
   target_compile_features(superinfer_sm120_qwen38_layer_artifact PRIVATE cuda_std_20)

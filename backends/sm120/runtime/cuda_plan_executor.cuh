@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <string>
@@ -516,6 +517,73 @@ __global__ inline void nvfp4_linear_rows_vec_f32(const float* input,
 }
 
 /** Reference-correct grouped-query attention over a pre-materialized contiguous KV window. */
+
+/** Warp-per-output-row NVFP4 GEMV (S04-P6 candidate B).
+ *
+ * Maps one warp to each output row; each lane reduces a contiguous column
+ * range and the warp tree-reduces. Global weight loads are naturally coalesced
+ * (lanes read contiguous column groups of the same row). The accumulation order
+ * differs from the serial incumbent, so this is tolerance-qualified, not
+ * bit-exact.
+ */
+__global__ inline void nvfp4_linear_warp_f32(const float* input, const std::uint8_t* packed,
+                                             const std::uint8_t* scales,
+                                             const float* tensor_scale, float* output,
+                                             std::size_t input_elements,
+                                             std::size_t output_elements) {
+  const float tensor = *tensor_scale;
+  const std::size_t warp = (blockIdx.x * blockDim.x + threadIdx.x) / 32U;
+  const std::size_t lane = threadIdx.x % 32U;
+  if (warp >= output_elements) return;
+  const std::uint8_t* packed_row = packed + warp * (input_elements / 2U);
+  const std::uint8_t* scale_row = scales + warp * (input_elements / 16U);
+  const std::size_t chunk = ((input_elements + 31U) / 32U + 31U) / 32U * 32U;
+  const std::size_t begin = lane * chunk;
+  const std::size_t end = begin < input_elements
+                              ? (begin + chunk < input_elements ? begin + chunk : input_elements)
+                              : input_elements;
+  float sum = 0.0F;
+  std::size_t column = begin;
+  for (; column + 32U <= end; column += 32U) {
+    const std::size_t group = column / 32U;
+    const uint4 word = *reinterpret_cast<const uint4*>(packed_row + group * 16U);
+    const std::uint8_t bytes[16] = {
+        static_cast<std::uint8_t>(word.x), static_cast<std::uint8_t>(word.x >> 8U),
+        static_cast<std::uint8_t>(word.x >> 16U), static_cast<std::uint8_t>(word.x >> 24U),
+        static_cast<std::uint8_t>(word.y), static_cast<std::uint8_t>(word.y >> 8U),
+        static_cast<std::uint8_t>(word.y >> 16U), static_cast<std::uint8_t>(word.y >> 24U),
+        static_cast<std::uint8_t>(word.z), static_cast<std::uint8_t>(word.z >> 8U),
+        static_cast<std::uint8_t>(word.z >> 16U), static_cast<std::uint8_t>(word.z >> 24U),
+        static_cast<std::uint8_t>(word.w), static_cast<std::uint8_t>(word.w >> 8U),
+        static_cast<std::uint8_t>(word.w >> 16U), static_cast<std::uint8_t>(word.w >> 24U)};
+    const float scale0 = decode_e4m3fn_device(scale_row[group * 2U]);
+    const float scale1 = decode_e4m3fn_device(scale_row[group * 2U + 1U]);
+    for (std::size_t pair = 0; pair < 8U; ++pair) {
+      sum += (decode_e2m1_device(bytes[pair] & 0x0FU) * scale0 * tensor) *
+             input[column + pair * 2U];
+      sum += (decode_e2m1_device(bytes[pair] >> 4U) * scale0 * tensor) *
+             input[column + pair * 2U + 1U];
+    }
+    for (std::size_t pair = 8U; pair < 16U; ++pair) {
+      sum += (decode_e2m1_device(bytes[pair] & 0x0FU) * scale1 * tensor) *
+             input[column + pair * 2U];
+      sum += (decode_e2m1_device(bytes[pair] >> 4U) * scale1 * tensor) *
+             input[column + pair * 2U + 1U];
+    }
+  }
+  for (; column < end; ++column) {
+    const std::uint8_t packed_value = packed_row[column / 2U];
+    const std::uint8_t code =
+        (column % 2U == 0) ? (packed_value & 0x0FU) : (packed_value >> 4U);
+    sum += (decode_e2m1_device(code) * decode_e4m3fn_device(scale_row[column / 16U]) * tensor) *
+           input[column];
+  }
+  for (std::size_t offset = 16U; offset > 0U; offset >>= 1U) {
+    sum += __shfl_down_sync(0xFFFFFFFFU, sum, offset);
+  }
+  if (lane == 0U) output[warp] = sum;
+}
+
 __global__ inline void grouped_attention_f32(const float* query, const float* keys,
                                              const float* values, float* output,
                                              std::size_t query_heads, std::size_t kv_heads,
@@ -963,6 +1031,24 @@ inline cudaError_t launch_nvfp4_linear(const ir::physical::CommandDescriptor& co
       static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id));
   const bool vectorizable =
       (input_elements % 32U == 0U) && (reinterpret_cast<std::uintptr_t>(packed_pointer) % 16U == 0U);
+  // P6 candidate B (tolerance-qualified, D-021-passing): warp-per-output-row is
+  // the default NVFP4 kernel. Set SUPERINFER_QWEN38_NVFP4_WARP=0 to select the
+  // bit-exact row-per-thread incumbent as a fallback.
+  const char* warp_selector = std::getenv("SUPERINFER_QWEN38_NVFP4_WARP");
+  const bool use_warp = vectorizable &&
+                        !(warp_selector != nullptr && warp_selector[0] == '0');
+  if (use_warp) {
+    std::uint32_t warp_blocks =
+        static_cast<std::uint32_t>((output_elements * 32U + 255U) / 256U);
+    if (warp_blocks == 0U) warp_blocks = 1U;
+    nvfp4_linear_warp_f32<<<warp_blocks, 256, 0, stream>>>(
+        static_cast<const float*>(buffer_pointer(plan, arena, input.id)), packed_pointer,
+        static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)),
+        static_cast<const float*>(buffer_pointer(plan, arena, tensor_scale.id)),
+        static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,
+        output_elements);
+    return cudaGetLastError();
+  }
   if (vectorizable) {
     nvfp4_linear_rows_vec_f32<<<blocks, 256, 0, stream>>>(
         static_cast<const float*>(buffer_pointer(plan, arena, input.id)), packed_pointer,

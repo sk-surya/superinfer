@@ -235,6 +235,71 @@ void test_rms_norm_parallel_identity() {
   }
 }
 
+void test_nvfp4_warp_tolerance() {
+  // S04-P6 candidate B differential: warp-per-row changes FP32 reduction order,
+  // so compare against the incumbent with a tight relative tolerance and also
+  // confirm the difference is a small fraction of the output magnitude.
+  using namespace superinfer;
+  const std::array<std::pair<std::size_t, std::size_t>, 3> shapes{
+      {{48, 512}, {1031, 1024}, {4096, 2048}}};
+  for (const auto [outputs, inputs] : shapes) {
+    std::vector<float> host_input(inputs);
+    std::vector<std::uint8_t> host_packed((outputs * inputs + 1) / 2);
+    std::vector<std::uint8_t> host_scales(outputs * (inputs / 16));
+    std::uint64_t state = 0x12345678ULL;
+    auto next = [&]() -> std::uint32_t {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return static_cast<std::uint32_t>(state >> 33U);
+    };
+    for (auto& value : host_input) value = (static_cast<float>(next() % 2000U) - 1000.0F) / 500.0F;
+    for (auto& value : host_packed) value = static_cast<std::uint8_t>(next());
+    for (auto& value : host_scales) value = static_cast<std::uint8_t>(0x20U | (next() & 0x0FU));
+    const float host_scale_2 = 0.5F;
+    float *d_input = nullptr, *d_out_ref = nullptr, *d_out_warp = nullptr, *d_scale_2 = nullptr;
+    std::uint8_t *d_packed = nullptr, *d_scales = nullptr;
+    assert(cudaMalloc(&d_input, inputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&d_packed, host_packed.size()) == cudaSuccess);
+    assert(cudaMalloc(&d_scales, host_scales.size()) == cudaSuccess);
+    assert(cudaMalloc(&d_scale_2, sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&d_out_ref, outputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&d_out_warp, outputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMemcpy(d_input, host_input.data(), inputs * sizeof(float),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(d_packed, host_packed.data(), host_packed.size(),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(d_scales, host_scales.data(), host_scales.size(),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(d_scale_2, &host_scale_2, sizeof(float), cudaMemcpyHostToDevice) ==
+           cudaSuccess);
+    std::uint32_t blocks = static_cast<std::uint32_t>((outputs + 255U) / 256U);
+    sm120::cuda_runtime::detail::nvfp4_linear_rows_vec_f32<<<blocks, 256>>>(
+        d_input, d_packed, d_scales, d_scale_2, d_out_ref, inputs, outputs);
+    std::uint32_t warp_blocks = static_cast<std::uint32_t>((outputs * 32U + 255U) / 256U);
+    sm120::cuda_runtime::detail::nvfp4_linear_warp_f32<<<warp_blocks, 256>>>(
+        d_input, d_packed, d_scales, d_scale_2, d_out_warp, inputs, outputs);
+    assert(cudaGetLastError() == cudaSuccess);
+    assert(cudaDeviceSynchronize() == cudaSuccess);
+    std::vector<float> ref(outputs), warp(outputs);
+    assert(cudaMemcpy(ref.data(), d_out_ref, outputs * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(warp.data(), d_out_warp, outputs * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    double max_diff = 0.0, max_mag = 0.0;
+    for (std::size_t row = 0; row < outputs; ++row) {
+      max_diff = std::max(max_diff, std::fabs(static_cast<double>(warp[row]) - ref[row]));
+      max_mag = std::max(max_mag, std::fabs(static_cast<double>(ref[row])));
+    }
+    // Reduction-order-only difference: far below the incumbent's own magnitude.
+    assert(max_diff <= 1.0e-4 * (max_mag > 1.0 ? max_mag : 1.0));
+    cudaFree(d_input);
+    cudaFree(d_packed);
+    cudaFree(d_scales);
+    cudaFree(d_scale_2);
+    cudaFree(d_out_ref);
+    cudaFree(d_out_warp);
+  }
+}
+
 __global__ void injected_async_fault() {
   if (threadIdx.x == 0) *static_cast<volatile std::uint32_t*>(nullptr) = 1U;
 }
@@ -1200,6 +1265,7 @@ int main() {
   test_grouped_attention_cached_identity();
   test_gated_delta_attention_parallel_identity();
   test_rms_norm_parallel_identity();
+  test_nvfp4_warp_tolerance();
 
   const auto f32_to_bf16_plan = make_f32_to_bf16_cast_plan();
   auto f32_to_bf16 = sm120::cuda_runtime::CudaPlanSession::create(

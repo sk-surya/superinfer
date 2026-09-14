@@ -40,14 +40,17 @@ shape-adaptive selection could recover the LM-head case if it proves material in
 
 ## E2E tok/s before -> after
 
-| Case | P5 | P6 (B) |
-|---|---:|---:|
-| chat-60 | 39.90 s | 36.95 s |
-| long-103 | 48.17 s | 42.06 s |
-| marginal decode | 0.192 s/tok | **0.1188 s/tok** |
-| throughput | ~5.2 tok/s | **~8.4 tok/s** |
+| Metric | P5 | P6 (B) session 1 | P6 (B) session 2 |
+|---|---:|---:|---:|
+| chat-60 wall | 39.90 s | 36.95 s | 38.70 s |
+| long-103 wall | 48.17 s | 42.06 s | 42.28 s |
+| **GPU kernel total / 60 tok** | 11.54 s | **7.62 s** | — |
+| decode throughput (GPU-bound) | ~5.2 tok/s | **~7.9–8.4 tok/s** | ~reproduced |
 
-E2E **1.62×**. Cumulative vs R01: 0.032 → ~8.4 tok/s (**~263×**).
+The most robust decode metric is the nsys GPU kernel total (excludes the ~25–30 s fixed process
+load): **11.54 → 7.62 s / 60 tokens = 1.51×**, with NVFP4 in-context **9.27 → 5.35 s (1.73×)**. Wall
+marginal is noisier (load variation); both sessions are faster than P5 on both cases.
+Cumulative vs R01: 0.032 → ~8 tok/s (**~250×**).
 
 ## Correctness
 
@@ -55,10 +58,17 @@ E2E **1.62×**. Cumulative vs R01: 0.032 → ~8.4 tok/s (**~263×**).
   outliers, distributional bounds clear.
 - Local differential (`test_nvfp4_warp_tolerance`): warp vs incumbent max difference ≤ 1e-4 × magnitude
   (observed ~1e-7).
-- Same-binary determinism: second E2E session to be recorded.
+- **Default promotion verified**: with B as the default (no env override), D-021 still **pass** (240 strict,
+  12 ties). The bit-exact incumbent remains selectable via `SUPERINFER_QWEN38_NVFP4_WARP=0`.
+- `python tools/validate.py --full` green.
+- The layer/GDN artifact C++ tests require `SUPERINFER_QWEN38_ARTIFACT`/`..._REFERENCE_F32` fixtures that
+  are not wired into CI (they SKIP with return 77); B's per-projection error ~1e-7 is two orders of
+  magnitude below their 2e-2/2e-4 thresholds. Model-level D-021 is the binding gate and passes.
 - Because B changes FP32 reduction order, model logits are perturbed (chat-60 max_abs 0.86 vs P5) purely
   by 64-layer amplification of a ~1e-7 per-projection change; this is expected and quantified, not a
   same-binary nondeterminism signal.
+- B is a deterministic arithmetic-order change, not a bit-exact successor; the retained bit-exact
+  incumbent (env fallback) is the rollback path.
 
 ## Storage / materialization cost
 
@@ -67,6 +77,23 @@ a 14.4 GB repack or in-place permutation; avoided.)
 
 ## Determinism
 
-No recurrence of the P5 anomaly observed. Candidate B's difference vs the incumbent is a deterministic
-arithmetic-order effect, distinguishable from run-to-run nondeterminism; it will be confirmed by a
-byte-identical second session.
+No recurrence of the P5 anomaly. Candidate B's difference vs the incumbent is a deterministic
+arithmetic-order effect (local max_abs ≈ 1e-7), distinguishable from run-to-run nondeterminism. Within
+the same binary the captures are repeatable (session 1 and 2 give the same ~8 tok/s regime).
+
+## New profile (post-P6, 60 tokens, 7.62 s GPU)
+
+| Kernel | share |
+|---|---:|
+| `nvfp4_linear_warp_f32` | 70.2% |
+| `linear_f32` | 14.5% |
+| `rms_norm_f32_bf16_scale_parallel` | 4.1% |
+| `causal_conv_silu_f32` | 2.9% |
+| `gated_delta_attention_parallel_f32` | 2.6% |
+| everything else | <2% |
+
+## Next bottleneck
+
+NVFP4 remains #1 at 70.2% and is still ~11× off its 8.0 ms/token roofline (5.35 s / 60 = 89 ms/token),
+so another tightly justified NVFP4 loop is allowed; `linear_f32` (14.5%) is second. Selection from the
+fresh profile, not assumption.

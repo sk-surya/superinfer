@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: S04-P6
+current_phase: S04-P7
 status: autonomous_execution
 last_updated: "2026-09-11T00:00:00Z"
 progress:
   total_phases: 14
   completed_phases: 9
   total_plans: 35
-completed_plans: 27
+completed_plans: 30
 current_phase_name: results-first-performance-ladder
 parallel_research_phase: none
 s03f_01_status: research_complete_capacity_quality_blocked
@@ -22,7 +22,7 @@ s03f_01_status: research_complete_capacity_quality_blocked
 **Status:** RECOVERY SPRINT COMPLETE (success path). S03/S03-R complete under D-021; R01 baseline captured; R02 one profiler-selected optimization with retained fallback; R03 reproduced positive end-to-end decode gain in a second fresh session.
 **Current lane:** S04-P1 — profiler-driven performance ladder (iterate fresh profile -> one target -> correctness -> reproduced benchmark). Fleet target: **>= 5 decode tok/s**.
 **Branch:** `sol/results-first-recovery` (draft PR #1)
-**Performance headline:** decode **0.032 -> ~8 tok/s** cumulative across 7 profiler-selected loops (~250x). GPU kernel time 11.54 -> 7.62 s / 60 tokens at loop 7. Loops: NVFP4 row-parallel (33x), KV-attention caching (4,320x), NVFP4 vectorization (5.48x), GDN parallel (128x), RMSNorm parallel (21.9x), elementwise/cast block-parallel (39x), NVFP4 warp-per-row GEMV (1.66x local). Loops 1-6 are bit-exact; loop 7 (warp-per-row) is tolerance-qualified and D-021-passing. **>=5 tok/s checkpoint MET; decode now GPU-bound.**
+**Performance headline:** decode **0.032 -> ~8.3 tok/s** cumulative across 8 profiler-selected loops (~260x). GPU kernel time 11.54 -> 7.25 s / 60 tokens. Loops: NVFP4 row-parallel (33x), KV-attention caching (4,320x), NVFP4 vectorization (5.48x), GDN parallel (128x), RMSNorm parallel (21.9x), elementwise/cast block-parallel (39x), NVFP4 warp-per-row GEMV (1.66x local), NVFP4 decode decomposition + shape-adaptive dispatch (1.05x). Loop 7 warp-per-row and the shape-adaptive warp branch are tolerance-qualified and D-021-passing; loops 1-6 and the row-per-thread branch are bit-exact. **>=5 tok/s checkpoint MET; decode now GPU-bound.**
 
 ## Operational Truth
 
@@ -37,14 +37,14 @@ s03f_01_status: research_complete_capacity_quality_blocked
 | R02 first bottleneck | **Complete** | `R02-PLAN.md`; row-parallel NVFP4, 33x local, bit-identical |
 | R03 first speed proof | **Complete — PASS** | `R03-SUMMARY.md`; `benchmarks/runs/R03/`; 7.6–9.4x E2E reproduced |
 | Recovery sprint | **Complete** | stop condition met |
-| S04 performance ladder | **Active (S04-P6 complete; NVFP4 still #1 at 70%)** | `S04-P1/`..`S04-P6/`; 7 loops, 0.032->~8 tok/s, D-021 pass |
+| S04 performance ladder | **Active (S04-P7 complete; NVFP4 still #1; P8 tensor-core spike justified)** | `S04-P1/`..`S04-P7/`; 8 loops, 0.032->~8.3 tok/s, D-021 pass |
 | S03F Flash-Next | S03F-01 retained; S03F-02+ deferred (D-019 binding, D-020 ordering) | `FLASH-NEXT-DESIGN.md`; capacity/quality blocked |
 | S05 autoresearch | Deferred until 3 manual loops exist | design from proven loop, not generic |
 | S06/S07/S08 | Planned | Pending |
 
 ## Current Focus
 
-S03 correctness is closed and the first optimization loop is proven. The active lane is the profiler-driven S04 performance ladder: repeatedly (1) take a fresh profile of the current binary, (2) select the change with the largest defensible E2E opportunity, (3) optimize exactly that behind a retained fallback and an independent correctness oracle, (4) reproduce the benchmark in a second fresh session. Do not optimize by name or roadmap order. Full autoresearch scaffolding is deferred until the minimum runner is extracted from the proven loop (`.planning/phases/S04-kernel-portfolio/S04-AUTORESEARCH-DECISION.md`). Loops 1-7 are complete; the >=5 decode tok/s checkpoint is met (~8 tok/s). Post-loop-7 GPU is still dominated by NVFP4 (`nvfp4_linear_warp_f32`, 70.2%), ~11x off its roofline, so another NVFP4 loop is allowed; `linear_f32` is second (14.5%). Artifact load/materialization (~25-30 s fixed per process) is a separate startup/TTFT lane, deliberately not mixed into decode work. One unreproduced D-021 anomaly on loop 5 is recorded in `S04-P5-SUMMARY.md`. Loop 7 (`nvfp4_linear_warp_f32`) changes FP32 reduction order and is tolerance-qualified, not bit-exact; the bit-exact incumbent is retained via `SUPERINFER_QWEN38_NVFP4_WARP=0`.
+S03 correctness is closed and the first optimization loop is proven. The active lane is the profiler-driven S04 performance ladder: repeatedly (1) take a fresh profile of the current binary, (2) select the change with the largest defensible E2E opportunity, (3) optimize exactly that behind a retained fallback and an independent correctness oracle, (4) reproduce the benchmark in a second fresh session. Do not optimize by name or roadmap order. Full autoresearch scaffolding is deferred until the minimum runner is extracted from the proven loop (`.planning/phases/S04-kernel-portfolio/S04-AUTORESEARCH-DECISION.md`). Loops 1-8 are complete; the >=5 decode tok/s checkpoint is met (~8.3 tok/s). P7 proved hardware E2M1 decode is exact but not the bottleneck (1.01x) and predecoded FP16 scales give no gain; the binding cost is the per-element input-load + FP32 multiply, so the memory-only 8 ms/token floor is not reachable by software decode. A P8 native block-scaled NVFP4 tensor-core feasibility spike is now justified. Artifact load/materialization (~25-30 s/process) remains a separate startup/TTFT lane. The minimum autoresearch runner is extracted at `tools/autoresearch_runner.py` (see `S04-AUTORESEARCH-RUNNER.md`).
 
 Reference: `.planning/phases/R03-first-speed-proof/R03-SUMMARY.md`, `.planning/phases/R01-qwen-baseline/R01-SUMMARY.md`.
 

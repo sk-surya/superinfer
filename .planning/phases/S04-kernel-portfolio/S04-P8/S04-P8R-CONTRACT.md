@@ -87,3 +87,21 @@ thread/byte ownership is wrong. The exact TV layouts are documented in
 
 **Consequence:** Arms A/B/C and the final A/B/C/D classification are **not yet evaluated** — they require
 the verified fragment/scale mapping first. No performance numbers are reported for them.
+
+## P8-R2 calibration findings (empirical, on the RTX 5090)
+
+`artifacts/S04/p8r/p8r2_calibration.txt` (from `p8r2_calib.cu`, `p8r2_scale.cu`):
+
+1. **E2M1 codes are the standard NVFP4 values** `{0, ±0.5, ±1, ±1.5, ±2, ±3, ±4, ±6}` — verified by the
+   code-to-code ratios (e.g. D(7)/D(1) = 12, D(3)/D(1) = 3).
+2. **The UE4M3 block scale does NOT follow IEEE E4M3 bias 7.** Measured: `s = 2^(e-6)·(1+m/8)`, i.e.
+   exactly **2× the bias-7 value** (0x38 → 2.0, not 1.0). Using the bias-7 host decode was a second, real
+   source of differential error.
+3. **A-fragment row/K mapping corrected** to the PTX spec (section 9.7.16.5.11): `a0`→(row g, k 8q..8q+7),
+   `a1`→(row g+8, same k), `a2`→(row g, k 32+8q..), `a3`→(row g+8, same k). B is `b0`→(k 8q.., n g),
+   `b1`→(k 32+8q.., n g); C/D is `c0`→(g,2q), `c1`→(g,2q+1), `c2`→(g+8,2q), `c3`→(g+8,2q+1).
+
+Remaining before the randomized differential passes: the **SFA/SFB thread/byte ownership** for
+`scale_vec::4X` (which lane/byte supplies which (row, k-block) scale; PTX selectors `{byte-id, thread-id}`
+plus the quad-broadcast layout from CUTLASS `mma_traits_sm120.hpp`). My current single-b32-per-lane
+construction is not yet the hardware layout. Arms A/B/C and the final classification remain gated on this.

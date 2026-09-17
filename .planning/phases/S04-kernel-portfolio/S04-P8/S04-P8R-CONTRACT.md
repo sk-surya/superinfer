@@ -105,3 +105,22 @@ Remaining before the randomized differential passes: the **SFA/SFB thread/byte o
 `scale_vec::4X` (which lane/byte supplies which (row, k-block) scale; PTX selectors `{byte-id, thread-id}`
 plus the quad-broadcast layout from CUTLASS `mma_traits_sm120.hpp`). My current single-b32-per-lane
 construction is not yet the hardware layout. Arms A/B/C and the final classification remain gated on this.
+
+## P8-R2 status — SFA supplier mapping unresolved (hard blocker)
+
+Authoritative layouts obtained from CUTLASS `mma_traits_sm120.hpp` (`SM120_16x8x64_TN_VS`):
+`ALayout ((4,8),(8,2,2)):((128,1),(16,8,512))`, `BLayout ((4,8),(8,2)):((64,1),(8,256))`,
+`SFALayout ((2,2,8),64):((8,0,1),16)`, `SFBLayout ((4,8),64):((0,1),8)`, `CLayout SM80_16x8_Row`.
+
+A/B/C mappings are now settled and match the PTX fragment spec. E2M1 codes are standard; the UE4M3
+scale uses `s = 2^(e-6)·(1+m/8)` (bias 6, 2× IEEE bias-7).
+
+`p8r2_sfa_probe.txt` shows the remaining inconsistency: with `sfa byte0 = 0x38|(lane&7)`, `sb=0x38`,
+and a single nonzero A at `(m=0,k=0)`, the measured SFA values are `m0→2.0 (byte 0x38)`,
+`m1→2.5 (byte 0x3A)`, `m2→2.0 (byte 0x38)`. That does **not** match the derived supplier
+`m = 8*(L%2) + L/4` predicted by SFALayout, so either the `{byte-id, thread-id}` selection or the
+byte-within-`b32` convention (which of the 4 UE4M3 bytes is K-block 0) still differs. Until this is
+resolved the randomized P8-R2 differential fails (`rel≈1.08`) and **Arms A/B/C remain unrun**.
+
+Next step for the next session: determine the byte/selector convention empirically with a probe that
+varies `{byte-id, thread-id}` and the byte index independently, then re-run the differential.

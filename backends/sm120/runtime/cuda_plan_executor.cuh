@@ -584,6 +584,151 @@ __global__ inline void nvfp4_linear_warp_f32(const float* input, const std::uint
   if (lane == 0U) output[warp] = sum;
 }
 
+// ============================================================================================
+// S04-P8R-Q experimental native path: SM120 block-scaled NVFP4 tensor-core GEMV
+// (`mma.sync.aligned.m16n8k64.row.col.kind::mxf4nvf4.block_scale.scale_vec::4X.f32.e2m1.e2m1.f32.ue4m3`).
+//
+// The weight operand keeps the existing row-major `.sinf` layout. The activation is dynamically
+// quantised to block-16 E2M1 codes plus UE4M3 scales using the pinned `amax/6` rule. The P7 software
+// kernels remain the oracle and the fallback; this path is selected at specialization time and never
+// branches on model identity or environment inside the hot path.
+// ============================================================================================
+
+__device__ inline std::uint8_t encode_e2m1_device(float value) {
+  constexpr float magnitudes[8] = {0.0F, 0.5F, 1.0F, 1.5F, 2.0F, 3.0F, 4.0F, 6.0F};
+  const float magnitude = fabsf(value);
+  int best = 0;
+  float best_delta = 1.0e30F;
+  for (int index = 0; index < 8; ++index) {
+    const float delta = fabsf(magnitude - magnitudes[index]);
+    if (delta < best_delta) {
+      best_delta = delta;
+      best = index;
+    }
+  }
+  return static_cast<std::uint8_t>(value < 0.0F ? (best | 0x08) : best);
+}
+
+__device__ inline std::uint8_t encode_e4m3fn_device(float value) {
+  if (!(value > 0.0F)) return 0;
+  int exponent = static_cast<int>(floorf(log2f(value))) + 7;
+  if (exponent < 1) exponent = 1;
+  if (exponent > 15) return 0x7FU;
+  const float base = exp2f(static_cast<float>(exponent) - 7.0F);
+  int mantissa = static_cast<int>(lroundf((value / base - 1.0F) * 8.0F));
+  if (mantissa >= 8) {
+    mantissa = 0;
+    if (++exponent > 15) return 0x7FU;
+  }
+  if (mantissa < 0) mantissa = 0;
+  return static_cast<std::uint8_t>((exponent << 3) | mantissa);
+}
+
+/** Accumulating M16N8K64 block-scaled NVFP4 MMA. `d` is both C and D (no separate zero C). */
+__device__ inline void mma_mxf4_device(const std::uint32_t a[4], const std::uint32_t b[2],
+                                       std::uint32_t scale_a, std::uint32_t scale_b, float d[4]) {
+  const float c0 = d[0], c1 = d[1], c2 = d[2], c3 = d[3];
+  asm volatile(
+      "mma.sync.aligned.m16n8k64.row.col.kind::mxf4nvf4.block_scale.scale_vec::4X."
+      "f32.e2m1.e2m1.f32.ue4m3 "
+      "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%10,%11,%12,%13}, "
+      "%14, {%15, %16}, %17, {%18, %19};\n"
+      : "=f"(d[0]), "=f"(d[1]), "=f"(d[2]), "=f"(d[3])
+      : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b[0]), "r"(b[1]), "f"(c0), "f"(c1),
+        "f"(c2), "f"(c3), "r"(scale_a), "h"(static_cast<std::uint16_t>(0)),
+        "h"(static_cast<std::uint16_t>(0)), "r"(scale_b), "h"(static_cast<std::uint16_t>(0)),
+        "h"(static_cast<std::uint16_t>(0)));
+}
+
+/**
+ * Dynamic block-16 activation quantisation: `input[input_elements]` (f32) -> packed E2M1 codes
+ * `packed[input_elements/2]` (low nibble = even column) plus UE4M3 scales `scales[input_elements/16]`.
+ * The scale is `amax/6` encoded as UE4M3, the pinned P8-R reference rule.
+ */
+__global__ inline void nvfp4_activation_quantize_f32(const float* input, std::uint8_t* packed,
+                                                     std::uint8_t* scales,
+                                                     std::size_t input_elements) {
+  const std::size_t block = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (block * 16U >= input_elements) return;
+  const float* values = input + block * 16U;
+  float amax = 0.0F;
+  for (int index = 0; index < 16; ++index) amax = fmaxf(amax, fabsf(values[index]));
+  const std::uint8_t scale_code = encode_e4m3fn_device(amax / 6.0F);
+  const float scale = decode_e4m3fn_device(scale_code);
+  const float inverse = scale > 0.0F ? 1.0F / scale : 0.0F;
+  scales[block] = scale_code;
+  for (int index = 0; index < 8; ++index) {
+    const float low = fminf(fmaxf(values[index * 2] * inverse, -6.0F), 6.0F);
+    const float high = fminf(fmaxf(values[index * 2 + 1] * inverse, -6.0F), 6.0F);
+    packed[block * 8U + index] =
+        static_cast<std::uint8_t>((encode_e2m1_device(high) << 4) | encode_e2m1_device(low));
+  }
+}
+
+/**
+ * Native NVFP4 projection: one warp per 16 output rows, one M16N8K64 MMA per 64 K.
+ *
+ * Fragment and scale-ownership contract is the P8-R2-verified one: A reg r -> row g+8*(r&1),
+ * K 8*quad+(v%8)+32*(r/2); SFA lane 4g -> row g, lane 4g+1 -> row g+8 (four bytes = four K-blocks);
+ * B lane (g,quad) -> column g, K 8*quad.. and 32+8*quad..; SFB lane 4n -> column n. Only output
+ * column 0 is consumed (single-token decode); the other seven are unused output.
+ */
+__global__ inline void nvfp4_linear_mma_f32(const std::uint8_t* packed, const std::uint8_t* scales,
+                                            const std::uint8_t* activation_packed,
+                                            const std::uint8_t* activation_scales,
+                                            const float* tensor_scale, float* output,
+                                            std::size_t rows, std::size_t inputs) {
+  const int lane = static_cast<int>(threadIdx.x & 31U);
+  const int warp = static_cast<int>((blockIdx.x * blockDim.x + threadIdx.x) / 32U);
+  const int group = lane >> 2;
+  const int quad = lane & 3;
+  const std::size_t row0 = static_cast<std::size_t>(warp) * 16U;
+  if (row0 >= rows) return;
+  const float tensor = *tensor_scale;
+  const std::size_t weight_row = inputs / 2U;
+  const std::size_t scale_row = inputs / 16U;
+  const int scale_owner = (lane & 1) ? (group + 8) : group;
+  float d[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+  for (std::size_t k = 0; k < inputs; k += 64U) {
+    const std::size_t byte_offset = k / 2U;
+    const std::size_t block = k / 16U;
+    const std::uint32_t a[4] = {
+        *reinterpret_cast<const std::uint32_t*>(packed + (row0 + group) * weight_row +
+                                                byte_offset + 4U * static_cast<std::size_t>(quad)),
+        *reinterpret_cast<const std::uint32_t*>(packed + (row0 + group + 8) * weight_row +
+                                                byte_offset + 4U * static_cast<std::size_t>(quad)),
+        *reinterpret_cast<const std::uint32_t*>(packed + (row0 + group) * weight_row + byte_offset +
+                                                16U + 4U * static_cast<std::size_t>(quad)),
+        *reinterpret_cast<const std::uint32_t*>(packed + (row0 + group + 8) * weight_row +
+                                                byte_offset + 16U +
+                                                4U * static_cast<std::size_t>(quad))};
+    const std::uint32_t scale_a =
+        *reinterpret_cast<const std::uint32_t*>(scales + (row0 + scale_owner) * scale_row + block);
+    std::uint32_t b0 = 0;
+    std::uint32_t b1 = 0;
+    std::uint32_t scale_b = 0;
+    if (group == 0) {
+      b0 = *reinterpret_cast<const std::uint32_t*>(activation_packed + byte_offset +
+                                                   4U * static_cast<std::size_t>(quad));
+      b1 = *reinterpret_cast<const std::uint32_t*>(activation_packed + byte_offset + 16U +
+                                                   4U * static_cast<std::size_t>(quad));
+    }
+    if (lane == 0) {
+      scale_b = *reinterpret_cast<const std::uint32_t*>(activation_scales + block);
+    }
+    const std::uint32_t b[2] = {b0, b1};
+    mma_mxf4_device(a, b, scale_a, scale_b, d);
+  }
+  if (quad == 0) {
+    if (row0 + static_cast<std::size_t>(group) < rows) {
+      output[row0 + static_cast<std::size_t>(group)] = d[0] * tensor;
+    }
+    if (row0 + static_cast<std::size_t>(group) + 8U < rows) {
+      output[row0 + static_cast<std::size_t>(group) + 8U] = d[2] * tensor;
+    }
+  }
+}
+
 __global__ inline void grouped_attention_f32(const float* query, const float* keys,
                                              const float* values, float* output,
                                              std::size_t query_heads, std::size_t kv_heads,
@@ -1071,6 +1216,47 @@ inline cudaError_t launch_nvfp4_linear(const ir::physical::CommandDescriptor& co
   return cudaGetLastError();
 }
 
+/**
+ * S04-P8R-Q experimental native NVFP4 projection launch.
+ *
+ * Quantises the activation into the session workspace (allocated once; no allocation here) and runs
+ * the warp-per-16-rows MMA GEMV. Requires the contract the provider advertises: sm_120a,
+ * `inputs % 64 == 0`, `rows % 16 == 0` (guarded below; the provider only selects it when satisfied).
+ * The plan is single-stream ordered, so the shared scratch cannot be aliased by a concurrent command.
+ */
+inline cudaError_t launch_nvfp4_linear_mma(const ir::physical::CommandDescriptor& command,
+                                           const ir::physical::Plan& plan, void* arena,
+                                           void* workspace, cudaStream_t stream) {
+  if (command.buffers.size() != 5) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& packed = plan.buffers()[command.buffers[1].value()];
+  const auto& scales = plan.buffers()[command.buffers[2].value()];
+  const auto& tensor_scale = plan.buffers()[command.buffers[3].value()];
+  const auto& output = plan.buffers()[command.buffers[4].value()];
+  const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
+  const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
+  if (input_elements == 0U || output_elements == 0U || input_elements % 64U != 0U) {
+    return cudaErrorInvalidValue;
+  }
+  if (workspace == nullptr) return cudaErrorInvalidValue;
+  auto* activation_packed = static_cast<std::uint8_t*>(workspace);
+  const std::size_t activation_packed_bytes = ((input_elements / 2U) + 15U) / 16U * 16U;
+  auto* activation_scales = activation_packed + activation_packed_bytes;
+  const float* input_pointer = static_cast<const float*>(buffer_pointer(plan, arena, input.id));
+  const std::uint32_t quantize_blocks =
+      static_cast<std::uint32_t>((input_elements / 16U + 255U) / 256U);
+  nvfp4_activation_quantize_f32<<<(quantize_blocks == 0U ? 1U : quantize_blocks), 256, 0, stream>>>(
+      input_pointer, activation_packed, activation_scales, input_elements);
+  const std::uint32_t warps = static_cast<std::uint32_t>((output_elements + 15U) / 16U);
+  const std::uint32_t blocks = (warps * 32U + 255U) / 256U;
+  nvfp4_linear_mma_f32<<<(blocks == 0U ? 1U : blocks), 256, 0, stream>>>(
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id)),
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)), activation_packed,
+      activation_scales, static_cast<const float*>(buffer_pointer(plan, arena, tensor_scale.id)),
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), output_elements, input_elements);
+  return cudaGetLastError();
+}
+
 inline cudaError_t launch_attention(const ir::physical::CommandDescriptor& command,
                                     const ir::physical::Plan& plan, void* arena, void*,
                                     cudaStream_t stream) {
@@ -1543,7 +1729,8 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       }
       return {};
     }
-    case 13: {
+    case 13:
+    case 27: {
       if (!exact_buffers(5)) {
         return base::Status::invalid_argument(
             "CUDA NVFP4 linear requires f32 input, packed weights, scales, tensor scale, and output buffers");
@@ -1578,6 +1765,14 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
           scales.size % scale_row_bytes != 0 || scales.size / scale_row_bytes != output_elements) {
         return base::Status::invalid_argument(
             "CUDA NVFP4 linear packed weights or scales have an invalid shape");
+      }
+      if (command.kernel.value() == 27) {
+        // Native MMA contract: M16N8K64 tile, four 16-wide scale blocks, and workspace scratch.
+        if (input_elements % 64U != 0U || output_elements % 16U != 0U ||
+            command.workspace_size == 0U) {
+          return base::Status::invalid_argument(
+              "CUDA native NVFP4 MMA requires K % 64 == 0, rows % 16 == 0, and workspace");
+        }
       }
       return {};
     }
@@ -1880,6 +2075,8 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 24: return &launch_gated_delta_parameters;
     case 25: return &launch_causal_conv_silu;
     case 26: return &launch_split_last;
+    // S04-P8R-Q experimental native SM120 block-scaled NVFP4 MMA projection.
+    case 27: return &launch_nvfp4_linear_mma;
     default: return nullptr;
   }
 }
@@ -1942,7 +2139,10 @@ class CudaPlanSession final {
       const detail::LaunchFunction launcher = detail::resolve(command.kernel.value());
       if (launcher == nullptr) return base::Status::unsupported("CUDA kernel ID is not registered");
       ++session.lifecycle_trace_->kernel_bindings;
-      if (command.workspace_size != 0) {
+      // The baseline catalog has no per-command workspace contract. The experimental native NVFP4
+      // MMA kernel (id 27) is the one exception: it uses the session workspace for the dynamically
+      // quantised activation scratch, sized by the provider and allocated once at session creation.
+      if (command.workspace_size != 0 && command.kernel.value() != 27) {
         return base::Status::unsupported("CUDA baseline has no command workspace contract");
       }
       const base::Status command_status = detail::validate_command(command, plan);

@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: S04-P7
+current_phase: S04-P8
 status: autonomous_execution
 last_updated: "2026-09-11T00:00:00Z"
 progress:
   total_phases: 14
   completed_phases: 9
   total_plans: 35
-completed_plans: 30
+completed_plans: 33
 current_phase_name: results-first-performance-ladder
 parallel_research_phase: none
 s03f_01_status: research_complete_capacity_quality_blocked
@@ -37,14 +37,14 @@ s03f_01_status: research_complete_capacity_quality_blocked
 | R02 first bottleneck | **Complete** | `R02-PLAN.md`; row-parallel NVFP4, 33x local, bit-identical |
 | R03 first speed proof | **Complete — PASS** | `R03-SUMMARY.md`; `benchmarks/runs/R03/`; 7.6–9.4x E2E reproduced |
 | Recovery sprint | **Complete** | stop condition met |
-| S04 performance ladder | **Active (S04-P7 complete; NVFP4 still #1; P8 tensor-core spike justified)** | `S04-P1/`..`S04-P7/`; 8 loops, 0.032->~8.3 tok/s, D-021 pass |
+| S04 performance ladder | **P8 closed (classification D); next lane = startup/TTFT or linear_f32** | `S04-P1/`..`S04-P8/`; 8 optimize loops + feasibility spike, 0.032->~8.3 tok/s, D-021 pass |
 | S03F Flash-Next | S03F-01 retained; S03F-02+ deferred (D-019 binding, D-020 ordering) | `FLASH-NEXT-DESIGN.md`; capacity/quality blocked |
 | S05 autoresearch | Deferred until 3 manual loops exist | design from proven loop, not generic |
 | S06/S07/S08 | Planned | Pending |
 
 ## Current Focus
 
-S03 correctness is closed and the first optimization loop is proven. The active lane is the profiler-driven S04 performance ladder: repeatedly (1) take a fresh profile of the current binary, (2) select the change with the largest defensible E2E opportunity, (3) optimize exactly that behind a retained fallback and an independent correctness oracle, (4) reproduce the benchmark in a second fresh session. Do not optimize by name or roadmap order. Full autoresearch scaffolding is deferred until the minimum runner is extracted from the proven loop (`.planning/phases/S04-kernel-portfolio/S04-AUTORESEARCH-DECISION.md`). Loops 1-8 are complete; the >=5 decode tok/s checkpoint is met (~8.3 tok/s). P7 proved hardware E2M1 decode is exact but not the bottleneck (1.01x) and predecoded FP16 scales give no gain; the binding cost is the per-element input-load + FP32 multiply, so the memory-only 8 ms/token floor is not reachable by software decode. A P8 native block-scaled NVFP4 tensor-core feasibility spike is now justified. Artifact load/materialization (~25-30 s/process) remains a separate startup/TTFT lane. The minimum autoresearch runner is extracted at `tools/autoresearch_runner.py` (see `S04-AUTORESEARCH-RUNNER.md`).
+S03 correctness is closed and the first optimization loop is proven. The active lane is the profiler-driven S04 performance ladder: repeatedly (1) take a fresh profile of the current binary, (2) select the change with the largest defensible E2E opportunity, (3) optimize exactly that behind a retained fallback and an independent correctness oracle, (4) reproduce the benchmark in a second fresh session. Do not optimize by name or roadmap order. Full autoresearch scaffolding is deferred until the minimum runner is extracted from the proven loop (`.planning/phases/S04-kernel-portfolio/S04-AUTORESEARCH-DECISION.md`). Loops 1-8 are complete; the >=5 decode tok/s checkpoint is met (~8.3 tok/s). P8 is closed as **classification D**: native per-16 block-scaled NVFP4 MMA is not exposed on sm_120a (block-scale is tcgen05/SM_100a-110a only; `.block_scale` is illegal for `mma.sync`), and NVFP4 activation quantization is a first-order error (2-9% relative L2) that would need its own quality contract. NVFP4 software decode is at its limit; do not resume micro-tuning without new evidence. **Layer/GDN fixture debt is FIXED** (`tools/run_qwen38_layer_gdn_fixtures.py`; both now run and pass). Next lane, from fresh profile: startup/artifact-materialization (~25-30 s/process, dominates TTFT) or `linear_f32` (15.3% of decode GPU). The minimum autoresearch runner is extracted at `tools/autoresearch_runner.py`.
 
 Reference: `.planning/phases/R03-first-speed-proof/R03-SUMMARY.md`, `.planning/phases/R01-qwen-baseline/R01-SUMMARY.md`.
 

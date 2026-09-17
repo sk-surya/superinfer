@@ -20,7 +20,7 @@ s03f_01_status: research_complete_capacity_quality_blocked
 **Project:** SuperInfer
 **Milestone:** V0 — Qwen proof, results-first performance ladder, Flash-Next architecture proof, research loop, model-family validation
 **Status:** RECOVERY SPRINT COMPLETE (success path). S03/S03-R complete under D-021; R01 baseline captured; R02 one profiler-selected optimization with retained fallback; R03 reproduced positive end-to-end decode gain in a second fresh session.
-**Current lane:** S04-P8R-Q — native SM120 block-scaled NVFP4 **full-model quality/integration gate**. The hardware/performance spike (P8-R) is complete: the native `mma.sync` mechanism is proven and the performance axis is viable, but the quality axis is unresolved until the native provider runs the real model under D-021. The historical S04 profiler-driven ladder (8 loops, 0.032 -> ~8.3 tok/s) is complete; its >= 5 tok/s checkpoint is met and is **no longer the active task**.
+**Current lane:** S04-P8R-Q **CLOSED as classification B**. The experimental SM120 native NVFP4 MMA provider was integrated behind a specialization-time selector (P7 retained as oracle/fallback) and run through the real model. It is materially faster (integrated chat-60 ~1.09-1.13x E2E; projection subsystem 55.3 proj-tok/s; PREDICTION-ONLY whole-model bound ~16 tok/s) and deterministic at the kernel level, **but activation quantisation breaks the unchanged, binding local gates**: layer-3 `max_abs=3.10462` (threshold 2e-2) and GDN `max_abs=6.044`. Model-level D-021 margin verdict passed (240 strict rows greedy-exact) while the stricter same-artifact contract flagged 11 greedy flips. **P7 remains production; kernel 27 is not promoted.** See `artifacts/S04/p8rq/S04-P8RQ-SUMMARY.md`.
 **Branch:** `sol/results-first-recovery` (draft PR #1)
 **Performance headline:** decode **0.032 -> ~8.3 tok/s** cumulative across 8 profiler-selected loops (~260x). GPU kernel time 11.54 -> 7.25 s / 60 tokens. Loops: NVFP4 row-parallel (33x), KV-attention caching (4,320x), NVFP4 vectorization (5.48x), GDN parallel (128x), RMSNorm parallel (21.9x), elementwise/cast block-parallel (39x), NVFP4 warp-per-row GEMV (1.66x local), NVFP4 decode decomposition + shape-adaptive dispatch (1.05x). Loop 7 warp-per-row and the shape-adaptive warp branch are tolerance-qualified and D-021-passing; loops 1-6 and the row-per-thread branch are bit-exact. **>=5 tok/s checkpoint MET; decode now GPU-bound.**
 
@@ -37,7 +37,7 @@ s03f_01_status: research_complete_capacity_quality_blocked
 | R02 first bottleneck | **Complete** | `R02-PLAN.md`; row-parallel NVFP4, 33x local, bit-identical |
 | R03 first speed proof | **Complete — PASS** | `R03-SUMMARY.md`; `benchmarks/runs/R03/`; 7.6–9.4x E2E reproduced |
 | Recovery sprint | **Complete** | stop condition met |
-| S04 performance ladder | **P8-R spike complete; P8-RQ native quality/integration gate is the active lane** | `S04-P1/`..`S04-P8/`; 8 optimize loops + native-MMA spike, 0.032->~8.3 tok/s, D-021 pass |
+| S04 performance ladder | **P8-R spike complete; P8-RQ closed classification B (native performant, activation-quant breaks local gates); P7 retained as production** | `S04-P1/`..`S04-P8/`; `artifacts/S04/p8rq/`; 8 optimize loops, 0.032->~8.3 tok/s, D-021 pass |
 | S03F Flash-Next | S03F-01 retained; S03F-02+ deferred (D-019 binding, D-020 ordering) | `FLASH-NEXT-DESIGN.md`; capacity/quality blocked |
 | S05 autoresearch | Minimum runner implemented (`tools/autoresearch_runner.py`, `S04-AUTORESEARCH-RUNNER.md`); use it for experiment mechanics; do not expand scope | design grounded in the 8 proven loops |
 | S06/S07/S08 | Planned | Pending |
@@ -64,9 +64,15 @@ Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md)
 
 ## Next Commands
 
-**Primary lane:** S04-P8R-Q. Integrate the experimental SM120 native NVFP4 MMA provider (existing row-major `.sinf` weight layout; P7 software path retained as oracle/fallback), then run in order: the projection-level real-activation differential, the layer-3 and GDN fixtures with the provider actually active, and the full unchanged D-021 corpus, to decide classification **A** (pass, promote) vs **B** (quality contract violated). The census is now derived, not hand-maintained (`tools/qwen38_nvfp4_census.py`, 401 `nvfp4_linear` launches/token).
+**Primary lane:** post-P8RQ. P7 is production. Two evidence-backed options, not yet selected:
+(a) the deferred startup/TTFT work (artifact/arena materialization dominates wall time and is now the
+largest remaining lever), and (b) a quantisation-research decision for a two-level activation scale
+(block-16 + global, or finer blocks) judged against the unchanged layer-3/GDN/D-021 gates. The
+experimental native provider stays in-tree behind `SUPERINFER_QWEN38_NATIVE_NVFP4` for that research.
 
-**Deferred:** startup/TTFT, `linear_f32`, and Flash-Next remain deferred until the P8-RQ quality gate resolves. The autoresearch minimum runner is **already implemented** (`tools/autoresearch_runner.py`); use it for experiment mechanics, do not expand its scope.
+**Deferred:** startup/TTFT, `linear_f32`, and Flash-Next selection pending the next lane choice. The
+autoresearch minimum runner is **already implemented** (`tools/autoresearch_runner.py`); use it for
+experiment mechanics, do not expand its scope.
 
 ## Known Blockers / Decision Boundaries
 

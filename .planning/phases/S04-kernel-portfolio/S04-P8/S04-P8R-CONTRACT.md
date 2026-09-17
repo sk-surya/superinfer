@@ -296,3 +296,22 @@ above. The roofline floor is 14.4 GB/token ÷ 1.79 TB/s = 8.0 ms/token, so the c
 
 Integration is the active lane (`P8-RQ`); the corrected whole-model figure is a prediction until the
 native provider runs the real model.
+
+---
+
+# P8-RQ RESULT — classification B (promotion stopped)
+
+The native provider was integrated (kernel 27) behind `SUPERINFER_QWEN38_NATIVE_NVFP4`, run through the
+real model, and judged against the unchanged gates. Full evidence: `artifacts/S04/p8rq/`.
+
+- **Performance: yes.** Integrated chat-60 32.5-33.4 s vs P7 35.6-36.9 s (~1.09-1.13x E2E); corrected
+  projection subsystem 55.3 proj-tok/s; PREDICTION-ONLY whole-model <= ~16 tok/s.
+- **Quality: no.** With the provider actually active (verified faithful wiring), layer-3 fails
+  `max_abs=3.10462` vs the 2e-2 threshold and GDN fails `max_abs=6.044`. Model-level D-021 margin
+  verdict passed (240 strict rows greedy-exact) but the same-artifact contract flagged 11 greedy flips.
+- **Determinism:** native kernels are deterministic; whole-model fresh-session determinism is still
+  unresolved for both paths (pre-existing).
+
+Classification **B**. P7 remains production; kernel 27 is not promoted; D-021 and local thresholds are
+unchanged. The provider stays in-tree, selector-gated, for a later quantisation-research decision (e.g.
+two-level activation scaling or finer blocks) judged against the same gates.

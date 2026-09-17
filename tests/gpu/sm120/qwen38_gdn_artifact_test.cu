@@ -3,6 +3,7 @@
 #include <superinfer/artifact/tensor_table.hpp>
 
 #include <algorithm>
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -260,20 +261,31 @@ superinfer::ir::physical::Plan make_plan(
   auto command = [&](std::uint64_t kernel, std::vector<BufferId> operands,
                      float epsilon = 1.0e-5F, float scalar = 1.0F,
                      AttentionDimensions attention = {}, bool add_one = false,
-                     ConvolutionDimensions convolution = {}) {
+                     ConvolutionDimensions convolution = {}, std::uint64_t workspace = 0) {
     const auto result = builder.add_command(base::KernelId{kernel}, std::move(operands), dependency,
-                                            0, 0, 0, epsilon, scalar, attention, add_one, {}, {},
+                                            0, 0, workspace, epsilon, scalar, attention, add_one, {}, {},
                                             {}, convolution);
     assert(result.has_value());
     dependency = {result.value()};
   };
+  // S04-P8RQ experiment selector, read once at plan-build time (never in the hot path).
+  const bool native_nvfp4 = std::getenv("SUPERINFER_QWEN38_NATIVE_NVFP4") != nullptr;
+  std::uint64_t native_workspace = 0;
+  auto linear = [&](std::vector<BufferId> operands, std::size_t inputs) {
+    const std::uint64_t workspace =
+        (static_cast<std::uint64_t>(inputs) / 2U + 15U) / 16U * 16U +
+        static_cast<std::uint64_t>(inputs) / 16U + 16U;
+    native_workspace = std::max(native_workspace, workspace);
+    command(native_nvfp4 ? 27U : 13U, std::move(operands), 1.0e-5F, 1.0F, {}, false, {},
+            native_nvfp4 ? workspace : 0U);
+  };
   command(12, {hidden, normalized, input_norm_weight}, 1.0e-6F, 1.0F, {}, true);
-  command(13, {normalized, qkv_weight, qkv_scale, qkv_tensor_scale, qkv_projection});
+  linear({normalized, qkv_weight, qkv_scale, qkv_tensor_scale, qkv_projection}, 5120);
   command(25, {qkv_projection, conv_weight, conv_state, convolved}, 1.0e-5F, 1.0F, {}, false,
           {10240, 4});
   command(21, {convolved, query, qk_remainder});
   command(21, {qk_remainder, key, value});
-  command(13, {normalized, z_weight, z_scale, z_tensor_scale, z_projection});
+  linear({normalized, z_weight, z_scale, z_tensor_scale, z_projection}, 5120);
   command(10, {normalized, a_weight, a});
   command(10, {normalized, b_weight, b});
   command(24, {a, b, a_log, dt_bias, log_decay, beta});
@@ -281,16 +293,16 @@ superinfer::ir::physical::Plan make_plan(
           {16, 16, 128, 1, 48, 128});
   command(12, {core, normalized_core, output_norm_weight}, 1.0e-6F);
   command(18, {z_projection, normalized_core, gated});
-  command(13, {gated, out_weight, out_scale, out_tensor_scale, attention_output});
+  linear({gated, out_weight, out_scale, out_tensor_scale, attention_output}, 6144);
   command(4, {hidden, attention_output, residual});
   command(12, {residual, post_norm, post_norm_weight}, 1.0e-6F, 1.0F, {}, true);
-  command(13, {post_norm, gate_weight, gate_scale, gate_tensor_scale, gate_projection});
-  command(13, {post_norm, up_weight, up_scale, up_tensor_scale, up_projection});
+  linear({post_norm, gate_weight, gate_scale, gate_tensor_scale, gate_projection}, 5120);
+  linear({post_norm, up_weight, up_scale, up_tensor_scale, up_projection}, 5120);
   command(18, {gate_projection, up_projection, gated_mlp});
-  command(13, {gated_mlp, down_weight, down_scale, down_tensor_scale, mlp_output});
+  linear({gated_mlp, down_weight, down_scale, down_tensor_scale, mlp_output}, 17408);
   command(4, {residual, mlp_output, output});
   assert(builder.add_entry_point("gdn_layer0", {hidden}, {output}).ok());
-  builder.set_resource_bounds({offset + 256U, 0, 32});
+  builder.set_resource_bounds({offset + 256U, native_workspace, 32});
   const auto plan = std::move(builder).finalize({120, "baseline-v1"});
   assert(plan.has_value());
   return std::move(plan).value();

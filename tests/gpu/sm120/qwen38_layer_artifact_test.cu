@@ -2,6 +2,7 @@
 #include <superinfer/artifact/sinf.hpp>
 #include <superinfer/artifact/tensor_table.hpp>
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -232,18 +233,31 @@ superinfer::ir::physical::Plan make_layer_plan(
                      float epsilon = 1.0e-5F, float scalar = 1.0F,
                      AttentionDimensions attention = {}, bool add_one = false,
                      RopeDimensions rope = {}, CacheAppendDimensions cache = {},
-                     SplitDimensions split = {}) {
+                     SplitDimensions split = {}, std::uint64_t workspace = 0) {
     const auto result = builder.add_command(base::KernelId{kernel}, std::move(operands), dependency,
-                                            0, 0, 0, epsilon, scalar, attention, add_one, {}, rope,
+                                            0, 0, workspace, epsilon, scalar, attention, add_one, {}, rope,
                                             cache, {}, split);
     assert(result.has_value());
     dependency = {result.value()};
   };
+  // S04-P8RQ experiment selector. When `SUPERINFER_QWEN38_NATIVE_NVFP4` is set (read once here, at
+  // plan-build time, never in the hot path) the NVFP4 projections use the experimental native SM120
+  // MMA kernel (27) with its activation-quantisation workspace; otherwise the P7 baseline (13).
+  const bool native_nvfp4 = std::getenv("SUPERINFER_QWEN38_NATIVE_NVFP4") != nullptr;
+  std::uint64_t native_workspace = 0;
+  auto linear = [&](std::vector<BufferId> operands, std::size_t inputs) {
+    const std::uint64_t workspace =
+        (static_cast<std::uint64_t>(inputs) / 2U + 15U) / 16U * 16U +
+        static_cast<std::uint64_t>(inputs) / 16U + 16U;
+    native_workspace = std::max(native_workspace, workspace);
+    command(native_nvfp4 ? 27U : 13U, std::move(operands), 1.0e-5F, 1.0F, {}, false, {}, {}, {},
+            native_nvfp4 ? workspace : 0U);
+  };
   command(12, {hidden, normalized, input_norm}, 1.0e-6F, 1.0F, {}, true);
-  command(13, {normalized, q_weight, q_scale, q_tensor_scale, q_projection});
+  linear({normalized, q_weight, q_scale, q_tensor_scale, q_projection}, 5120);
   command(26, {q_projection, q, gate}, 1.0e-5F, 1.0F, {}, false, {}, {}, {24, 256, 256});
-  command(13, {normalized, k_weight, k_scale, k_tensor_scale, k_projection});
-  command(13, {normalized, v_weight, v_scale, v_tensor_scale, v_projection});
+  linear({normalized, k_weight, k_scale, k_tensor_scale, k_projection}, 5120);
+  linear({normalized, v_weight, v_scale, v_tensor_scale, v_projection}, 5120);
   command(12, {q, q_norm, q_norm_weight}, 1.0e-6F, 1.0F, {}, true);
   command(12, {k_projection, k_norm, k_norm_weight}, 1.0e-6F, 1.0F, {}, true);
   command(20, {q_norm, q_rope}, 1.0e-5F, 10000000.0F, {}, false, {24, 256, 64, 0});
@@ -252,16 +266,16 @@ superinfer::ir::physical::Plan make_layer_plan(
           {4, 256, 0, decode_steps});
   command(23, {q_rope, key_cache, value_cache, attended}, 1.0e-5F, 1.0F, {24, 4, 256, 1});
   command(19, {gate, attended, gated});
-  command(13, {gated, o_weight, o_scale, o_tensor_scale, attention_output});
+  linear({gated, o_weight, o_scale, o_tensor_scale, attention_output}, 6144);
   command(4, {hidden, attention_output, residual});
   command(12, {residual, post_norm, post_norm_weight}, 1.0e-6F, 1.0F, {}, true);
-  command(13, {post_norm, gate_weight, gate_scale, gate_tensor_scale, gate_projection});
-  command(13, {post_norm, up_weight, up_scale, up_tensor_scale, up_projection});
+  linear({post_norm, gate_weight, gate_scale, gate_tensor_scale, gate_projection}, 5120);
+  linear({post_norm, up_weight, up_scale, up_tensor_scale, up_projection}, 5120);
   command(18, {gate_projection, up_projection, gated_mlp});
-  command(13, {gated_mlp, down_weight, down_scale, down_tensor_scale, mlp_output});
+  linear({gated_mlp, down_weight, down_scale, down_tensor_scale, mlp_output}, 17408);
   command(4, {residual, mlp_output, output});
   assert(builder.add_entry_point("layer3", {hidden}, {output}).ok());
-  builder.set_resource_bounds({offset + 256U, 0, 32});
+  builder.set_resource_bounds({offset + 256U, native_workspace, 32});
   const auto plan = std::move(builder).finalize({120, "baseline-v1"});
   assert(plan.has_value());
   return std::move(plan).value();

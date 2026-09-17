@@ -124,3 +124,138 @@ resolved the randomized P8-R2 differential fails (`rel≈1.08`) and **Arms A/B/C
 
 Next step for the next session: determine the byte/selector convention empirically with a probe that
 varies `{byte-id, thread-id}` and the byte index independently, then re-run the differential.
+
+---
+
+# P8-R0 / R1 / R2 RESOLVED
+
+## P8-R0 — false-negative root cause (reproduced, `artifacts/S04/p8r/p8r2_rootcause.txt`)
+
+Running the exact old probe through the same `ptxas` reproduces the error:
+
+```
+ptxas p8r0_false_negative_old_probe.ptx, line 4; error : Illegal modifier '.block_scale' for instruction 'mma'
+ptxas ... error : Illegal modifier '.kind::mxf4nvf4' for instruction 'mma'
+ptxas ... error : Incorrect instruction type specified for mma with shape '.m16n8k64'
+ptxas ... error : Illegal modifier '.scale_vec::4X' for instruction 'mma'
+ptxas fatal : Ptx assembly aborted due to errors            (exit 255)
+```
+
+Character-for-character, the old probe's type string was:
+
+```
+...m16n8k64.row.col.kind::mxf4nvf4.block_scale.scale_vec::4X.f32.e2m1.e2m1.f32
+```
+
+The documented form appends the **scale operand type** (`.stype`):
+
+```
+...m16n8k64.row.col.kind::mxf4nvf4.block_scale.scale_vec::4X.f32.e2m1.e2m1.f32.ue4m3
+```
+
+Findings, in order of causality:
+
+1. **PRIMARY — wrong/missing scale type.** The `.stype` qualifier (`.ue4m3`) was absent. Without it the
+   trailing type sequence `.f32.e2m1.e2m1.f32` matches no legal block-scaled `mma` combination, so `ptxas`
+   cannot resolve the variant and emits the misleading cascade of "illegal modifier" errors for
+   `.block_scale`, `.kind::mxf4nvf4`, and `.scale_vec::4X`. `.kind` and `.scale_vec::4X` were in fact correct.
+2. **SECONDARY — wrong operand list.** The old probe declared A as 8 `.b32` registers and B as 4, and omitted
+   the `scale-a-data, {byte-id-a,thread-id-a}, scale-b-data, {byte-id-b,thread-id-b}` operands entirely. The
+   correct fragment sizes are A = 4 `.b32`, B = 2 `.b32`, C/D = 4 `.f32`.
+3. **NOT a cause — PTX version.** `.version 8.8` also assembles (`p8r1_v88.ptx`, exit 0). The toolchain is
+   CUDA 13.1 / ptxas V13.1.115, PTX ISA 9.4 documented.
+
+## P8-R1 — minimal ptxas + GPU proof (existing evidence, unchanged)
+
+`p8r1_mma.ptx` (`.version 9.1`, `.target sm_120a`) assembles exit 0; cubin sha256
+`65e3ddf7...f29d1`; executed on the RTX 5090 giving lane-0 `D={144,144,144,144}` for A=B=1.5 over k=64.
+
+## P8-R2 — synthetic differential now passes exactly
+
+`artifacts/S04/p8r/p8r2_diff.cu` (v3) compares one `m16n8k64` block-scaled MMA against an independent FP32
+reference `sum_k (e2m1_A * scale_A[m,k/16]) * (e2m1_B * scale_B[k/16,n])`, over random E2M1 data:
+
+```
+P8R2 v3 (uniform scales): max_abs=0 max_mag=148      rel=0  PASS
+P8R2 v3 (random  scales): max_abs=0 max_mag=252.967  rel=0  PASS
+```
+
+### Pinned hardware contract (all verified on-device)
+
+- **A** `(T32,V32)->(M16,K64)`: reg `r=(v/8)`, row `g+8*(r&1)`, `k = 8*q + (v%8) + 32*(r/2)`.
+- **B** `(T32,V16)->(K64,N8)`: reg `r=(v/8)`, `k = 8*q + (v%8) + 32*r`, col `n = g`. Elements span **K**
+  (stride 8 in a `[k*8+n]` array) — packing consecutive N values is wrong.
+- **SFA** `(T32,V64)->(M16,K64)`: lane `4g` supplies row `g`; lane `4g+1` supplies row `g+8`; the four bytes
+  of the lane's `.b32` are K-blocks 0..3.
+- **SFB** `(T32,V64)->(N8,K64)`: lane `4n` supplies column `n`; four bytes are K-blocks 0..3.
+- **C/D** `SM80_16x8_Row`: `c0=(g,2q)`, `c1=(g,2q+1)`, `c2=(g+8,2q)`, `c3=(g+8,2q+1)`.
+- Selectors `{byte-id,thread-id}` must be `{0,0}` for `.scale_vec::4X` (PTX 9.7.16.3, Table 46).
+- **E2M1** codes are the standard NVFP4 magnitudes `{0,0.5,1,1.5,2,3,4,6}` with the sign bit at 0x8.
+- **UE4M3** is IEEE E4M3, **bias 7** (`0x38 = 1.0`) — the earlier "bias 6" note was wrong; it came from a
+  buggy calibration probe. `p8r2_sfprobe2`, `p8r2_map`, `p8r2_kmap` confirm the supplier lanes and the K map.
+
+The fragment/B-packing discovery (`p8r2_kmap.cu`) is the reason the earlier differential failed; the SFA
+"supplier mystery" was a red herring caused by a probe that stimulated every lane.
+
+---
+
+# P8-R3 / R4 / R5 — Arm A (N=1), Arm B (N=8), Arm C (minimal warp MMA)
+
+Evidence: `tests/gpu/sm120/nvfp4_mma_bench.cu`, `artifacts/S04/p8r/p8r3_arm_abc_result.txt`.
+Every number below is a full warp-level path on the real projection shapes and multiplicities
+(`1,128,48,48,64,32` for `lm_head, mlp, gdn, attn, down, small`), not MMA-only timing.
+
+## Correctness first
+
+Arm A output equals an independent FP32 reconstruction over the *same quantised operands* exactly
+(`max_abs = 0`, `rel = 0.0`) on all six shapes. (Fixing the earlier bench required feeding the running
+accumulator back into the `c` operand — with `c = 0` the K-loop overwrote instead of accumulated.)
+
+## Measured cost (ms per shape; weighted = ms per decoded token over multiplicities)
+
+| shape | wt MB | quant | stream | ArmA N=1 | ArmB /8 | A2 N=1 | A2 N=8 /8 |
+|---|---|---|---|---|---|---|---|
+| lm_head_248320x5120 | 635.7 | 0.007 | 0.004 | 1.229 | 0.155 | 0.576 | 0.073 |
+| mlp_17408x5120 | 44.6 | 0.007 | 0.002 | 0.027 | 0.004 | 0.022 | 0.003 |
+| gdn_10240x5120 | 26.2 | 0.007 | 0.002 | 0.023 | 0.003 | 0.021 | 0.003 |
+| attn_6144x5120 | 15.7 | 0.007 | 0.002 | 0.023 | 0.003 | 0.020 | 0.003 |
+| down_5120x17408 | 44.6 | 0.009 | 0.002 | 0.073 | 0.010 | 0.066 | 0.009 |
+| small_1024x5120 | 2.6 | 0.007 | 0.001 | 0.023 | 0.003 | 0.020 | 0.003 |
+| **weighted / token** | | **2.36** | | **12.27** | **1.69** | **10.24** | **1.37** |
+
+- **Arm A (N=1, no weight repack): 12.27 ms/token ≈ 81 tok/s** — ~10x the promoted software path.
+- **Arm A2 (N=1, one-time repack to an MMA-native weight layout): 10.24 ms/token ≈ 98 tok/s**;
+  `lm_head` reaches ~1.10 TB/s, i.e. memory-bound.
+- **Arm B (N=8 genuine activations, same single MMA per K-step): 1.69 ms/token ≈ 591 tok/s**
+  (1.37 ms ≈ 728 tok/s repacked). Because the instruction is natively M16N8K64, N=1 and N=8 issue the
+  identical instruction; batching/speculative decoding therefore gets ~8x almost for free.
+- Arm C is the bare loop: the only cost Arm A adds over Arm C is the activation quantisation
+  (`quant`, 0.007 ms per 5120-wide projection — launch-bound at 321 calls/token = 2.36 ms; fusable).
+- The small-M shapes (`down` 320 warps, `small` 64 warps) are parallelism-limited, not bandwidth-limited;
+  splitting K across warps is the obvious follow-up.
+
+## Activation quantisation (the decisive quality risk)
+
+`amax/6` block-16 E2M1 + UE4M3, applied to the activation, changes each projection output by
+**rel-L2 ≈ 0.10** on synthetic uniform activations (10.06%, 10.08%, 9.94%, 10.24%, 10.15%, 9.98%).
+The prior real-hidden-vector experiment (`artifacts/S04/p8-activation-quantization.json`) measured
+2.44-9.30% rel-L2 for the activation itself. This is the new numerical mechanism and the one thing that
+can turn a performance win into classification B. It is **not** a stop condition; it must be measured
+against D-021, and D-021 must not be loosened.
+
+## Classification
+
+- Performance axis: **A** — N=1 native NVFP4 is performant (~81-98 tok/s single-stream, ~10-12x the
+  current 8.3 tok/s), and N=8 lifts it to ~591-728 tok/s, so the path is *not* merely a batching
+  (C) or non-competitive (D) result.
+- Quality axis: **B risk open**. The activation-quantisation contract has not yet been validated against
+  D-021 on the real model. Classification A is provisional on that gate.
+- The earlier classification D is withdrawn (invalidated by the corrected hardware contract).
+
+## Next action (requires a separate provider/layout architecture decision — do NOT auto-promote)
+
+1. Add the native MMA path behind an experimental selector in `cuda_plan_executor.cuh`, retaining the P7
+   software path as the fallback oracle.
+2. Run the projection-level native-vs-P7 differential, the layer-3 differential, the GDN differential,
+   then the full D-021 corpus, long-103, same-binary repeatability, and a second fresh session.
+3. Decide A vs B from that evidence, then the provider/layout architecture decision.

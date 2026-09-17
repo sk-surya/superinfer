@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <string_view>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -244,20 +245,38 @@ superinfer::ir::physical::Plan make_layer_plan(
   // plan-build time, never in the hot path) the NVFP4 projections use the experimental native SM120
   // MMA kernel (27) with its activation-quantisation workspace; otherwise the P7 baseline (13).
   const bool native_nvfp4 = std::getenv("SUPERINFER_QWEN38_NATIVE_NVFP4") != nullptr;
+  const bool native_two_level =
+      std::getenv("SUPERINFER_QWEN38_NATIVE_NVFP4_TWO_LEVEL") != nullptr;
+  // P9-3 bounded hybrid selector: comma-delimited exact role names that use native W4A4.
+  const char* native_roles = std::getenv("SUPERINFER_QWEN38_NATIVE_NVFP4_ROLES");
+  auto role_enabled = [&](std::string_view role) {
+    if (!native_nvfp4) return false;
+    if (native_roles == nullptr) return true;
+    std::string_view list{native_roles};
+    while (!list.empty()) {
+      const std::size_t comma = list.find(',');
+      const std::string_view token = list.substr(0, comma);
+      if (token == role) return true;
+      if (comma == std::string_view::npos) break;
+      list.remove_prefix(comma + 1);
+    }
+    return false;
+  };
   std::uint64_t native_workspace = 0;
-  auto linear = [&](std::vector<BufferId> operands, std::size_t inputs) {
+  auto linear = [&](std::string_view role, std::vector<BufferId> operands, std::size_t inputs) {
     const std::uint64_t workspace =
         (static_cast<std::uint64_t>(inputs) / 2U + 15U) / 16U * 16U +
-        static_cast<std::uint64_t>(inputs) / 16U + 16U;
-    native_workspace = std::max(native_workspace, workspace);
-    command(native_nvfp4 ? 27U : 13U, std::move(operands), 1.0e-5F, 1.0F, {}, false, {}, {}, {},
-            native_nvfp4 ? workspace : 0U);
+        (static_cast<std::uint64_t>(inputs) / 16U + 15U) / 16U * 16U + 16U;
+    const bool use_native = role_enabled(role);
+    if (use_native) native_workspace = std::max(native_workspace, workspace);
+    command(use_native ? (native_two_level ? 28U : 27U) : 13U, std::move(operands), 1.0e-5F, 1.0F,
+            {}, false, {}, {}, {}, use_native ? workspace : 0U);
   };
   command(12, {hidden, normalized, input_norm}, 1.0e-6F, 1.0F, {}, true);
-  linear({normalized, q_weight, q_scale, q_tensor_scale, q_projection}, 5120);
+  linear("q", {normalized, q_weight, q_scale, q_tensor_scale, q_projection}, 5120);
   command(26, {q_projection, q, gate}, 1.0e-5F, 1.0F, {}, false, {}, {}, {24, 256, 256});
-  linear({normalized, k_weight, k_scale, k_tensor_scale, k_projection}, 5120);
-  linear({normalized, v_weight, v_scale, v_tensor_scale, v_projection}, 5120);
+  linear("k", {normalized, k_weight, k_scale, k_tensor_scale, k_projection}, 5120);
+  linear("v", {normalized, v_weight, v_scale, v_tensor_scale, v_projection}, 5120);
   command(12, {q, q_norm, q_norm_weight}, 1.0e-6F, 1.0F, {}, true);
   command(12, {k_projection, k_norm, k_norm_weight}, 1.0e-6F, 1.0F, {}, true);
   command(20, {q_norm, q_rope}, 1.0e-5F, 10000000.0F, {}, false, {24, 256, 64, 0});
@@ -266,13 +285,13 @@ superinfer::ir::physical::Plan make_layer_plan(
           {4, 256, 0, decode_steps});
   command(23, {q_rope, key_cache, value_cache, attended}, 1.0e-5F, 1.0F, {24, 4, 256, 1});
   command(19, {gate, attended, gated});
-  linear({gated, o_weight, o_scale, o_tensor_scale, attention_output}, 6144);
+  linear("o", {gated, o_weight, o_scale, o_tensor_scale, attention_output}, 6144);
   command(4, {hidden, attention_output, residual});
   command(12, {residual, post_norm, post_norm_weight}, 1.0e-6F, 1.0F, {}, true);
-  linear({post_norm, gate_weight, gate_scale, gate_tensor_scale, gate_projection}, 5120);
-  linear({post_norm, up_weight, up_scale, up_tensor_scale, up_projection}, 5120);
+  linear("gate", {post_norm, gate_weight, gate_scale, gate_tensor_scale, gate_projection}, 5120);
+  linear("up", {post_norm, up_weight, up_scale, up_tensor_scale, up_projection}, 5120);
   command(18, {gate_projection, up_projection, gated_mlp});
-  linear({gated_mlp, down_weight, down_scale, down_tensor_scale, mlp_output}, 17408);
+  linear("down", {gated_mlp, down_weight, down_scale, down_tensor_scale, mlp_output}, 17408);
   command(4, {residual, mlp_output, output});
   assert(builder.add_entry_point("layer3", {hidden}, {output}).ok());
   builder.set_resource_bounds({offset + 256U, native_workspace, 32});

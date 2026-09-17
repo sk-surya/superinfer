@@ -228,10 +228,12 @@ int main() {
     return 1;
   }
   superinfer::sm120::BaselineProvider baseline_provider;
-  superinfer::sm120::NativeNvfp4Provider native_provider{baseline_provider};
   // Experiment-level A/B selector: read once here at specialization time, never in the token hot
   // path. Unset -> the retained P7 baseline provider compiles the plan exactly as before.
   const bool native_nvfp4 = std::getenv("SUPERINFER_QWEN38_NATIVE_NVFP4") != nullptr;
+  const bool native_two_level =
+      std::getenv("SUPERINFER_QWEN38_NATIVE_NVFP4_TWO_LEVEL") != nullptr;
+  superinfer::sm120::NativeNvfp4Provider native_provider{baseline_provider, native_two_level};
   const superinfer::kernels::KernelProvider& provider =
       native_nvfp4 ? static_cast<const superinfer::kernels::KernelProvider&>(native_provider)
                    : static_cast<const superinfer::kernels::KernelProvider&>(baseline_provider);

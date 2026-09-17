@@ -270,14 +270,16 @@ superinfer::ir::physical::Plan make_plan(
   };
   // S04-P8RQ experiment selector, read once at plan-build time (never in the hot path).
   const bool native_nvfp4 = std::getenv("SUPERINFER_QWEN38_NATIVE_NVFP4") != nullptr;
+  const bool native_two_level =
+      std::getenv("SUPERINFER_QWEN38_NATIVE_NVFP4_TWO_LEVEL") != nullptr;
   std::uint64_t native_workspace = 0;
   auto linear = [&](std::vector<BufferId> operands, std::size_t inputs) {
     const std::uint64_t workspace =
         (static_cast<std::uint64_t>(inputs) / 2U + 15U) / 16U * 16U +
-        static_cast<std::uint64_t>(inputs) / 16U + 16U;
+        (static_cast<std::uint64_t>(inputs) / 16U + 15U) / 16U * 16U + 16U;
     native_workspace = std::max(native_workspace, workspace);
-    command(native_nvfp4 ? 27U : 13U, std::move(operands), 1.0e-5F, 1.0F, {}, false, {},
-            native_nvfp4 ? workspace : 0U);
+    command(native_nvfp4 ? (native_two_level ? 28U : 27U) : 13U, std::move(operands), 1.0e-5F, 1.0F,
+            {}, false, {}, native_nvfp4 ? workspace : 0U);
   };
   command(12, {hidden, normalized, input_norm_weight}, 1.0e-6F, 1.0F, {}, true);
   linear({normalized, qkv_weight, qkv_scale, qkv_tensor_scale, qkv_projection}, 5120);

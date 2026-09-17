@@ -29,26 +29,32 @@ namespace superinfer::sm120 {
  */
 class NativeNvfp4Provider final : public kernels::KernelProvider {
  public:
-  explicit NativeNvfp4Provider(const kernels::KernelProvider& fallback) noexcept
-      : fallback_(fallback) {}
+  explicit NativeNvfp4Provider(const kernels::KernelProvider& fallback,
+                               bool canonical_two_level = false) noexcept
+      : fallback_(fallback), canonical_two_level_(canonical_two_level) {}
 
   base::Result<std::vector<kernels::KernelCandidate>> enumerate(
       const kernels::KernelQuery& query) const override {
     if (query.operation == "nvfp4_linear" && query.target_capability == 120 &&
         query.activation_elements != 0 && query.output_elements != 0 &&
         query.activation_elements % 64U == 0 && query.output_elements % 16U == 0) {
-      // Workspace holds the packed activation (K/2, 16-byte aligned) plus the UE4M3 block scales
-      // (K/16), with headroom. Allocated once by the session; never allocated in the hot path.
-      const std::uint64_t scratch =
-          (query.activation_elements / 2U + 15U) / 16U * 16U + query.activation_elements / 16U + 16U;
-      return std::vector<kernels::KernelCandidate>{
-          {base::KernelId{27}, "sm120.native-mma-nvfp4", true, scratch}};
+      // Workspace holds the packed activation (K/2, 16-byte aligned), the UE4M3 block scales
+      // (K/16), and for the canonical two-level form an FP32 activation global scale.
+      const std::uint64_t scratch = (query.activation_elements / 2U + 15U) / 16U * 16U +
+                                    (query.activation_elements / 16U + 15U) / 16U * 16U + 16U;
+      return std::vector<kernels::KernelCandidate>{{base::KernelId{canonical_two_level_ ? 28U
+                                                                                       : 27U},
+                                                    canonical_two_level_
+                                                        ? "sm120.native-mma-nvfp4-two-level"
+                                                        : "sm120.native-mma-nvfp4",
+                                                    true, scratch}};
     }
     return fallback_.enumerate(query);
   }
 
  private:
   const kernels::KernelProvider& fallback_;
+  bool canonical_two_level_{false};
 };
 
 }  // namespace superinfer::sm120

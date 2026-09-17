@@ -52,13 +52,13 @@ Reference: `.planning/phases/R03-first-speed-proof/R03-SUMMARY.md`, `.planning/p
 
 | Field | Current value |
 |---|---|
-| Current historical gates | Gate A and Gate B reached; neither user-passed |
+| Current historical gates | Gate A, Gate B, and L2 Gate C.1 (dense NVFP4 tensor cores) reached; none user-passed |
 | User status | Packets retained for later study under D-014 |
 | Highest passed L2 gate | None |
 | Debt policy | D-014 autonomous override active; no gate is marked passed on user's behalf |
-| Next understanding event | L2 Gate C (S04 mechanisms) when a mechanism transition is reached |
+| Next understanding event | L2 Gate C.2 (attention/KV/QSA) or C.3 (fusion/persistent/MoE) at the next mechanism transition |
 | Blocked boundary | S03F-02+ until a lane decision + D-019 evidence |
-| Next optional user action | Study any retained understanding packet when convenient |
+| Next optional user action | Study `.planning/understanding-packets/GATE-C1.md` and answer its five questions |
 
 Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md). Durable user ledger: [`.planning/UNDERSTANDING.md`](UNDERSTANDING.md).
 

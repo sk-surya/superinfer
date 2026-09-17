@@ -21,8 +21,360 @@ superinfer::ir::physical::PhysicalTensorDescriptor typed_tensor(
           encoding};
 }
 
+void test_grouped_attention_cached_identity() {
+  // S04-P1 differential: the cached-score attention must be bit-identical to
+  // the incumbent recompute kernel for every shape and KV-window length.
+  using namespace superinfer;
+  struct Shape {
+    std::size_t query_heads;
+    std::size_t kv_heads;
+    std::size_t head_dim;
+    std::size_t positions;
+  };
+  const std::array<Shape, 5> shapes{{{24, 4, 256, 7}, {24, 4, 256, 64}, {8, 2, 128, 33},
+                                     {4, 1, 64, 1}, {24, 4, 256, 257}}};
+  for (const auto& shape : shapes) {
+    const std::size_t query_elements = shape.query_heads * shape.head_dim;
+    const std::size_t cache_elements = shape.positions * shape.kv_heads * shape.head_dim;
+    std::vector<float> host_query(query_elements);
+    std::vector<std::uint16_t> host_keys(cache_elements), host_values(cache_elements);
+    std::uint64_t state = 0x9E3779B97F4A7C15ULL;
+    auto next = [&]() -> std::uint32_t {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return static_cast<std::uint32_t>(state >> 33U);
+    };
+    for (auto& value : host_query) value = (static_cast<float>(next() % 2000U) - 1000.0F) / 500.0F;
+    auto to_bf16 = [](float value) -> std::uint16_t {
+      std::uint32_t bits = 0;
+      std::memcpy(&bits, &value, sizeof(bits));
+      return static_cast<std::uint16_t>(bits >> 16U);
+    };
+    for (std::size_t index = 0; index < cache_elements; ++index) {
+      host_keys[index] = to_bf16((static_cast<float>(next() % 2000U) - 1000.0F) / 500.0F);
+      host_values[index] = to_bf16((static_cast<float>(next() % 2000U) - 1000.0F) / 500.0F);
+    }
+    float *device_query = nullptr, *device_out_base = nullptr, *device_out_cached = nullptr;
+    std::uint16_t *device_keys = nullptr, *device_values = nullptr;
+    assert(cudaMalloc(&device_query, query_elements * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&device_keys, cache_elements * sizeof(std::uint16_t)) == cudaSuccess);
+    assert(cudaMalloc(&device_values, cache_elements * sizeof(std::uint16_t)) == cudaSuccess);
+    assert(cudaMalloc(&device_out_base, query_elements * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&device_out_cached, query_elements * sizeof(float)) == cudaSuccess);
+    assert(cudaMemcpy(device_query, host_query.data(), query_elements * sizeof(float),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(device_keys, host_keys.data(),
+                      cache_elements * sizeof(std::uint16_t), cudaMemcpyHostToDevice) ==
+           cudaSuccess);
+    assert(cudaMemcpy(device_values, host_values.data(),
+                      cache_elements * sizeof(std::uint16_t), cudaMemcpyHostToDevice) ==
+           cudaSuccess);
+    sm120::cuda_runtime::detail::grouped_attention_bf16_cache<<<1, 256>>>(
+        device_query, device_keys, device_values, device_out_base, shape.query_heads,
+        shape.kv_heads, shape.head_dim, shape.positions);
+    assert(cudaGetLastError() == cudaSuccess);
+    const std::size_t cached_bytes = 2U * shape.positions * sizeof(float);
+    assert(cudaFuncSetAttribute(sm120::cuda_runtime::detail::grouped_attention_bf16_cache_cached,
+                                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                static_cast<int>(cached_bytes)) == cudaSuccess);
+    sm120::cuda_runtime::detail::grouped_attention_bf16_cache_cached<<<
+        static_cast<std::uint32_t>(shape.query_heads), 256, cached_bytes>>>(
+        device_query, device_keys, device_values, device_out_cached, shape.query_heads,
+        shape.kv_heads, shape.head_dim, shape.positions);
+    assert(cudaGetLastError() == cudaSuccess);
+    assert(cudaDeviceSynchronize() == cudaSuccess);
+    std::vector<float> out_base(query_elements), out_cached(query_elements);
+    assert(cudaMemcpy(out_base.data(), device_out_base, query_elements * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(out_cached.data(), device_out_cached, query_elements * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(out_base == out_cached);
+    cudaFree(device_query);
+    cudaFree(device_keys);
+    cudaFree(device_values);
+    cudaFree(device_out_base);
+    cudaFree(device_out_cached);
+  }
+}
+
+void test_gated_delta_attention_parallel_identity() {
+  // S04-P3 differential: value-dimension-parallel GDN must be bit-identical to
+  // the sequential incumbent over identical state for every shape.
+  using namespace superinfer;
+  struct Shape {
+    std::size_t key_heads;
+    std::size_t value_heads;
+    std::size_t key_dim;
+    std::size_t value_dim;
+    std::size_t positions;
+  };
+  const std::array<Shape, 3> shapes{{{4, 48, 128, 128, 1},
+                                     {4, 48, 128, 128, 3},
+                                     {2, 8, 64, 96, 2}}};
+  for (const auto& shape : shapes) {
+    const std::size_t qk_elements = shape.positions * shape.key_heads * shape.key_dim;
+    const std::size_t v_elements = shape.positions * shape.value_heads * shape.value_dim;
+    const std::size_t state_elements = shape.value_heads * shape.key_dim * shape.value_dim;
+    std::vector<float> host_query(qk_elements), host_keys(qk_elements), host_values(v_elements),
+        host_decay(shape.positions * shape.value_heads), host_beta(shape.positions * shape.value_heads),
+        host_state(state_elements);
+    std::uint64_t state = 0x243F6A8885A308D3ULL;
+    auto next_float = [&]() -> float {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return (static_cast<float>((state >> 33U) % 2000U) - 1000.0F) / 500.0F;
+    };
+    for (auto& value : host_query) value = next_float();
+    for (auto& value : host_keys) value = next_float();
+    for (auto& value : host_values) value = next_float();
+    for (auto& value : host_decay) value = -0.05F - std::abs(next_float()) * 0.1F;
+    for (auto& value : host_beta) value = (next_float() + 2.0F) / 4.0F;
+    for (auto& value : host_state) value = next_float();
+    float *d_query = nullptr, *d_keys = nullptr, *d_values = nullptr, *d_decay = nullptr,
+          *d_beta = nullptr, *d_state_a = nullptr, *d_state_b = nullptr, *d_out_a = nullptr,
+          *d_out_b = nullptr;
+    auto alloc_copy = [](float** device, const std::vector<float>& host) {
+      assert(cudaMalloc(device, host.size() * sizeof(float)) == cudaSuccess);
+      assert(cudaMemcpy(*device, host.data(), host.size() * sizeof(float),
+                        cudaMemcpyHostToDevice) == cudaSuccess);
+    };
+    alloc_copy(&d_query, host_query);
+    alloc_copy(&d_keys, host_keys);
+    alloc_copy(&d_values, host_values);
+    alloc_copy(&d_decay, host_decay);
+    alloc_copy(&d_beta, host_beta);
+    alloc_copy(&d_state_a, host_state);
+    alloc_copy(&d_state_b, host_state);
+    assert(cudaMalloc(&d_out_a, v_elements * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&d_out_b, v_elements * sizeof(float)) == cudaSuccess);
+    sm120::cuda_runtime::detail::gated_delta_attention_f32<<<1, 256>>>(
+        d_query, d_keys, d_values, d_decay, d_beta, d_state_a, d_out_a, shape.key_heads,
+        shape.value_heads, shape.key_dim, shape.value_dim, shape.positions);
+    assert(cudaGetLastError() == cudaSuccess);
+    std::size_t block = shape.value_dim < 128 ? shape.value_dim : (shape.value_dim < 256 ? 128 : 256);
+    sm120::cuda_runtime::detail::gated_delta_attention_parallel_f32<<<
+        static_cast<std::uint32_t>(shape.value_heads), static_cast<std::uint32_t>(block)>>>(
+        d_query, d_keys, d_values, d_decay, d_beta, d_state_b, d_out_b, shape.key_heads,
+        shape.value_heads, shape.key_dim, shape.value_dim, shape.positions);
+    assert(cudaGetLastError() == cudaSuccess);
+    assert(cudaDeviceSynchronize() == cudaSuccess);
+    std::vector<float> state_a(state_elements), state_b(state_elements), out_a(v_elements),
+        out_b(v_elements);
+    assert(cudaMemcpy(state_a.data(), d_state_a, state_elements * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(state_b.data(), d_state_b, state_elements * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(out_a.data(), d_out_a, v_elements * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(out_b.data(), d_out_b, v_elements * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(state_a == state_b);
+    assert(out_a == out_b);
+    cudaFree(d_query);
+    cudaFree(d_keys);
+    cudaFree(d_values);
+    cudaFree(d_decay);
+    cudaFree(d_beta);
+    cudaFree(d_state_a);
+    cudaFree(d_state_b);
+    cudaFree(d_out_a);
+    cudaFree(d_out_b);
+  }
+}
+
+void test_rms_norm_parallel_identity() {
+  // S04-P4 differential: parallel RMSNorm must reproduce the sequential
+  // denominator exactly (thread 0 accumulates in the original order).
+  using namespace superinfer;
+  const std::array<std::pair<std::size_t, std::size_t>, 3> shapes{{{1, 5120}, {4, 5120}, {64, 128}}};
+  for (const auto [rows, width] : shapes) {
+    const std::size_t elements = rows * width;
+    std::vector<float> host_input(elements);
+    std::vector<std::uint16_t> host_scale(width);
+    std::uint64_t state = 0xDEADBEEFCAFEF00DULL;
+    auto next = [&]() -> std::uint32_t {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return static_cast<std::uint32_t>(state >> 33U);
+    };
+    for (auto& value : host_input) value = (static_cast<float>(next() % 2000U) - 1000.0F) / 500.0F;
+    auto to_bf16 = [](float value) -> std::uint16_t {
+      std::uint32_t bits = 0;
+      std::memcpy(&bits, &value, sizeof(bits));
+      return static_cast<std::uint16_t>(bits >> 16U);
+    };
+    for (auto& value : host_scale) value = to_bf16((static_cast<float>(next() % 2000U) + 1000.0F) / 1000.0F);
+    const float epsilon = 1.0e-6F;
+    for (const bool add_one : {false, true}) {
+      float *d_input = nullptr, *d_out_seq = nullptr, *d_out_par = nullptr;
+      std::uint16_t* d_scale = nullptr;
+      assert(cudaMalloc(&d_input, elements * sizeof(float)) == cudaSuccess);
+      assert(cudaMalloc(&d_scale, width * sizeof(std::uint16_t)) == cudaSuccess);
+      assert(cudaMalloc(&d_out_seq, elements * sizeof(float)) == cudaSuccess);
+      assert(cudaMalloc(&d_out_par, elements * sizeof(float)) == cudaSuccess);
+      assert(cudaMemcpy(d_input, host_input.data(), elements * sizeof(float),
+                        cudaMemcpyHostToDevice) == cudaSuccess);
+      assert(cudaMemcpy(d_scale, host_scale.data(), width * sizeof(std::uint16_t),
+                        cudaMemcpyHostToDevice) == cudaSuccess);
+      sm120::cuda_runtime::detail::rms_norm_f32_bf16_scale<<<1, 1>>>(
+          d_input, d_scale, d_out_seq, elements, width, epsilon, add_one);
+      assert(cudaGetLastError() == cudaSuccess);
+      sm120::cuda_runtime::detail::rms_norm_f32_bf16_scale_parallel<<<
+          static_cast<std::uint32_t>(rows), 256>>>(
+          d_input, d_scale, d_out_par, elements, width, epsilon, add_one);
+      assert(cudaGetLastError() == cudaSuccess);
+      assert(cudaDeviceSynchronize() == cudaSuccess);
+      std::vector<float> out_seq(elements), out_par(elements);
+      assert(cudaMemcpy(out_seq.data(), d_out_seq, elements * sizeof(float),
+                        cudaMemcpyDeviceToHost) == cudaSuccess);
+      assert(cudaMemcpy(out_par.data(), d_out_par, elements * sizeof(float),
+                        cudaMemcpyDeviceToHost) == cudaSuccess);
+      assert(out_seq == out_par);
+      cudaFree(d_input);
+      cudaFree(d_scale);
+      cudaFree(d_out_seq);
+      cudaFree(d_out_par);
+    }
+  }
+}
+
+void test_nvfp4_warp_tolerance() {
+  // S04-P6 candidate B differential: warp-per-row changes FP32 reduction order,
+  // so compare against the incumbent with a tight relative tolerance and also
+  // confirm the difference is a small fraction of the output magnitude.
+  using namespace superinfer;
+  const std::array<std::pair<std::size_t, std::size_t>, 3> shapes{
+      {{48, 512}, {1031, 1024}, {4096, 2048}}};
+  for (const auto [outputs, inputs] : shapes) {
+    std::vector<float> host_input(inputs);
+    std::vector<std::uint8_t> host_packed((outputs * inputs + 1) / 2);
+    std::vector<std::uint8_t> host_scales(outputs * (inputs / 16));
+    std::uint64_t state = 0x12345678ULL;
+    auto next = [&]() -> std::uint32_t {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return static_cast<std::uint32_t>(state >> 33U);
+    };
+    for (auto& value : host_input) value = (static_cast<float>(next() % 2000U) - 1000.0F) / 500.0F;
+    for (auto& value : host_packed) value = static_cast<std::uint8_t>(next());
+    for (auto& value : host_scales) value = static_cast<std::uint8_t>(0x20U | (next() & 0x0FU));
+    const float host_scale_2 = 0.5F;
+    float *d_input = nullptr, *d_out_ref = nullptr, *d_out_warp = nullptr, *d_scale_2 = nullptr;
+    std::uint8_t *d_packed = nullptr, *d_scales = nullptr;
+    assert(cudaMalloc(&d_input, inputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&d_packed, host_packed.size()) == cudaSuccess);
+    assert(cudaMalloc(&d_scales, host_scales.size()) == cudaSuccess);
+    assert(cudaMalloc(&d_scale_2, sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&d_out_ref, outputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&d_out_warp, outputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMemcpy(d_input, host_input.data(), inputs * sizeof(float),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(d_packed, host_packed.data(), host_packed.size(),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(d_scales, host_scales.data(), host_scales.size(),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(d_scale_2, &host_scale_2, sizeof(float), cudaMemcpyHostToDevice) ==
+           cudaSuccess);
+    std::uint32_t blocks = static_cast<std::uint32_t>((outputs + 255U) / 256U);
+    sm120::cuda_runtime::detail::nvfp4_linear_rows_vec_f32<<<blocks, 256>>>(
+        d_input, d_packed, d_scales, d_scale_2, d_out_ref, inputs, outputs);
+    std::uint32_t warp_blocks = static_cast<std::uint32_t>((outputs * 32U + 255U) / 256U);
+    sm120::cuda_runtime::detail::nvfp4_linear_warp_f32<<<warp_blocks, 256>>>(
+        d_input, d_packed, d_scales, d_scale_2, d_out_warp, inputs, outputs);
+    assert(cudaGetLastError() == cudaSuccess);
+    assert(cudaDeviceSynchronize() == cudaSuccess);
+    std::vector<float> ref(outputs), warp(outputs);
+    assert(cudaMemcpy(ref.data(), d_out_ref, outputs * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(warp.data(), d_out_warp, outputs * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    double max_diff = 0.0, max_mag = 0.0;
+    for (std::size_t row = 0; row < outputs; ++row) {
+      max_diff = std::max(max_diff, std::fabs(static_cast<double>(warp[row]) - ref[row]));
+      max_mag = std::max(max_mag, std::fabs(static_cast<double>(ref[row])));
+    }
+    // Reduction-order-only difference: far below the incumbent's own magnitude.
+    assert(max_diff <= 1.0e-4 * (max_mag > 1.0 ? max_mag : 1.0));
+    cudaFree(d_input);
+    cudaFree(d_packed);
+    cudaFree(d_scales);
+    cudaFree(d_scale_2);
+    cudaFree(d_out_ref);
+    cudaFree(d_out_warp);
+  }
+}
+
 __global__ void injected_async_fault() {
   if (threadIdx.x == 0) *static_cast<volatile std::uint32_t*>(nullptr) = 1U;
+}
+
+void test_nvfp4_row_parallel_identity() {
+  // R02 differential: the row-parallel kernel must be bit-identical to the
+  // single-block baseline for every shape, because per-row operation order is
+  // unchanged. Deterministic LCG inputs; odd sizes exercise nibble/scale edges.
+  using namespace superinfer;
+  const std::array<std::pair<std::size_t, std::size_t>, 4> shapes{{{4, 32}, {48, 512}, {1031, 1024}, {4096, 2048}}};
+  for (const auto [outputs, inputs] : shapes) {
+    std::vector<float> host_input(inputs);
+    std::vector<std::uint8_t> host_packed((outputs * inputs + 1) / 2);
+    std::vector<std::uint8_t> host_scales(outputs * ((inputs + 15) / 16));
+    std::uint64_t state = 0x12345678ULL;
+    auto next_byte = [&]() -> std::uint8_t {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return static_cast<std::uint8_t>(state >> 33U);
+    };
+    for (auto& value : host_input)
+      value = (static_cast<float>(next_byte()) - 128.0F) / 128.0F;
+    for (auto& value : host_packed) value = next_byte();
+    for (auto& value : host_scales) value = static_cast<std::uint8_t>(0x20U | (next_byte() & 0x1FU));
+    const float host_scale = 0.5F;
+    float *device_input = nullptr, *device_out_base = nullptr, *device_out_rows = nullptr,
+          *device_out_vec = nullptr, *device_scale = nullptr;
+    std::uint8_t *device_packed = nullptr, *device_scales = nullptr;
+    assert(cudaMalloc(&device_input, inputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&device_packed, host_packed.size()) == cudaSuccess);
+    assert(cudaMalloc(&device_scales, host_scales.size()) == cudaSuccess);
+    assert(cudaMalloc(&device_scale, sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&device_out_base, outputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&device_out_rows, outputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMalloc(&device_out_vec, outputs * sizeof(float)) == cudaSuccess);
+    assert(cudaMemcpy(device_input, host_input.data(), inputs * sizeof(float),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(device_packed, host_packed.data(), host_packed.size(),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(device_scales, host_scales.data(), host_scales.size(),
+                      cudaMemcpyHostToDevice) == cudaSuccess);
+    assert(cudaMemcpy(device_scale, &host_scale, sizeof(float), cudaMemcpyHostToDevice) ==
+           cudaSuccess);
+    sm120::cuda_runtime::detail::nvfp4_linear_f32<<<1, 256>>>(device_input, device_packed, device_scales,
+                                                     device_scale, device_out_base, inputs,
+                                                     outputs);
+    assert(cudaGetLastError() == cudaSuccess);
+    std::uint32_t blocks = static_cast<std::uint32_t>((outputs + 255U) / 256U);
+    if (blocks == 0U) blocks = 1U;
+    if (blocks > 2048U) blocks = 2048U;
+    sm120::cuda_runtime::detail::nvfp4_linear_rows_f32<<<blocks, 256>>>(
+        device_input, device_packed, device_scales, device_scale, device_out_rows, inputs,
+        outputs);
+    assert(cudaGetLastError() == cudaSuccess);
+    sm120::cuda_runtime::detail::nvfp4_linear_rows_vec_f32<<<blocks, 256>>>(
+        device_input, device_packed, device_scales, device_scale, device_out_vec, inputs,
+        outputs);
+    assert(cudaGetLastError() == cudaSuccess);
+    assert(cudaDeviceSynchronize() == cudaSuccess);
+    std::vector<float> out_base(outputs), out_rows(outputs), out_vec(outputs);
+    assert(cudaMemcpy(out_base.data(), device_out_base, outputs * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(out_rows.data(), device_out_rows, outputs * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(cudaMemcpy(out_vec.data(), device_out_vec, outputs * sizeof(float),
+                      cudaMemcpyDeviceToHost) == cudaSuccess);
+    assert(out_base == out_rows);
+    assert(out_base == out_vec);
+    cudaFree(device_input);
+    cudaFree(device_packed);
+    cudaFree(device_scales);
+    cudaFree(device_scale);
+    cudaFree(device_out_base);
+    cudaFree(device_out_rows);
+    cudaFree(device_out_vec);
+  }
 }
 
 superinfer::ir::physical::Plan make_plan() {
@@ -908,6 +1260,12 @@ int main() {
       ir::physical::BufferId{1},
       base::ByteView(reinterpret_cast<std::byte*>(f32_values.data()), sizeof(f32_values))).ok());
   assert((f32_values == std::array<float, 4>{1.0F, 2.0F, 3.0F, 4.0F}));
+
+  test_nvfp4_row_parallel_identity();
+  test_grouped_attention_cached_identity();
+  test_gated_delta_attention_parallel_identity();
+  test_rms_norm_parallel_identity();
+  test_nvfp4_warp_tolerance();
 
   const auto f32_to_bf16_plan = make_f32_to_bf16_cast_plan();
   auto f32_to_bf16 = sm120::cuda_runtime::CudaPlanSession::create(

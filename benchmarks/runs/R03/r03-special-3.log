@@ -1,0 +1,24 @@
+qwen38 e2e token=248045 greedy=8678 logit=25 checksum=-705028 state_buffers=128 commands=7272 arena_bytes=19191265792 continuation_steps=2 token=1 greedy=198 logit=27.5 token=2 greedy=3710 logit=13.1875
+	Command being timed: "build/cuda-sm120a/tests/superinfer_sm120_qwen38_e2e_artifact"
+	User time (seconds): 30.40
+	System time (seconds): 2.14
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:32.54
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 18481948
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 212268
+	Voluntary context switches: 729
+	Involuntary context switches: 460
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

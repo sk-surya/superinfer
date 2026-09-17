@@ -1,0 +1,24 @@
+qwen38 e2e token=72240 greedy=279 logit=15.1875 checksum=-981569 state_buffers=128 commands=249672 arena_bytes=19191265792 continuation_steps=102 token=1 greedy=279 logit=12.625 token=2 greedy=27374 logit=13.1875 token=3 greedy=8404 logit=16.75 token=4 greedy=7019 logit=21.875 token=5 greedy=318 logit=19.25 token=6 greedy=1785 logit=17.625 token=7 greedy=628 logit=18.5 token=8 greedy=264 logit=18.375 token=9 greedy=6157 logit=17.5 token=10 greedy=1970 logit=18.5 token=11 greedy=494 logit=22 token=12 greedy=1558 logit=18 token=13 greedy=10993 logit=19.125 token=14 greedy=3447 logit=19.875 token=15 greedy=11 logit=23.125 token=16 greedy=271 logit=17 token=17 greedy=1204 logit=19.375 token=18 greedy=411 logit=17.125 token=19 greedy=8047 logit=19.25 token=20 greedy=8404 logit=22 token=21 greedy=7019 logit=28.875 token=22 greedy=42903 logit=21.25 token=23 greedy=18826 logit=21.25 token=24 greedy=59666 logit=19.25 token=25 greedy=40355 logit=20.5 token=26 greedy=1558 logit=22.5 token=27 greedy=5759 logit=23 token=28 greedy=494 logit=18.625 token=29 greedy=6745 logit=21.125 token=30 greedy=10993 logit=21.875 token=31 greedy=8842 logit=24.25 token=32 greedy=13 logit=20.75 token=33 greedy=271 logit=19.125 token=34 greedy=1204 logit=20.125 token=35 greedy=449 logit=19.375 token=36 greedy=8047 logit=20 token=37 greedy=8404 logit=27.5 token=38 greedy=7019 logit=30.125 token=39 greedy=42903 logit=22.75 token=40 greedy=18826 logit=22 token=41 greedy=59666 logit=20.875 token=42 greedy=40355 logit=21.75 token=43 greedy=1558 logit=21.75 token=44 greedy=5759 logit=23.625 token=45 greedy=494 logit=21.875 token=46 greedy=264 logit=16.375 token=47 greedy=10993 logit=18.75 token=48 greedy=8842 logit=22 token=49 greedy=13 logit=19.875 token=50 greedy=271 logit=18.75 token=51 greedy=1204 logit=20.875 token=52 greedy=449 logit=21.125 token=53 greedy=8047 logit=23.5 token=54 greedy=8404 logit=26.625 token=55 greedy=7019 logit=28.875 token=56 greedy=42903 logit=24.375 token=57 greedy=18826 logit=22.375 token=58 greedy=59666 logit=21.125 token=59 greedy=40355 logit=18.625 token=60 greedy=1558 logit=21.5 token=61 greedy=5759 logit=20.375 token=62 greedy=494 logit=20.25 token=63 greedy=449 logit=16.375 token=64 greedy=10993 logit=17.25 token=65 greedy=8842 logit=18 token=66 greedy=13 logit=20.125 token=67 greedy=271 logit=19 token=68 greedy=1204 logit=21.25 token=69 greedy=449 logit=17.75 token=70 greedy=8047 logit=21.875 token=71 greedy=8404 logit=25.5 token=72 greedy=7019 logit=27.75 token=73 greedy=271 logit=17.25 token=74 greedy=18826 logit=23.375 token=75 greedy=59666 logit=17.875 token=76 greedy=40355 logit=20.25 token=77 greedy=1558 logit=18.875 token=78 greedy=5759 logit=17.25 token=79 greedy=494 logit=19.75 token=80 greedy=271 logit=16.75 token=81 greedy=10993 logit=16.75 token=82 greedy=271 logit=16.5 token=83 greedy=13 logit=20.125 token=84 greedy=271 logit=19.25 token=85 greedy=1204 logit=21.125 token=86 greedy=449 logit=19 token=87 greedy=271 logit=17.375 token=88 greedy=8404 logit=24.25 token=89 greedy=7019 logit=22.375 token=90 greedy=42903 logit=20 token=91 greedy=18826 logit=20.125 token=92 greedy=271 logit=16.125 token=93 greedy=271 logit=15.5 token=94 greedy=1558 logit=18.5 token=95 greedy=271 logit=18.875 token=96 greedy=271 logit=15.875 token=97 greedy=271 logit=16.75 token=98 greedy=271 logit=16.75 token=99 greedy=271 logit=15.5625 token=100 greedy=13 logit=20.125 token=101 greedy=58737 logit=20.125 token=102 greedy=248068 logit=15.75
+	Command being timed: "build/cuda-sm120a/tests/superinfer_sm120_qwen38_e2e_artifact"
+	User time (seconds): 77.05
+	System time (seconds): 28.25
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:45.30
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 18482352
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 6
+	Minor (reclaiming a frame) page faults: 222051
+	Voluntary context switches: 2340
+	Involuntary context switches: 1295
+	Swaps: 0
+	File system inputs: 64
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1,0 +1,73 @@
+{
+  "classes": [
+    {
+      "count": 128,
+      "inputs": 5120,
+      "name": "17408x5120",
+      "packed_bytes_per_launch": 44564480,
+      "packed_mb_per_token": 5704.25344,
+      "rows": 17408
+    },
+    {
+      "count": 64,
+      "inputs": 17408,
+      "name": "5120x17408",
+      "packed_bytes_per_launch": 44564480,
+      "packed_mb_per_token": 2852.12672,
+      "rows": 5120
+    },
+    {
+      "count": 64,
+      "inputs": 6144,
+      "name": "5120x6144",
+      "packed_bytes_per_launch": 15728640,
+      "packed_mb_per_token": 1006.63296,
+      "rows": 5120
+    },
+    {
+      "count": 48,
+      "inputs": 5120,
+      "name": "10240x5120",
+      "packed_bytes_per_launch": 26214400,
+      "packed_mb_per_token": 1258.2912,
+      "rows": 10240
+    },
+    {
+      "count": 48,
+      "inputs": 5120,
+      "name": "6144x5120",
+      "packed_bytes_per_launch": 15728640,
+      "packed_mb_per_token": 754.97472,
+      "rows": 6144
+    },
+    {
+      "count": 32,
+      "inputs": 5120,
+      "name": "1024x5120",
+      "packed_bytes_per_launch": 2621440,
+      "packed_mb_per_token": 83.88608,
+      "rows": 1024
+    },
+    {
+      "count": 16,
+      "inputs": 5120,
+      "name": "12288x5120",
+      "packed_bytes_per_launch": 31457280,
+      "packed_mb_per_token": 503.31648,
+      "rows": 12288
+    },
+    {
+      "count": 1,
+      "inputs": 5120,
+      "name": "248320x5120",
+      "packed_bytes_per_launch": 635699200,
+      "packed_mb_per_token": 635.6992,
+      "rows": 248320
+    }
+  ],
+  "command_dump_sha256": "d2728a4f7c6cf4d58d9d27e99cfcf53835adb7ed42f40dfa7bbd75afdf29d925",
+  "kernel_id": 13,
+  "kernel_name": "nvfp4_linear",
+  "provenance": "artifact qwen38-payload-v1-final-a.sinf sha256 e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5; plan dump sha256 in JSON",
+  "total_launches_per_token": 401
+}

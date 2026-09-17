@@ -1,0 +1,2 @@
+P8R2 v3 (uniform scales): max_abs=0 max_mag=148 rel=0  PASS
+P8R2 v3 (random scales): max_abs=0 max_mag=252.967 rel=0  PASS

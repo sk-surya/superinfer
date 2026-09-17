@@ -1,0 +1,4 @@
+.version 8.8
+.target sm_120a
+.address_size 64
+.visible .entry p() { .reg .b32 a<8>, b<4>, c<8>; mma.sync.aligned.m16n8k64.row.col.kind::mxf4nvf4.block_scale.scale_vec::4X.f32.e2m1.e2m1.f32 {c0,c1,c2,c3,c4,c5,c6,c7}, {a0,a1,a2,a3,a4,a5,a6,a7}, {b0,b1,b2,b3}, {c0,c1,c2,c3,c4,c5,c6,c7}; ret; }

@@ -1,0 +1,15 @@
+.version 9.1
+.target sm_120a
+.address_size 64
+.visible .entry p8r1_probe()
+{
+    .reg .b32 %Rd<4>, %Ra<4>, %Rb<2>;
+    .reg .f32 %Rc<4>;
+    .reg .b32 %scaleAData, %scaleBData;
+    .reg .u16 %bidA, %tidA, %bidB, %tidB;
+    mov.u16 %bidA, 0; mov.u16 %tidA, 0; mov.u16 %bidB, 0; mov.u16 %tidB, 0;
+    mma.sync.aligned.m16n8k64.row.col.kind::mxf4nvf4.block_scale.scale_vec::4X.f32.e2m1.e2m1.f32.ue4m3
+        {%Rd0,%Rd1,%Rd2,%Rd3}, {%Ra0,%Ra1,%Ra2,%Ra3}, {%Rb0,%Rb1}, {%Rc0,%Rc1,%Rc2,%Rc3},
+        %scaleAData, {%bidA, %tidA}, %scaleBData, {%bidB, %tidB};
+    ret;
+}

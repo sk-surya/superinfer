@@ -2,7 +2,7 @@
 
 ## Milestone V0: Qwen Proof, Flash-Next Architecture Proof, Research Loop, Model-Family Validation
 
-The milestone deliberately narrows early work to a correct Qwen3.8 artifact/runtime path. Flash-Next then exercises multi-device placement, heterogeneous PLE residency, MoE, sparse attention, and gated residuals before broad kernel optimization. Performance research follows only after both correctness ladders are explicit; Gemma remains the later model-family portability audit.
+The milestone deliberately narrows early work to a correct Qwen3.8 artifact/runtime path. Under D-020 the first Qwen performance feedback loop (S03-R/R01/R02/R03) precedes Flash-Next runtime implementation. Flash-Next then exercises multi-device placement, heterogeneous PLE residency, MoE, sparse attention, and gated residuals before broad kernel optimization. Performance research follows only after the first reproduced Qwen speedup; Gemma remains the later model-family portability audit.
 
 | Phase | Name | Depends on | Understanding | Outcome |
 |---|---|---|---|---|
@@ -10,8 +10,12 @@ The milestone deliberately narrows early work to a correct Qwen3.8 artifact/runt
 | S01 | Artifact and IR | S00 | L2 Gate A | Deterministic `.sinf`, three IRs, converter/inspection tooling |
 | S02 | `sm120` correctness backend | S01 | L2 Gate B | Validated Physical Plan executes reference-correct small graphs |
 | S03 | Qwen3.8-27B end to end | S02 | L1 | Correct Qwen generation from `.sinf` on RTX 5090 |
-| S03F | Flash-Next architecture bring-up | S03; S03F-01 research may overlap S03 | L2 architecture packet, deferred under D-014 | Text-only reference-equivalent Flash-Next on 2x RTX 5090 with host-resident PLE |
-| S04 | Kernel portfolio and specialization | S03F | L2 Gate C.1–C.3 | Specialized provider portfolio with correct fallbacks |
+| S03-R | Qwen decisive correctness closure — **Complete (Outcome A, S03 closed under D-021)** | S03 | L1 | Same-artifact oracle decides defect vs contract; session-2 D-021 verdict pass |
+| R01 | Qwen baseline + profile | S03-R | L1 | **Complete** — 0.032 tok/s baseline, NVFP4 97.7% |
+| R02 | First bottleneck optimization | R01 | L1 | **Complete** — row-parallel NVFP4, 33× local, bit-identical |
+| R03 | First reproduced speed proof | R02 | L1 | **Complete — PASS** — 7.6–9.4× E2E reproduced |
+| S03F | Flash-Next architecture bring-up | R03 (S03F-01 research retained) | L2 architecture packet, deferred under D-014 | Text-only reference-equivalent Flash-Next on 2x RTX 5090 with host-resident PLE |
+| S04 | Kernel portfolio and specialization | R03 | L2 Gate C.1–C.3 | Specialized provider portfolio with correct fallbacks |
 | S05 | Autoresearch and decode experiments | S04 | L1 / conditional L2 | Correctness-gated experiment/promotion loop; DSpark placed correctly |
 | S06 | Reproducible performance proof | S05 | L2 Gate D at entry | First checked RTX 5090 graph and evidence bundle |
 | S07 | Gemma 4 26B-A4B extension | S06 | L1 / conditional L2 | Model-family extension without executor model branches |
@@ -80,11 +84,55 @@ The milestone deliberately narrows early work to a correct Qwen3.8 artifact/runt
 
 **Exit evidence:** `.sinf` conversion manifest; layer/logit/token differential reports; deterministic generation; acceptance transcript on RTX 5090.
 
-**Invariant:** S03 acceptance is unchanged by S03F. Do not delay the current layer-level and end-to-end Qwen correctness closure to modify multi-device runtime code.
+**Invariant:** S03 acceptance is unchanged by S03F. Do not delay the current layer-level and end-to-end Qwen correctness closure to modify multi-device runtime code. Under D-020, legacy S03-03 precision/rounding hypotheses are frozen unless S03-R same-artifact evidence identifies a concrete divergence.
+
+### S03-R — Qwen Decisive Correctness Closure
+
+**Goal:** End open-ended S03 numerical archaeology with an independent same-artifact oracle over exact `.sinf` packed semantics. Decide Outcome A (supersede historical `max_abs <= 0.5` source-reference gate with evidence-derived D-021) vs Outcome B (first proven SuperInfer divergence, fix that boundary only).
+
+**Plan:** `.planning/phases/S03-qwen38-e2e/S03-R-PLAN.md`
+
+**Requirements:** MOD-001, MOD-004, DEC-001, KER-006, BCK-004, QUA-002, QUA-003
+
+**Exit evidence:** `artifacts/S03R/qwen38-same-artifact-acceptance-v1.json`, provenance/tensor identity, two fresh-session executions, `S03-R-SUMMARY.md`, D-021 + fresh acceptance if A or failing differential if B.
+
+**Stop rule:** Once S03 closes, immediately enter R01. Do not start Flash-Next or broad kernel work.
+
+### R01 — First Qwen Baseline and Critical-Path Profile
+
+**Goal:** Measure the accepted Qwen path before broad optimization and select exactly one dominant actionable steady-state decode bottleneck from Nsight Systems/Compute evidence.
+
+**Plan:** `.planning/phases/R01-qwen-baseline/R01-PLAN.md`
+
+**Requirements:** BEN-001, BEN-002, BEN-003, QUA-002, QUA-003
+
+**Exit evidence:** versioned benchmark manifest, raw samples, profiler captures, ranked bottleneck table, exactly one R02 target, `R01-SUMMARY.md`.
+
+### R02 — First Bottleneck Optimization (profiler-selected)
+
+**Goal:** Improve only the R02 target behind its fallback/differential boundary. Target is not preselected; R01 evidence chooses it.
+
+**Plan:** `.planning/phases/R02-first-bottleneck/R02-PLAN.md` (written from R01 evidence, self-reviewed, executed autonomously)
+
+**Requirements:** KER-002–KER-006, BCK-002, BCK-004, BEN-002
+
+**Exit evidence:** optimized candidate + local before/after + full Qwen correctness under S03 contract.
+
+### R03 — First Reproduced End-to-End Speed Proof
+
+**Goal:** Prove the R02 optimization improves real Qwen steady-state decode end to end in two fresh sessions under the same manifest.
+
+**Plan:** `.planning/phases/R03-first-speed-proof/R03-PLAN.md`
+
+**Requirements:** BEN-001–BEN-004, QUA-002, QUA-003
+
+**Exit evidence:** two fresh-session same-manifest before/after bundles, local + E2E deltas, `R03-SUMMARY.md`. R03 PASS is the first recovery stopping condition.
 
 ### S03F — Flash-Next Architecture Bring-up
 
 **Goal:** Prove SuperInfer can correctly execute the text path of Flash-Next across 2x RTX 5090 using compiler-owned placement, host-resident PLE/N-gram memory, persistent layer-local MoE experts when capacity permits, QSA, Gated DeltaNet, and gated residual semantics.
+
+**Ordering under D-020:** S03F-01 research is complete/retained. S03F-02+ runtime implementation is postponed until R03 passes and D-019 evidence is available. S03F no longer blocks the first Qwen performance proof.
 
 **Spec:** [`FLASH-NEXT-DESIGN.md`](FLASH-NEXT-DESIGN.md)
 
@@ -107,7 +155,9 @@ The milestone deliberately narrows early work to a correct Qwen3.8 artifact/runt
 
 ### S04 — Kernel Portfolio and Specialization
 
-**Goal:** Replace correctness baselines with capability-selected, measured `sm120` candidates while retaining reliable fallback paths for the now-qualified model semantics.
+**Goal:** Replace correctness baselines with capability-selected, measured `sm120` candidates while retaining reliable fallback paths for the now-qualified model semantics. R03 proved the first end-to-end loop; the recovery sprint is complete and S04 is now the **active** lane as a profiler-driven performance ladder (fresh profile -> one target -> correctness -> reproduced benchmark). Fleet target: >= 5 decode tok/s.
+
+**Active lane:** S04-P1 — profiler-driven manual optimization ladder. Repeat until no credible single/fused change offers >15% E2E gain: profile, select largest defensible E2E opportunity, optimize behind retained fallback + independent oracle, reproduce benchmark in a second fresh session. Do not optimize by name or roadmap order.
 
 **Understanding:** L2 Gate C repeats at mechanism transitions: C.1 dense GEMV/NVFP4/Tensor Cores, C.2 attention/KV/sparse attention, C.3 fusion/persistent/MoE mechanisms. Each packet covers roofline, memory hierarchy, Tensor versus CUDA cores, occupancy, fusion tradeoffs, likely failures, and a profiler prediction.
 

@@ -1,0 +1,18 @@
+hardware E2M1 exhaustive: EXACT over all 256 packed bytes (first mismatch byte=0)
+
+shape                      A stream    B swdec  C dec+mul   D fullP6  E hw+fp16      E2/E4
+lm_head_248320x5120         0.638ms    0.780ms    4.059ms    4.063ms    4.056ms 4.045/4.054
+    D-vs-E max_abs=0
+mlp_17408x5120              0.016ms    0.058ms    0.292ms    0.293ms    0.291ms 0.291/0.292
+    D-vs-E max_abs=0
+gdn_10240x5120              0.011ms    0.037ms    0.180ms    0.182ms    0.180ms 0.179/0.175
+    D-vs-E max_abs=0
+attn_6144x5120              0.007ms    0.024ms    0.114ms    0.115ms    0.113ms 0.113/0.108
+    D-vs-E max_abs=0
+down_5120x17408             0.016ms    0.062ms    0.311ms    0.312ms    0.311ms 0.309/0.306
+    D-vs-E max_abs=0
+small_1024x5120             0.003ms    0.007ms    0.025ms    0.025ms    0.024ms 0.026/0.025
+    D-vs-E max_abs=0
+
+weighted per-token: D=76.5 ms  E=76.0 ms  speedup=1.01x
+EXIT=0

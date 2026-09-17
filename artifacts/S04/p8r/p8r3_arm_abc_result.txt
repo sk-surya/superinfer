@@ -1,0 +1,20 @@
+device: NVIDIA GeForce RTX 5090 (sm_120)
+
+shape                    wt(MB)   quant  stream  ArmA(N1)    ArmB/8    A2(N1)  A2(N8)/8    relA/B
+  actquant effect lm_head_248320x5120: rel-L2=0.1006  max-rel=33665.5553
+lm_head_248320x5120       635.7   0.007   0.004     1.229     0.155     0.576     0.073  0.00e+00
+  actquant effect mlp_17408x5120: rel-L2=0.1008  max-rel=1566.3758
+mlp_17408x5120             44.6   0.007   0.002     0.027     0.004     0.022     0.003  0.00e+00
+  actquant effect gdn_10240x5120: rel-L2=0.0994  max-rel=203.4258
+gdn_10240x5120             26.2   0.007   0.002     0.023     0.003     0.021     0.003  0.00e+00
+  actquant effect attn_6144x5120: rel-L2=0.1024  max-rel=22575.2659
+attn_6144x5120             15.7   0.007   0.002     0.023     0.003     0.020     0.003  0.00e+00
+  actquant effect down_5120x17408: rel-L2=0.1015  max-rel=174.7607
+down_5120x17408            44.6   0.009   0.002     0.072     0.010     0.066     0.009  0.00e+00
+  actquant effect small_1024x5120: rel-L2=0.0998  max-rel=39.1165
+  DEBUG shape=small_1024x5120 out[0..3]=975.9541 70.2168 -167.9219 885.5322  ref[0..3]=975.9541 70.2168 -167.9219 885.5322 
+  DEBUG act q[0..7]=2.0625 1.0312 0.6875 -2.0625 0.3438 -2.7500 2.0625 -2.0625   in[0..7]=2.0400 0.9320 0.8400 -2.0360 0.2400 -3.2920 2.0200 -1.7320 
+small_1024x5120             2.6   0.007   0.001     0.023     0.003     0.020     0.003  0.00e+00
+
+weighted per decoded token (ms): quant=2.36 ArmA_N1=12.27 ArmB_N8=1.69 A2_N1=10.24 A2_N8=1.37
+predicted tok/s: ArmA=81.5  ArmB(batched/8)=591.1  A2_N1=97.6  A2_N8(batched)=728.4

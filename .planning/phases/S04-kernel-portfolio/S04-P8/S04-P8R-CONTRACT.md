@@ -71,3 +71,19 @@ mma.sync.aligned.m16n8k64.row.col.kind::mxf4nvf4.block_scale.scale_vec::4X.
 So: `mma.sync.aligned.m16n8k64.row.col.kind::mxf4nvf4.block_scale.scale_vec::4X.f32.e2m1.e2m1.f32.ue4m3`
 **assembles and executes correctly on `sm_120a`**, with E2M1×E2M1 operands, UE4M3 block scales
 (vector size 16), and FP32 accumulate.
+
+## P8-R2 — synthetic fragment differential (IN PROGRESS)
+
+`artifacts/S04/p8r/p8r2_diff.cu` runs one randomized m16n8k64 blockscaled MMA and compares it to an
+independent FP32 reconstruction. The uniform case is exact (`p8r1_gpu_execution.txt`: A=B=1.5, scales=1.0
+→ `D=144 = 64×1.5×1.5`), which proves operands, scales and accumulate are wired correctly.
+
+The **randomized** differential currently fails (`p8r2_differential_initial_result.txt`:
+`max_abs=22.45`, `max_mag=14.16`, `rel=1.585`). A `rel≈1.6` error (not garbage) indicates the A-fragment
+row/K mapping is broadly right but at least one of the B-fragment `(K,N)` mapping or the SFA/SFB
+thread/byte ownership is wrong. The exact TV layouts are documented in
+`cute/atom/mma_traits_sm120.hpp` (`((2,2,8),(16,4)):((32,0,4),(0,1))` for SFA and
+`((4,8),(16,4)):((0,4),(0,1))` for SFB) and in the PTX warp-level-matrix-fragment section.
+
+**Consequence:** Arms A/B/C and the final A/B/C/D classification are **not yet evaluated** — they require
+the verified fragment/scale mapping first. No performance numbers are reported for them.

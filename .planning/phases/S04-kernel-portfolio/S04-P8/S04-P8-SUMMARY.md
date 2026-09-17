@@ -1,3 +1,8 @@
+> **SUPERSEDED by `S04-P8R-CONTRACT.md`.** The classification-D conclusion below rested on a malformed
+> PTX probe (missing `.ue4m3` scale type and `{byte-id,thread-id}` operands). `sm_120a` **does** expose
+> warp-level block-scaled NVFP4 `mma.sync` (`m16n8k64.kind::mxf4nvf4.block_scale.scale_vec::4X...ue4m3`),
+> proven to assemble and execute. Preserved as history; do not cite as current hardware fact.
+
 # S04-P8 Summary — Native NVFP4 Tensor-Core Feasibility Spike
 
 **Classification: D — native block-scaled NVFP4 MMA is not available on `sm_120a`.**

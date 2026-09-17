@@ -2,7 +2,7 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: S04-P8
+current_phase: S04-P8R
 status: autonomous_execution
 last_updated: "2026-09-11T00:00:00Z"
 progress:
@@ -37,14 +37,14 @@ s03f_01_status: research_complete_capacity_quality_blocked
 | R02 first bottleneck | **Complete** | `R02-PLAN.md`; row-parallel NVFP4, 33x local, bit-identical |
 | R03 first speed proof | **Complete — PASS** | `R03-SUMMARY.md`; `benchmarks/runs/R03/`; 7.6–9.4x E2E reproduced |
 | Recovery sprint | **Complete** | stop condition met |
-| S04 performance ladder | **P8 closed (classification D); next lane = startup/TTFT or linear_f32** | `S04-P1/`..`S04-P8/`; 8 optimize loops + feasibility spike, 0.032->~8.3 tok/s, D-021 pass |
+| S04 performance ladder | **P8 REOPENED (P8R): sm_120a block-scaled NVFP4 mma.sync proven; Arm A/B/C pending** | `S04-P1/`..`S04-P8/`; 8 optimize loops + reopened feasibility spike, 0.032->~8.3 tok/s, D-021 pass |
 | S03F Flash-Next | S03F-01 retained; S03F-02+ deferred (D-019 binding, D-020 ordering) | `FLASH-NEXT-DESIGN.md`; capacity/quality blocked |
-| S05 autoresearch | Deferred until 3 manual loops exist | design from proven loop, not generic |
+| S05 autoresearch | Minimum runner implemented (`tools/autoresearch_runner.py`, `S04-AUTORESEARCH-RUNNER.md`); use it for experiment mechanics; do not expand scope | design grounded in the 8 proven loops |
 | S06/S07/S08 | Planned | Pending |
 
 ## Current Focus
 
-S03 correctness is closed and the first optimization loop is proven. The active lane is the profiler-driven S04 performance ladder: repeatedly (1) take a fresh profile of the current binary, (2) select the change with the largest defensible E2E opportunity, (3) optimize exactly that behind a retained fallback and an independent correctness oracle, (4) reproduce the benchmark in a second fresh session. Do not optimize by name or roadmap order. Full autoresearch scaffolding is deferred until the minimum runner is extracted from the proven loop (`.planning/phases/S04-kernel-portfolio/S04-AUTORESEARCH-DECISION.md`). Loops 1-8 are complete; the >=5 decode tok/s checkpoint is met (~8.3 tok/s). P8 is closed as **classification D**: native per-16 block-scaled NVFP4 MMA is not exposed on sm_120a (block-scale is tcgen05/SM_100a-110a only; `.block_scale` is illegal for `mma.sync`), and NVFP4 activation quantization is a first-order error (2-9% relative L2) that would need its own quality contract. NVFP4 software decode is at its limit; do not resume micro-tuning without new evidence. **Layer/GDN fixture debt is FIXED** (`tools/run_qwen38_layer_gdn_fixtures.py`; both now run and pass). Next lane, from fresh profile: startup/artifact-materialization (~25-30 s/process, dominates TTFT) or `linear_f32` (15.3% of decode GPU). The minimum autoresearch runner is extracted at `tools/autoresearch_runner.py`.
+S03 correctness is closed and the first optimization loop is proven. The active lane is the profiler-driven S04 performance ladder: repeatedly (1) take a fresh profile of the current binary, (2) select the change with the largest defensible E2E opportunity, (3) optimize exactly that behind a retained fallback and an independent correctness oracle, (4) reproduce the benchmark in a second fresh session. Do not optimize by name or roadmap order. The minimum autoresearch runner is implemented (`tools/autoresearch_runner.py`, `S04-AUTORESEARCH-RUNNER.md`); use it for experiment mechanics and do not expand its scope. Loops 1-8 are complete; the >=5 decode tok/s checkpoint is met (~8.3 tok/s). **P8 is REOPENED as P8-R** after an architecture review: the earlier classification-D was a false negative caused by a malformed PTX probe. `sm_120a` **does** support warp-level block-scaled NVFP4 `mma.sync` (`mma.sync.aligned.m16n8k64.row.col.kind::mxf4nvf4.block_scale.scale_vec::4X.f32.e2m1.e2m1.f32.ue4m3`), now proven to assemble (ptxas 13.1.115) and execute on the RTX 5090 (D=144 for A=B=1.5 over k=64). See `S04-P8R-CONTRACT.md`. Arms A (N=1), B (N=8), C (minimal warp MMA), the synthetic fragment differential, and the resulting classification are pending. **Do not begin startup/TTFT or linear_f32 work until P8-R resolves this contract.** **Layer/GDN fixture debt is FIXED** (`tools/run_qwen38_layer_gdn_fixtures.py`; both now run and pass). Next lane, from fresh profile: startup/artifact-materialization (~25-30 s/process, dominates TTFT) or `linear_f32` (15.3% of decode GPU). The minimum autoresearch runner is extracted at `tools/autoresearch_runner.py`.
 
 Reference: `.planning/phases/R03-first-speed-proof/R03-SUMMARY.md`, `.planning/phases/R01-qwen-baseline/R01-SUMMARY.md`.
 

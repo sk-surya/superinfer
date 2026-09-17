@@ -1,20 +1,37 @@
 device: NVIDIA GeForce RTX 5090 (sm_120)
 
-shape                    wt(MB)   quant  stream  ArmA(N1)    ArmB/8    A2(N1)  A2(N8)/8    relA/B
-  actquant effect lm_head_248320x5120: rel-L2=0.1006  max-rel=33665.5553
-lm_head_248320x5120       635.7   0.007   0.004     1.229     0.155     0.576     0.073  0.00e+00
-  actquant effect mlp_17408x5120: rel-L2=0.1008  max-rel=1566.3758
-mlp_17408x5120             44.6   0.007   0.002     0.027     0.004     0.022     0.003  0.00e+00
-  actquant effect gdn_10240x5120: rel-L2=0.0994  max-rel=203.4258
-gdn_10240x5120             26.2   0.007   0.002     0.023     0.003     0.021     0.003  0.00e+00
-  actquant effect attn_6144x5120: rel-L2=0.1024  max-rel=22575.2659
-attn_6144x5120             15.7   0.007   0.002     0.023     0.003     0.020     0.003  0.00e+00
-  actquant effect down_5120x17408: rel-L2=0.1015  max-rel=174.7607
-down_5120x17408            44.6   0.009   0.002     0.072     0.010     0.066     0.009  0.00e+00
-  actquant effect small_1024x5120: rel-L2=0.0998  max-rel=39.1165
-  DEBUG shape=small_1024x5120 out[0..3]=975.9541 70.2168 -167.9219 885.5322  ref[0..3]=975.9541 70.2168 -167.9219 885.5322 
-  DEBUG act q[0..7]=2.0625 1.0312 0.6875 -2.0625 0.3438 -2.7500 2.0625 -2.0625   in[0..7]=2.0400 0.9320 0.8400 -2.0360 0.2400 -3.2920 2.0200 -1.7320 
-small_1024x5120             2.6   0.007   0.001     0.023     0.003     0.020     0.003  0.00e+00
+census: 8 classes, 401 nvfp4_linear launches/token (generated header)
+shape           count   wt(MB)   quant  stream  ArmA(N1)    ArmB/8    A2(N1)  A2(N8)/8    relA/B
+  actquant effect 17408x5120: rel-L2=0.1012  max-rel=4218.8409
+17408x5120        128     44.6   0.007   0.003     0.030     0.004     0.022     0.003  0.00e+00
+  actquant effect 5120x17408: rel-L2=0.1007  max-rel=889.8963
+5120x17408         64     44.6   0.009   0.002     0.077     0.010     0.066     0.009  0.00e+00
+  actquant effect 5120x6144: rel-L2=0.1030  max-rel=2982.7147
+5120x6144          64     15.7   0.007   0.002     0.028     0.004     0.024     0.003  0.00e+00
+  actquant effect 10240x5120: rel-L2=0.1012  max-rel=586.6117
+10240x5120         48     26.2   0.007   0.002     0.023     0.003     0.021     0.003  0.00e+00
+  actquant effect 6144x5120: rel-L2=0.1034  max-rel=459.9615
+6144x5120          48     15.7   0.007   0.002     0.023     0.003     0.021     0.003  0.00e+00
+  actquant effect 1024x5120: rel-L2=0.1036  max-rel=74.0667
+  DEBUG shape=1024x5120 out[0..3]=996.6294 343.6982 -552.0684 492.4844  ref[0..3]=996.6294 343.6982 -552.0684 492.4844 
+  DEBUG act q[0..7]=-0.3125 -0.6250 -0.6250 -2.5000 -1.8750 1.8750 -2.5000 0.3125   in[0..7]=-0.2200 -0.5840 -0.4760 -2.5040 -1.7720 2.1120 -2.3400 0.3240 
+1024x5120          32      2.6   0.007   0.002     0.023     0.003     0.020     0.003  0.00e+00
+  actquant effect 12288x5120: rel-L2=0.1005  max-rel=1263.7322
+12288x5120         16     31.5   0.007   0.002     0.024     0.003     0.021     0.003  0.00e+00
+  actquant effect 248320x5120: rel-L2=0.1019  max-rel=87622.7300
+248320x5120         1    635.7   0.007   0.003     1.228     0.155     0.576     0.072  0.00e+00
 
-weighted per decoded token (ms): quant=2.36 ArmA_N1=12.27 ArmB_N8=1.69 A2_N1=10.24 A2_N8=1.37
-predicted tok/s: ArmA=81.5  ArmB(batched/8)=591.1  A2_N1=97.6  A2_N8(batched)=728.4
+--- NVFP4 projection subsystem, per decoded token (ms) ---
+  mma_ms_per_token                       = 15.098   (Arm A, natural .sinf layout)
+  activation_quant_ms_per_token          = 2.973   (321-401 explicit quantise launches)
+  native_unfused_total_ms_per_token      = 18.071   (mma + activation_quant)
+  repack_cost_once_ms                    = 1.003   (one-time, not per token)
+  native_repacked_unfused_ms_per_token   = 15.104   (A2 mma + activation_quant)
+
+PROJECTION SUBSYSTEM throughput (NOT model tok/s): native_unfused = 55.3 proj-tok/s
+PREDICTION ONLY whole-model bound = projection subsystem + P7 non-NVFP4 residual 44.3 ms:
+  native_unfused  => 62.4 ms/token => <= 16.0 model tok/s
+  repacked        => 59.4 ms/token => <= 16.8 model tok/s
+  (software P7 reference: 76.5 ms NVFP4 + 44.3 residual = 120.8 ms/token => 8.3 model tok/s)
+
+Arm B (N=8, batched/speculative) projection throughput: 496.0 proj-tok/s (610.1 repacked); PREDICTION ONLY, assumes all 8 columns accepted.

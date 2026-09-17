@@ -47,9 +47,12 @@ weights `packed[rows][K/2]` + `scales[rows][K/16]` (E4M3FN) + activation quantis
 
 Weight streaming dominates. CUDA-core GEMV is instruction-issue bound (~83 ms/token at ~3 inst/weight);
 the tensor-core path issues ~1 MMA per 512 weight bytes and reaches memory bandwidth. Measured
-per-token (multiplicity-weighted over the real shapes): Arm A N=1 **12.3 ms ≈ 81 tok/s** (98 tok/s with
-an MMA-native repacked weight layout, lm_head at ~1.1 TB/s), Arm B N=8 **1.7 ms ≈ 591 tok/s** (728
-repacked). Small-M shapes (`down`, `small`) are parallelism-limited, not bandwidth-limited.
+per-token (multiplicity-weighted over the **derived 401-launch census**): Arm A N=1 MMA path
+**15.10 ms/token**, activation quantisation **2.97 ms/token**, `native_unfused_total` **18.07 ms/token**
+(repacked 15.10). This is a projection-subsystem figure, not model throughput; the PREDICTION-ONLY
+whole-model bound with the P7 residual is ~16 tok/s. (An earlier draft of this packet quoted partial
+census figures of 81-98 tok/s as model throughput; that was a census/accounting error, corrected here.)
+Small-M shapes are parallelism-limited, not bandwidth-limited.
 
 ## 7. Likely failure modes
 

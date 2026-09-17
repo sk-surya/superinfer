@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cuda_runtime.h>
 #include <functional>
+#include <string_view>
 #include <vector>
 
 // ---------------------------------------------------------------- device helpers
@@ -250,20 +251,19 @@ __global__ void stream_weights(const std::uint8_t* packed, float* sink, std::siz
 }
 
 // ---------------------------------------------------------------- harness
-struct Shape {
-  const char* name;
-  std::size_t rows;
-  std::size_t inputs;
-};
-static const std::array<Shape, 6> kShapes{{
-    {"lm_head_248320x5120", 248320, 5120},
-    {"mlp_17408x5120", 17408, 5120},
-    {"gdn_10240x5120", 10240, 5120},
-    {"attn_6144x5120", 6144, 5120},
-    {"down_5120x17408", 5120, 17408},
-    {"small_1024x5120", 1024, 5120},
-}};
-static const std::array<int, 6> kMult{{1, 128, 48, 48, 64, 32}};
+// The projection census is DERIVED from the produced Physical Plan by
+// `tools/qwen38_nvfp4_census.py --emit-header`; it is never hand-maintained. The static_assert makes a
+// stale or partial census a hard failure instead of a silent under-measurement.
+#include "qwen38_nvfp4_census_generated.h"
+
+namespace census = superinfer::sm120::qwen38_census;
+static_assert(census::kTotalNvfp4Launches == 401,
+              "regenerate qwen38_nvfp4_census_generated.h from the accepted artifact plan dump");
+
+// P7 residual (non-NVFP4) GPU time per decoded token, from the P7 e2e/profile evidence:
+//   120.8 ms/token total GPU (7.25 s / 60 tokens)  -  76.5 ms/token weighted software NVFP4.
+// This is a PREDICTION input only; it is superseded by integrated measurement.
+inline constexpr double kP7NonNvfp4ResidualMsPerToken = 44.3;
 
 static float time_kernel(int iters, std::function<void()> run) {
   cudaEvent_t a, b;
@@ -287,11 +287,15 @@ int main() {
   std::printf("device: %s (sm_%d%d)\n", prop.name, prop.major, prop.minor);
 
   double weighted_n1 = 0.0, weighted_n8 = 0.0, weighted_quant = 0.0, weighted_weights = 0.0;
-  double weighted_a2n1 = 0.0, weighted_a2n8 = 0.0;
-  std::printf("\n%-22s %8s %7s %7s %9s %9s %9s %9s %9s\n", "shape", "wt(MB)", "quant", "stream",
-              "ArmA(N1)", "ArmB/8", "A2(N1)", "A2(N8)/8", "relA/B");
-  for (std::size_t s = 0; s < kShapes.size(); ++s) {
-    const auto& shape = kShapes[s];
+  double weighted_a2n1 = 0.0, weighted_a2n8 = 0.0, repack_once_ms = 0.0;
+  std::size_t census_total = 0;
+  for (const auto& cls : census::kProjectionClasses) census_total += static_cast<std::size_t>(cls.count);
+  assert(census_total == census::kTotalNvfp4Launches);
+  std::printf("\ncensus: %zu classes, %zu nvfp4_linear launches/token (generated header)\n",
+              census::kProjectionClasses.size(), census_total);
+  std::printf("%-14s %6s %8s %7s %7s %9s %9s %9s %9s %9s\n", "shape", "count", "wt(MB)", "quant",
+              "stream", "ArmA(N1)", "ArmB/8", "A2(N1)", "A2(N8)/8", "relA/B");
+  for (const auto& shape : census::kProjectionClasses) {
     const std::size_t bytes = shape.rows * (shape.inputs / 2U);
     const std::size_t sbytes = shape.rows * (shape.inputs / 16U);
 
@@ -310,7 +314,7 @@ int main() {
     assert(cudaMalloc(&d_tensor, sizeof(float)) == cudaSuccess);
 
     std::vector<std::uint8_t> h_packed(bytes), h_scales(sbytes);
-    std::uint64_t st = 0x1234ULL + s;
+    std::uint64_t st = 0x1234ULL + shape.rows * 131U + shape.inputs;
     auto nxt = [&]() {
       st = st * 6364136223846793005ULL + 1442695040888963407ULL;
       return static_cast<std::uint32_t>(st >> 33);
@@ -418,7 +422,7 @@ int main() {
     cudaDeviceSynchronize();
     cudaMemcpy(h_out.data(), d_out, shape.rows * sizeof(float), cudaMemcpyDeviceToHost);
 
-    if (s == 5) {
+    if (std::string_view(shape.name) == "1024x5120") {
       std::printf("  DEBUG shape=%s out[0..3]=", shape.name);
       for (int i = 0; i < 4; ++i) std::printf("%.4f ", h_out[i]);
       std::printf(" ref[0..3]=");
@@ -433,30 +437,59 @@ int main() {
       std::printf("\n");
     }
 
-    std::printf("%-22s %8.1f %7.3f %7.3f %9.3f %9.3f %9.3f %9.3f %9.2e\n", shape.name, bytes / 1e6,
-                ms_quant, ms_stream, ms_n1, ms_n8 / 8.0, ms_a2_n1, ms_a2_n8 / 8.0, rel);
+    std::printf("%-14s %6llu %8.1f %7.3f %7.3f %9.3f %9.3f %9.3f %9.3f %9.2e\n", shape.name,
+                (unsigned long long)shape.count, bytes / 1e6, ms_quant, ms_stream, ms_n1,
+                ms_n8 / 8.0, ms_a2_n1, ms_a2_n8 / 8.0, rel);
 
-    const double mult = kMult[s];
+    const double mult = static_cast<double>(shape.count);
     weighted_n1 += mult * ms_n1;
     weighted_n8 += mult * (ms_n8 / 8.0);
     weighted_a2n1 += mult * ms_a2_n1;
     weighted_a2n8 += mult * (ms_a2_n8 / 8.0);
     weighted_quant += mult * ms_quant;
     weighted_weights += mult * ms_stream;
-    (void)ms_repack;
+    repack_once_ms += ms_repack;
 
     cudaFree(d_packed); cudaFree(d_scales); cudaFree(d_bpacked); cudaFree(d_bscales);
     cudaFree(d_in); cudaFree(d_act); cudaFree(d_out); cudaFree(d_ref); cudaFree(d_sink);
     cudaFree(d_tensor); cudaFree(d_wmma); cudaFree(d_ref2);
   }
+  // Terminally distinct accounting. ArmA/A2 are MMA-path timings only; they do NOT include the
+  // separately measured activation-quantisation launches.
+  const double mma_ms_per_token = weighted_n1;
+  const double activation_quant_ms_per_token = weighted_quant;
+  const double native_unfused_total = mma_ms_per_token + activation_quant_ms_per_token;
+  const double native_repacked_unfused = weighted_a2n1 + activation_quant_ms_per_token;
+
+  std::printf("\n--- NVFP4 projection subsystem, per decoded token (ms) ---\n");
+  std::printf("  mma_ms_per_token                       = %.3f   (Arm A, natural .sinf layout)\n",
+              mma_ms_per_token);
+  std::printf("  activation_quant_ms_per_token          = %.3f   (321-401 explicit quantise launches)\n",
+              activation_quant_ms_per_token);
+  std::printf("  native_unfused_total_ms_per_token      = %.3f   (mma + activation_quant)\n",
+              native_unfused_total);
+  std::printf("  repack_cost_once_ms                    = %.3f   (one-time, not per token)\n",
+              repack_once_ms);
+  std::printf("  native_repacked_unfused_ms_per_token   = %.3f   (A2 mma + activation_quant)\n\n",
+              native_repacked_unfused);
+
+  std::printf("PROJECTION SUBSYSTEM throughput (NOT model tok/s): native_unfused = %.1f proj-tok/s\n",
+              native_unfused_total > 0 ? 1000.0 / native_unfused_total : 0.0);
   std::printf(
-      "\nweighted per decoded token (ms): quant=%.2f ArmA_N1=%.2f ArmB_N8=%.2f A2_N1=%.2f "
-      "A2_N8=%.2f\n",
-      weighted_quant, weighted_n1, weighted_n8, weighted_a2n1, weighted_a2n8);
-  std::printf("predicted tok/s: ArmA=%.1f  ArmB(batched/8)=%.1f  A2_N1=%.1f  A2_N8(batched)=%.1f\n",
-              weighted_n1 > 0 ? 1000.0 / weighted_n1 : 0.0,
-              weighted_n8 > 0 ? 1000.0 / weighted_n8 : 0.0,
-              weighted_a2n1 > 0 ? 1000.0 / weighted_a2n1 : 0.0,
-              weighted_a2n8 > 0 ? 1000.0 / weighted_a2n8 : 0.0);
+      "PREDICTION ONLY whole-model bound = projection subsystem + P7 non-NVFP4 residual %.1f ms:\n"
+      "  native_unfused  => %.1f ms/token => <= %.1f model tok/s\n"
+      "  repacked        => %.1f ms/token => <= %.1f model tok/s\n"
+      "  (software P7 reference: %.1f ms NVFP4 + %.1f residual = %.1f ms/token => %.1f model tok/s)\n",
+      kP7NonNvfp4ResidualMsPerToken, native_unfused_total + kP7NonNvfp4ResidualMsPerToken,
+      1000.0 / (native_unfused_total + kP7NonNvfp4ResidualMsPerToken),
+      native_repacked_unfused + kP7NonNvfp4ResidualMsPerToken,
+      1000.0 / (native_repacked_unfused + kP7NonNvfp4ResidualMsPerToken), 76.5,
+      kP7NonNvfp4ResidualMsPerToken, 76.5 + kP7NonNvfp4ResidualMsPerToken,
+      1000.0 / (76.5 + kP7NonNvfp4ResidualMsPerToken));
+  std::printf(
+      "\nArm B (N=8, batched/speculative) projection throughput: %.1f proj-tok/s (%.1f repacked); "
+      "PREDICTION ONLY, assumes all 8 columns accepted.\n",
+      weighted_n8 > 0 ? 1000.0 / weighted_n8 : 0.0,
+      weighted_a2n8 > 0 ? 1000.0 / weighted_a2n8 : 0.0);
   return 0;
 }

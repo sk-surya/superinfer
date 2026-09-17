@@ -259,3 +259,40 @@ against D-021, and D-021 must not be loosened.
 2. Run the projection-level native-vs-P7 differential, the layer-3 differential, the GDN differential,
    then the full D-021 corpus, long-103, same-binary repeatability, and a second fresh session.
 3. Decide A vs B from that evidence, then the provider/layout architecture decision.
+
+---
+
+# P8-R CORRECTION — census reconciliation and accounting (supersedes the table above)
+
+The Arm table earlier in this document was **partial and mislabelled**. It measured six shape classes
+(321 launches) and reported `ArmA_N1` / `A2_N1` as if they were whole-model throughput. Two defects:
+
+1. **Census:** the accepted artifact plan contains **401** `nvfp4_linear` launches/token across **eight**
+   classes. The two omitted classes were `12288x5120 x16` and `5120x6144 x64`. The census is now derived
+   from the produced Physical Plan by `tools/qwen38_nvfp4_census.py` (validates packed = rows·K/2 and
+   scales = rows·K/16 per command), written to `artifacts/S04/p8r/nvfp4-census.json`, and emitted as
+   `tests/gpu/sm120/qwen38_nvfp4_census_generated.h`; the benchmark `static_assert`s the 401 total.
+2. **Terminology:** `ArmA`/`A2` are MMA-path timings and exclude the activation-quantisation launches.
+   They must never be labelled model tok/s.
+
+Corrected (all 8 classes, 401 launches, `artifacts/S04/p8r/p8r3_arm_abc_result.txt`):
+
+| quantity | value |
+|---|---:|
+| `mma_ms_per_token` (Arm A, natural `.sinf` layout) | 15.10 |
+| `activation_quant_ms_per_token` | 2.97 |
+| `native_unfused_total_ms_per_token` | 18.07 |
+| `repack_cost_once_ms` (one-time, not per token) | 1.00 |
+| `native_repacked_unfused_ms_per_token` | 15.10 |
+
+Projection-subsystem throughput is **55.3 proj-tok/s** (`native_unfused`), not "81-98 model tok/s".
+PREDICTION ONLY (projection subsystem + P7 non-NVFP4 residual 44.3 ms/token) gives **<= 16.0 model tok/s**
+natural / **<= 16.8** repacked, against ~8.3 tok/s today. Arm B (N=8) projection throughput is
+496 proj-tok/s (610 repacked), assuming all eight columns are accepted.
+
+The earlier "~81 tok/s / ~591-728 tok/s" figures in this file and in `GATE-C1.md` are superseded by the
+above. The roofline floor is 14.4 GB/token ÷ 1.79 TB/s = 8.0 ms/token, so the corrected Arm A still has
+~1.9x of memory headroom left; the natural-layout gather is not the limiter at the corrected totals.
+
+Integration is the active lane (`P8-RQ`); the corrected whole-model figure is a prediction until the
+native provider runs the real model.

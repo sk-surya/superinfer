@@ -1,0 +1,37 @@
+# S04 performance reset — integrated final state
+git_sha: see commit
+gpu: RTX 5090 index 1 (CUDA_VISIBLE_DEVICES=1); GPU0 user-owned ninfer-serve (untouched)
+artifact: build/evidence/qwen38-payload-v1-final-a.sinf sha256 e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5
+workload: chat-template 60 output tokens (59 continuation steps)
+
+kernel,ms_per_token,baseline_ms_per_token
+nvfp4_gemv_rows_f32<8,4,4,2>,17.34,82.87
+rms_norm_f32_bf16_scale_parallel,5.25,5.23
+gated_delta_attention_parallel_f32,3.25,3.25
+cast_bf16_to_f32,1.10,1.09
+linear_f32_rows_kernel<8,2>,0.75,18.51
+cast_f32_to_bf16,0.52,-
+grouped_attention_bf16_cache_cached,0.32,-
+residual_f32,0.19,-
+silu_mul_f32,0.18,2.63
+causal_conv_silu_f32,0.16,3.68
+split_f32,0.14,-
+gated_delta_parameters_f32,0.076,-
+rope_f32,0.061,-
+cache_append_f32_bf16,0.043,-
+split_last_f32,0.026,-
+sigmoid_mul_f32,0.024,0.20
+embedding_bf16,0.010,-
+TOTAL_DEVICE_SUM,29.44,123.61
+
+launches_per_token: 2424 (topology unchanged; E0a/E0b changed implementations, not commands)
+
+correctness:
+- D-021 verdict PASS (240 strict rows greedy-exact, 12 tie rows, bounds clear, 66 listed outliers), all 8 cases pass
+- chat-template 60/60 continuation tokens identical to the P7 baseline
+- layer-3 max_abs=1.52588e-05 mean_abs=9.40284e-07 (PASS)
+- GDN layer0/2-seg max_abs=0.000350952 mean_abs=3.0441e-06 (PASS)
+
+reverted-on-correctness:
+- parallel RMSNorm sum-of-squares gave 5.26->2.23 ms/token but FAILED D-021 (strict-row flips).
+  Reverted to the exact serial reduction order; tolerance was NOT loosened.

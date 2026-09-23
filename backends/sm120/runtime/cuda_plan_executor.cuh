@@ -1478,23 +1478,54 @@ inline cudaError_t launch_nvfp4_linear_gemv_rows(const ir::physical::CommandDesc
   const auto& output = plan.buffers()[command.buffers[4].value()];
   const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
   const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
-  constexpr std::uint32_t kWarpsPerCta = 8;
-  constexpr std::uint32_t kRowsPerWarp = 4;
-  constexpr std::uint32_t kChains = 4;
-  constexpr std::uint32_t kRowsPerCta = kWarpsPerCta * kRowsPerWarp;
-  if (input_elements == 0U || output_elements == 0U || input_elements % 512U != 0U ||
-      output_elements % kRowsPerCta != 0U) {
+  if (input_elements == 0U || output_elements == 0U || input_elements % 512U != 0U) {
     return cudaErrorInvalidValue;
   }
-  const std::uint32_t blocks = static_cast<std::uint32_t>(output_elements / kRowsPerCta);
-  nvfp4_gemv_rows_f32<kWarpsPerCta, kRowsPerWarp, kChains, 2>
-      <<<(blocks == 0U ? 1U : blocks), kWarpsPerCta * 32U, 0, stream>>>(
-          static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
-          static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id)),
-          static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)),
-          static_cast<const float*>(buffer_pointer(plan, arena, tensor_scale.id)),
-          static_cast<float*>(buffer_pointer(plan, arena, output.id)), output_elements,
-          input_elements);
+  const float* input_pointer = static_cast<const float*>(buffer_pointer(plan, arena, input.id));
+  const std::uint8_t* packed_pointer =
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id));
+  const std::uint8_t* scale_pointer =
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id));
+  const float* tensor_pointer =
+      static_cast<const float*>(buffer_pointer(plan, arena, tensor_scale.id));
+  float* output_pointer = static_cast<float*>(buffer_pointer(plan, arena, output.id));
+  // Per-shape schedule (S04 reset phase 1). The donor uses 16 rows per CTA for its 5120-row
+  // geometries; a single 32-row CTA configuration under-occupies the device on the small and
+  // medium row counts because it yields too few CTAs to fill 148 SMs. Large row counts keep the
+  // wider CTA (more activation reuse per warp), small/medium row counts use a narrower CTA so the
+  // grid covers the device.
+  auto run = [&](auto warps_per_cta, auto rows_per_warp, auto chains, auto min_blocks) {
+    constexpr std::uint32_t kW = decltype(warps_per_cta)::value;
+    constexpr std::uint32_t kR = decltype(rows_per_warp)::value;
+    constexpr std::uint32_t kC = decltype(chains)::value;
+    constexpr std::uint32_t kM = decltype(min_blocks)::value;
+    constexpr std::uint32_t kRowsPerCta = kW * kR;
+    if (output_elements % kRowsPerCta != 0U) return false;
+    const std::uint32_t blocks = static_cast<std::uint32_t>(output_elements / kRowsPerCta);
+    nvfp4_gemv_rows_f32<kW, kR, kC, kM><<<(blocks == 0U ? 1U : blocks), kW * 32U, 0, stream>>>(
+        input_pointer, packed_pointer, scale_pointer, tensor_pointer, output_pointer,
+        output_elements, input_elements);
+    return true;
+  };
+  const bool large = output_elements >= 16384U;
+  if (large && run(std::integral_constant<std::uint32_t, 8>{},
+                   std::integral_constant<std::uint32_t, 4>{},
+                   std::integral_constant<std::uint32_t, 4>{},
+                   std::integral_constant<std::uint32_t, 2>{})) {
+    return cudaGetLastError();
+  }
+  if (!large && run(std::integral_constant<std::uint32_t, 4>{},
+                    std::integral_constant<std::uint32_t, 2>{},
+                    std::integral_constant<std::uint32_t, 4>{},
+                    std::integral_constant<std::uint32_t, 4>{})) {
+    return cudaGetLastError();
+  }
+  if (!run(std::integral_constant<std::uint32_t, 8>{},
+           std::integral_constant<std::uint32_t, 4>{},
+           std::integral_constant<std::uint32_t, 4>{},
+           std::integral_constant<std::uint32_t, 2>{})) {
+    return cudaErrorInvalidValue;
+  }
   return cudaGetLastError();
 }
 

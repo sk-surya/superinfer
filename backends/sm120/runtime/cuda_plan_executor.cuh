@@ -1142,6 +1142,89 @@ __global__ inline void gated_delta_attention_parallel_f32(
   }
 }
 
+/** GDN recurrent decode with the per-value state column held in registers.
+ *
+ * S04 reset phase 4. The incumbent `gated_delta_attention_parallel_f32` walks the whole
+ * `key_dimension x value_dimension` state in global memory seven times per position (decay scale,
+ * key dot, delta update, query dot, plus write-back), because each of the four passes is a separate
+ * loop over global memory. Here each thread owns one value column for the whole transition: the
+ * decayed column is materialised once into registers, used for the key dot, updated by the delta,
+ * used for the query dot, and written back exactly once. That is 1 read + 1 write of the state
+ * instead of 5 reads + 2 writes.
+ *
+ * Every arithmetic operation and its order are unchanged (the same per-element multiply, the same
+ * accumulation sequence over key_index); only the storage location of the intermediate column
+ * changed. The result is bit-identical to the incumbent for the same inputs.
+ */
+template <std::size_t KEY_DIM>
+__global__ inline void gated_delta_attention_register_f32(
+    const float* query, const float* keys, const float* values, const float* log_decay,
+    const float* beta, float* state, float* output, std::size_t key_heads,
+    std::size_t value_heads, std::size_t key_dimension, std::size_t value_dimension,
+    std::size_t positions) {
+  if (key_dimension != KEY_DIM) return;
+  const std::size_t head = blockIdx.x;
+  if (head >= value_heads) return;
+  const std::size_t heads_per_value = value_heads / key_heads;
+  const std::size_t key_head = head / heads_per_value;
+  const std::size_t state_base = head * key_dimension * value_dimension;
+  const float scale = rsqrtf(static_cast<float>(key_dimension));
+  __shared__ float shared_query_scale;
+  __shared__ float shared_key_scale;
+  __shared__ float shared_beta;
+  __shared__ float shared_decay;
+  for (std::size_t position = 0; position < positions; ++position) {
+    const std::size_t query_base = (position * key_heads + key_head) * key_dimension;
+    const std::size_t value_base = (position * value_heads + head) * value_dimension;
+    if (threadIdx.x == 0) {
+      float query_norm = 0.0F;
+      float key_norm = 0.0F;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        query_norm += query[query_base + key_index] * query[query_base + key_index];
+        key_norm += keys[query_base + key_index] * keys[query_base + key_index];
+      }
+      shared_query_scale = rsqrtf(query_norm + 1.0e-6F);
+      shared_key_scale = rsqrtf(key_norm + 1.0e-6F);
+      shared_beta = beta[position * value_heads + head];
+      shared_decay = expf(log_decay[position * value_heads + head]);
+    }
+    __syncthreads();
+    const float query_scale = shared_query_scale;
+    const float key_scale = shared_key_scale;
+    const float beta_value = shared_beta;
+    const float decay = shared_decay;
+    for (std::size_t value_index = threadIdx.x; value_index < value_dimension;
+         value_index += blockDim.x) {
+      float column[KEY_DIM];
+#pragma unroll
+      for (std::size_t key_index = 0; key_index < KEY_DIM; ++key_index) {
+        column[key_index] = state[state_base + key_index * value_dimension + value_index] * decay;
+      }
+      float key_value = 0.0F;
+#pragma unroll
+      for (std::size_t key_index = 0; key_index < KEY_DIM; ++key_index) {
+        key_value += column[key_index] * (keys[query_base + key_index] * key_scale);
+      }
+      const float delta = (values[value_base + value_index] - key_value) * beta_value;
+#pragma unroll
+      for (std::size_t key_index = 0; key_index < KEY_DIM; ++key_index) {
+        column[key_index] += (keys[query_base + key_index] * key_scale) * delta;
+      }
+      float result = 0.0F;
+#pragma unroll
+      for (std::size_t key_index = 0; key_index < KEY_DIM; ++key_index) {
+        result += column[key_index] * (query[query_base + key_index] * query_scale);
+      }
+#pragma unroll
+      for (std::size_t key_index = 0; key_index < KEY_DIM; ++key_index) {
+        state[state_base + key_index * value_dimension + value_index] = column[key_index];
+      }
+      output[value_base + value_index] = result * scale;
+    }
+    __syncthreads();
+  }
+}
+
 /** RMSNorm with BF16 scale, row-parallel (S04-P4).
  *
  * Bit-identical to `rms_norm_f32_bf16_scale`: the sum of squares is still accumulated sequentially in
@@ -1697,6 +1780,27 @@ inline cudaError_t launch_gated_delta_attention(
                                 : (dimensions.value_dimension < 128
                                        ? dimensions.value_dimension
                                        : (dimensions.value_dimension < 256 ? 128U : 256U));
+  // S04 reset phase 4: register-tiled recurrent transition for the model's 128-wide key geometry.
+  // Same arithmetic and order as the incumbent; the state column stops round-tripping through
+  // global memory on every pass.
+  if (dimensions.head_dimension == 128U && dimensions.value_heads != 0 &&
+      dimensions.key_value_heads != 0 && block != 0 && dimensions.value_heads <= 65535U) {
+    gated_delta_attention_register_f32<128U>
+        <<<static_cast<std::uint32_t>(dimensions.value_heads),
+           static_cast<std::uint32_t>(block), 0, stream>>>(
+            static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[0].value()].id)),
+            static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[1].value()].id)),
+            static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[2].value()].id)),
+            static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[3].value()].id)),
+            static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[4].value()].id)),
+            static_cast<float*>(buffer_pointer(plan, arena, command.buffers[5].value() >= 0
+                                                          ? plan.buffers()[command.buffers[5].value()].id
+                                                          : plan.buffers()[command.buffers[5].value()].id)),
+            static_cast<float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[6].value()].id)),
+            dimensions.key_value_heads, dimensions.value_heads, dimensions.head_dimension,
+            dimensions.value_dimension, dimensions.positions);
+    return cudaGetLastError();
+  }
   if (dimensions.value_heads != 0 && dimensions.key_value_heads != 0 && block != 0 &&
       dimensions.value_heads <= 65535U) {
     gated_delta_attention_parallel_f32<<<static_cast<std::uint32_t>(dimensions.value_heads),

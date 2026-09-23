@@ -64,3 +64,12 @@ reverted-on-correctness:
 # scale plane still row-major [rows][K/16]; no repack (donor StagedRaw scale staging not implemented)
 # identified, not yet implemented: 514 casts/token of constant bf16 norm weights -> f32,
 #   96 casts/token of constant bf16 GDN a/b weights (245760 elem) -> f32 (re-converted every token)
+
+# ---- phase 4 (GDN register-tiled recurrence) ----
+# GDN recurrence: 3.25 -> 0.81 ms/token (avg 67.8 -> 16.9 us/launch, 48 launches/token)
+# mechanism: each thread holds its whole value column (128 floats) in registers for the transition
+#   -> 1 read + 1 write of the 128x128 state instead of 5 reads + 2 writes
+#   -> registersPerThread 255; arithmetic and accumulation order unchanged (bit-identical)
+# correctness: GDN fixture max_abs=0.000312805 (identical to accepted), layer3 0.00106812 (identical),
+#   chat-60 60/60 tokens
+# device sum: 24.45 -> 22.14 ms/token

@@ -1143,22 +1143,35 @@ __global__ inline void rms_norm_f32_bf16_scale_parallel(
     std::size_t scale_elements, float epsilon, bool add_one_to_scale) {
   __shared__ float row_values[8192];
   __shared__ float denominator_slot;
+  __shared__ float warp_partials[32];
   const std::size_t rows = elements / scale_elements;
   const std::size_t row = blockIdx.x;
   if (row >= rows) return;
   const float* input_row = input + row * scale_elements;
   float* output_row = output + row * scale_elements;
+  // S04 performance reset E0b: the sum of squares used to be computed by a single thread
+  // (threadIdx.x == 0) serially over the whole row, which dominated this kernel (~25 us/launch).
+  // Each thread now accumulates a strided partial and the block reduces it. Reduction order changes,
+  // so this is tolerance-qualified rather than bit-identical.
+  float sum_squares = 0.0F;
   for (std::size_t index = threadIdx.x; index < scale_elements; index += blockDim.x) {
-    row_values[index] = input_row[index];
+    const float value = input_row[index];
+    row_values[index] = value;
+    sum_squares = fmaf(value, value, sum_squares);
   }
   __syncthreads();
+  for (int offset = 16; offset > 0; offset >>= 1) {
+    sum_squares += __shfl_down_sync(0xFFFFFFFFU, sum_squares, offset);
+  }
+  const int warp = static_cast<int>(threadIdx.x) >> 5;
+  if ((threadIdx.x & 31) == 0) warp_partials[warp] = sum_squares;
+  __syncthreads();
   if (threadIdx.x == 0) {
-    float sum_squares = 0.0F;
-    for (std::size_t index = 0; index < scale_elements; ++index) {
-      const float value = row_values[index];
-      sum_squares += value * value;
+    float total = 0.0F;
+    for (int index = 0; index < static_cast<int>(blockDim.x >> 5); ++index) {
+      total += warp_partials[index];
     }
-    denominator_slot = sqrtf(sum_squares / static_cast<float>(scale_elements) + epsilon);
+    denominator_slot = sqrtf(total / static_cast<float>(scale_elements) + epsilon);
   }
   __syncthreads();
   const float denominator = denominator_slot;
@@ -1673,7 +1686,9 @@ inline cudaError_t launch_residual(const ir::physical::CommandDescriptor& comman
   const auto& output = plan.buffers()[command.buffers[2].value()];
   const std::uint64_t bytes = left.size;
   if (bytes % sizeof(float) != 0) return cudaErrorInvalidValue;
-  residual_f32<<<1, 256, 0, stream>>>(
+  const std::uint32_t residual_blocks = static_cast<std::uint32_t>(
+      (static_cast<std::size_t>(bytes / sizeof(float)) + 255U) / 256U);
+  residual_f32<<<(residual_blocks == 0U ? 1U : residual_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, left.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, right.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)),
@@ -1689,7 +1704,9 @@ inline cudaError_t launch_silu_mul(const ir::physical::CommandDescriptor& comman
   const auto& value = plan.buffers()[command.buffers[1].value()];
   const auto& output = plan.buffers()[command.buffers[2].value()];
   if (gate.size % sizeof(float) != 0) return cudaErrorInvalidValue;
-  silu_mul_f32<<<1, 256, 0, stream>>>(
+  const std::uint32_t silu_blocks = static_cast<std::uint32_t>(
+      (static_cast<std::size_t>(gate.size / sizeof(float)) + 255U) / 256U);
+  silu_mul_f32<<<(silu_blocks == 0U ? 1U : silu_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, gate.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, value.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)),
@@ -1705,7 +1722,9 @@ inline cudaError_t launch_sigmoid_mul(const ir::physical::CommandDescriptor& com
   const auto& value = plan.buffers()[command.buffers[1].value()];
   const auto& output = plan.buffers()[command.buffers[2].value()];
   if (gate.size % sizeof(float) != 0) return cudaErrorInvalidValue;
-  sigmoid_mul_f32<<<1, 256, 0, stream>>>(
+  const std::uint32_t sigmoid_blocks = static_cast<std::uint32_t>(
+      (static_cast<std::size_t>(gate.size / sizeof(float)) + 255U) / 256U);
+  sigmoid_mul_f32<<<(sigmoid_blocks == 0U ? 1U : sigmoid_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, gate.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, value.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)),
@@ -1722,7 +1741,8 @@ inline cudaError_t launch_split(const ir::physical::CommandDescriptor& command,
   const auto& second = plan.buffers()[command.buffers[2].value()];
   const std::size_t first_elements = static_cast<std::size_t>(first.size / sizeof(float));
   const std::size_t total_elements = static_cast<std::size_t>(input.size / sizeof(float));
-  split_f32<<<1, 256, 0, stream>>>(
+  const std::uint32_t split_blocks = static_cast<std::uint32_t>((total_elements + 255U) / 256U);
+  split_f32<<<(split_blocks == 0U ? 1U : split_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<float*>(buffer_pointer(plan, arena, first.id)),
       static_cast<float*>(buffer_pointer(plan, arena, second.id)), first_elements,
@@ -1738,7 +1758,11 @@ inline cudaError_t launch_split_last(const ir::physical::CommandDescriptor& comm
   const auto& first = plan.buffers()[command.buffers[1].value()];
   const auto& second = plan.buffers()[command.buffers[2].value()];
   const auto dimensions = command.split;
-  split_last_f32<<<1, 256, 0, stream>>>(
+  const std::uint32_t split_last_blocks = static_cast<std::uint32_t>(
+      (static_cast<std::size_t>(dimensions.outer) *
+           (static_cast<std::size_t>(dimensions.first) + dimensions.second) +
+       255U) / 256U);
+  split_last_f32<<<(split_last_blocks == 0U ? 1U : split_last_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<float*>(buffer_pointer(plan, arena, first.id)),
       static_cast<float*>(buffer_pointer(plan, arena, second.id)), dimensions.outer,
@@ -1753,7 +1777,9 @@ inline cudaError_t launch_rope(const ir::physical::CommandDescriptor& command,
   const auto& input = plan.buffers()[command.buffers[0].value()];
   const auto& output = plan.buffers()[command.buffers[1].value()];
   const auto dimensions = command.rope;
-  rope_f32<<<1, 256, 0, stream>>>(
+  const std::uint32_t rope_blocks = static_cast<std::uint32_t>(
+      (static_cast<std::size_t>(dimensions.heads) * dimensions.head_dimension + 255U) / 256U);
+  rope_f32<<<(rope_blocks == 0U ? 1U : rope_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)), dimensions.heads,
       dimensions.head_dimension, dimensions.rotary_dimension, dimensions.position,
@@ -1809,7 +1835,10 @@ inline cudaError_t launch_causal_conv_silu(const ir::physical::CommandDescriptor
   const auto& weights = plan.buffers()[command.buffers[1].value()];
   const auto& state = plan.buffers()[command.buffers[2].value()];
   const auto& output = plan.buffers()[command.buffers[3].value()];
-  causal_conv_silu_f32<<<1, 256, 0, stream>>>(
+  // S04 performance reset E0b: was <<<1,256>>>; the kernel is a grid-stride loop over channels.
+  const std::uint32_t conv_blocks = static_cast<std::uint32_t>(
+      (static_cast<std::size_t>(dimensions.channels) + 255U) / 256U);
+  causal_conv_silu_f32<<<(conv_blocks == 0U ? 1U : conv_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, weights.id)),
       static_cast<std::uint16_t*>(buffer_pointer(plan, arena, state.id)),

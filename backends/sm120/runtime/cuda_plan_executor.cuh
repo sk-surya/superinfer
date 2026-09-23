@@ -1154,35 +1154,22 @@ __global__ inline void rms_norm_f32_bf16_scale_parallel(
     std::size_t scale_elements, float epsilon, bool add_one_to_scale) {
   __shared__ float row_values[8192];
   __shared__ float denominator_slot;
-  __shared__ float warp_partials[32];
   const std::size_t rows = elements / scale_elements;
   const std::size_t row = blockIdx.x;
   if (row >= rows) return;
   const float* input_row = input + row * scale_elements;
   float* output_row = output + row * scale_elements;
-  // S04 performance reset E0b: the sum of squares used to be computed by a single thread
-  // (threadIdx.x == 0) serially over the whole row, which dominated this kernel (~25 us/launch).
-  // Each thread now accumulates a strided partial and the block reduces it. Reduction order changes,
-  // so this is tolerance-qualified rather than bit-identical.
-  float sum_squares = 0.0F;
   for (std::size_t index = threadIdx.x; index < scale_elements; index += blockDim.x) {
-    const float value = input_row[index];
-    row_values[index] = value;
-    sum_squares = fmaf(value, value, sum_squares);
+    row_values[index] = input_row[index];
   }
-  __syncthreads();
-  for (int offset = 16; offset > 0; offset >>= 1) {
-    sum_squares += __shfl_down_sync(0xFFFFFFFFU, sum_squares, offset);
-  }
-  const int warp = static_cast<int>(threadIdx.x) >> 5;
-  if ((threadIdx.x & 31) == 0) warp_partials[warp] = sum_squares;
   __syncthreads();
   if (threadIdx.x == 0) {
-    float total = 0.0F;
-    for (int index = 0; index < static_cast<int>(blockDim.x >> 5); ++index) {
-      total += warp_partials[index];
+    float sum_squares = 0.0F;
+    for (std::size_t index = 0; index < scale_elements; ++index) {
+      const float value = row_values[index];
+      sum_squares += value * value;
     }
-    denominator_slot = sqrtf(total / static_cast<float>(scale_elements) + epsilon);
+    denominator_slot = sqrtf(sum_squares / static_cast<float>(scale_elements) + epsilon);
   }
   __syncthreads();
   const float denominator = denominator_slot;

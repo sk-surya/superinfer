@@ -6,9 +6,14 @@ Repository:
 
     sk-surya/superinfer
 
-Starting branch/head:
+Starting branch:
 
     sol/results-first-recovery
+
+The branch must already contain D-022 and this S04-performance-reset packet. Do not reset the branch to an older commit.
+
+Implementation reset baseline (the last pre-reset engineering commit):
+
     2983d285ca5db83a285c017291437893ea3f8958
 
 Your mission is to make end-to-end ordinary Qwen3.8-27B decode materially fast. This is not an architecture-review assignment and not an open-ended research assignment.

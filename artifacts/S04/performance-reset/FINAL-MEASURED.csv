@@ -73,3 +73,15 @@ reverted-on-correctness:
 # correctness: GDN fixture max_abs=0.000312805 (identical to accepted), layer3 0.00106812 (identical),
 #   chat-60 60/60 tokens
 # device sum: 24.45 -> 22.14 ms/token
+
+# ---- session final (after phase-4 GDN register tiling) ----
+# kernel_sum=22.17 device_span=23.34 idle=5.0% launches=2424
+# continuation_wall=20.51 ms/token  tok/s=48.8   D-021 PASS
+# top kernels ms/token: nvfp4_gemv(mid) 12.727 | rms_norm 4.036 | cast_bf16_to_f32 1.104
+#   | gdn_register 0.813 | linear_f32_rows 0.783 | nvfp4_gemv(wide) 0.588 | cast_f32_to_bf16 0.517
+#   | nvfp4_gemv(tiny) 0.385 | grouped_attention 0.318 | residual 0.187
+# attempted and rejected this session (measured worse, reverted):
+#   - no-shared RMSNorm staging (4.03 -> 10.62 ms/token)
+#   - default L1 code loads instead of ld.global.cg (13.671 -> 13.701)
+# not implemented (needs lowering changes, not runtime): constant-weight cast elimination,
+#   RMSNorm denominator-only + normalized-on-load (bf16<->f32 boundaries are semantic)

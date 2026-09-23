@@ -38,3 +38,17 @@ correctness:
 reverted-on-correctness:
 - parallel RMSNorm sum-of-squares gave 5.26->2.23 ms/token but FAILED D-021 (strict-row flips).
   Reverted to the exact serial reduction order; tolerance was NOT loosened.
+
+# ---- phase 1 (donor GEMV completion: per-shape schedule dispatch) ----
+# measured at tree = this commit; nsys CUPTI kernel sum, chat-60
+# GEMV ms/token: 17.34 -> 13.688
+# per-shape (rows x K, launches/token, ms/token, achieved GB/s):
+#   17408x5120 x128  5.861  1094   schedule <8,2,4,4> (16 rows/CTA)
+#   5120x17408 x64 + 5120x6144 x64  4.034  1077   <8,2,4,4>
+#   10240x5120 x48   1.240  1141   <8,2,4,4>
+#   6144x5120 x48    0.932   911   <8,2,4,4>
+#   12288x5120 x16   0.628   901   <8,2,4,4>
+#   248320x5120 x1   0.590  1211   <8,4,4,2> (32 rows/CTA)
+#   1024x5120 x32    0.401   234   <4,2,4,4> (8 rows/CTA)
+# notes: scale plane remains row-major [rows][K/16]; no repack. registers 64 (mid/tiny) / 96 (wide).
+#        still-open donor mechanism: staged/swizzled scale access into shared (Nvfp4ScaleAccess::StagedRaw).

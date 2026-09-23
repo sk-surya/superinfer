@@ -1507,14 +1507,21 @@ inline cudaError_t launch_nvfp4_linear_gemv_rows(const ir::physical::CommandDesc
         output_elements, input_elements);
     return true;
   };
-  const bool large = output_elements >= 16384U;
+  const bool large = output_elements >= 32768U;
+  const bool tiny = output_elements < 4096U;
   if (large && run(std::integral_constant<std::uint32_t, 8>{},
                    std::integral_constant<std::uint32_t, 4>{},
                    std::integral_constant<std::uint32_t, 4>{},
                    std::integral_constant<std::uint32_t, 2>{})) {
     return cudaGetLastError();
   }
-  if (!large && run(std::integral_constant<std::uint32_t, 4>{},
+  if (tiny && run(std::integral_constant<std::uint32_t, 4>{},
+                  std::integral_constant<std::uint32_t, 2>{},
+                  std::integral_constant<std::uint32_t, 4>{},
+                  std::integral_constant<std::uint32_t, 4>{})) {
+    return cudaGetLastError();
+  }
+  if (!large && run(std::integral_constant<std::uint32_t, 8>{},
                     std::integral_constant<std::uint32_t, 2>{},
                     std::integral_constant<std::uint32_t, 4>{},
                     std::integral_constant<std::uint32_t, 4>{})) {

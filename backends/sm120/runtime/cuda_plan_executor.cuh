@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
@@ -1143,16 +1144,14 @@ __global__ inline void gated_delta_attention_parallel_f32(
 
 /** RMSNorm with BF16 scale, row-parallel (S04-P4).
  *
- * Bit-identical to `rms_norm_f32_bf16_scale`: the sum of squares is still
- * accumulated sequentially in the original element order (thread 0 over a
- * shared-memory staging of the row), so the denominator is bit-for-bit the
- * same. The staging load and the output write are parallelised. One block per
- * row.
+ * Bit-identical to `rms_norm_f32_bf16_scale`: the sum of squares is still accumulated sequentially in
+ * the original element order (thread 0 over a shared-memory staging of the row), so the denominator
+ * is bit-for-bit the same. The staging load and the output write are parallelised. One block per row.
  */
 __global__ inline void rms_norm_f32_bf16_scale_parallel(
     const float* input, const std::uint16_t* scale, float* output, std::size_t elements,
     std::size_t scale_elements, float epsilon, bool add_one_to_scale) {
-  __shared__ float row_values[8192];
+  alignas(16) __shared__ float row_values[8192];
   __shared__ float denominator_slot;
   const std::size_t rows = elements / scale_elements;
   const std::size_t row = blockIdx.x;
@@ -1164,8 +1163,21 @@ __global__ inline void rms_norm_f32_bf16_scale_parallel(
   }
   __syncthreads();
   if (threadIdx.x == 0) {
+    // S04 reset phase 2: the accumulation order is unchanged (index 0,1,2,... strictly in
+    // sequence); only the shared-memory load width changed to float4, so the dependent FMA chain
+    // issues four terms per LDS instead of one. Every intermediate value is identical.
     float sum_squares = 0.0F;
-    for (std::size_t index = 0; index < scale_elements; ++index) {
+    const std::uint32_t count = static_cast<std::uint32_t>(scale_elements);
+    const std::uint32_t quads = count / 4U;
+    const float4* vector = reinterpret_cast<const float4*>(row_values);
+    for (std::uint32_t index = 0; index < quads; ++index) {
+      const float4 value = vector[index];
+      sum_squares += value.x * value.x;
+      sum_squares += value.y * value.y;
+      sum_squares += value.z * value.z;
+      sum_squares += value.w * value.w;
+    }
+    for (std::uint32_t index = quads * 4U; index < count; ++index) {
       const float value = row_values[index];
       sum_squares += value * value;
     }

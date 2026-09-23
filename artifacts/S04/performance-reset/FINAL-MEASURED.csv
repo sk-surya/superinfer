@@ -52,3 +52,15 @@ reverted-on-correctness:
 #   1024x5120 x32    0.401   234   <4,2,4,4> (8 rows/CTA)
 # notes: scale plane remains row-major [rows][K/16]; no repack. registers 64 (mid/tiny) / 96 (wide).
 #        still-open donor mechanism: staged/swizzled scale access into shared (Nvfp4ScaleAccess::StagedRaw).
+
+# ---- phase 2 (RMSNorm exact-order scalar path) + phase 1 reconciliation ----
+# measured at tree = this commit; nsys CUPTI kernel sum, chat-60, CUDA_VISIBLE_DEVICES=1
+# GEMV:      17.34 -> 13.52 ms/token
+# RMSNorm:    5.27 ->  4.06 ms/token   (float4 shared reads; accumulation order unchanged)
+# GDN:        3.25 ->  3.25 ms/token   (shared-state staging attempted, measured SLOWER 3.64; reverted)
+# device sum: 29.44 -> 24.45 ms/token
+# D-021: PASS (240 strict rows greedy-exact, 12 tie rows, all 8 cases)
+# per-shape GEMV schedules: >=32768 rows <8,4,4,2>; <4096 rows <4,2,4,4>; else <8,2,4,4>
+# scale plane still row-major [rows][K/16]; no repack (donor StagedRaw scale staging not implemented)
+# identified, not yet implemented: 514 casts/token of constant bf16 norm weights -> f32,
+#   96 casts/token of constant bf16 GDN a/b weights (245760 elem) -> f32 (re-converted every token)

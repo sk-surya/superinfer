@@ -1,6 +1,9 @@
 # E0a donor projection backend — measured
 
-git_sha: b964690
+git_sha: e495e2e
+# sha_convention: recorded sha is the COMMIT WHOSE TREE produced the measurement.
+#   (Each file was authored just before its own commit, so the sha captured from HEAD at
+#    write time was the parent. Corrected here; measured values unchanged.)
 gpu: RTX 5090 index 1 (CUDA_VISIBLE_DEVICES=1); GPU0 owned by user ninfer-serve
 artifact: build/evidence/qwen38-payload-v1-final-a.sinf sha256 e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5
 workload: chat-template 60 output tokens, 1 continuation step group

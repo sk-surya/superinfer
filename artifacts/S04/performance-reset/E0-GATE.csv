@@ -1,0 +1,18 @@
+# E0 architecture gate closure — steady-state continuation at HEAD
+git_sha: 0f04674e6f68b3cfd06fd0bd185e741758aff969
+gpu: RTX 5090 index 1 (CUDA_VISIBLE_DEVICES=1); GPU0 user-owned ninfer-serve untouched
+artifact: build/evidence/qwen38-payload-v1-final-a.sinf sha256 e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5
+workload: chat-template, 1 prefill token + 59 continuation steps
+
+kernel_sum_ms_per_token: 29.44
+gpu_device_span_ms_per_token: 30.58
+gpu_device_idle_pct: 3.7
+continuation_wall_ms_per_token: 29.7
+t1_wall_s: 28.00   (startup + 1 token, median of 2)
+t60_wall_s: 29.72  (clean, median of 2)
+launches_per_token: 2424
+device_span_tok_per_s: 32.7
+method: nsys sqlite (CUPTI_ACTIVITY_KIND_KERNEL) min(start)/max(end) over 60 tokens;
+        wall/token = (t60 - t1) / 58
+
+E0_GATE: PASS (device span 30.58 <= 40 ms/token)

@@ -601,6 +601,18 @@ __global__ inline void nvfp4_linear_warp_f32(const float* input, const std::uint
 // `[rows][K/16]` E4M3 scale layout and its FP32 activation recipe (weight-only quantization).
 // ============================================================================================
 
+/**
+ * Streaming 8-byte packed-code load (`ld.global.cg.v2.u32`). Weight codes are read exactly once per
+ * token, so bypassing L1 keeps the cache available for the reused activation vector.
+ */
+__device__ inline uint2 load_codes_streaming(const std::uint8_t* pointer) {
+  uint2 result;
+  asm volatile("ld.global.cg.v2.u32 {%0, %1}, [%2];\n"
+               : "=r"(result.x), "=r"(result.y)
+               : "l"(pointer));
+  return result;
+}
+
 /** Hardware E2M1x2 decode: one packed byte -> two float values. */
 __device__ inline float2 decode_e2m1x2_device(std::uint8_t storage) {
   __nv_fp4x2_e2m1 value;
@@ -661,8 +673,7 @@ __global__ __launch_bounds__(WARPS_PER_CTA * 32, MIN_BLOCKS) void nvfp4_gemv_row
     for (int local_row = 0; local_row < ROWS_PER_WARP; ++local_row) {
       const std::size_t row = row0 + static_cast<std::size_t>(local_row);
       if (row >= rows) break;
-      const uint2 codes = *reinterpret_cast<const uint2*>(
-          packed + row * code_row_bytes + code_offset);
+      const uint2 codes = load_codes_streaming(packed + row * code_row_bytes + code_offset);
       const float coefficient =
           decode_e4m3_scalar_device(scales[row * scale_row_bytes + group]) * tensor;
       const std::uint32_t words[2] = {codes.x, codes.y};

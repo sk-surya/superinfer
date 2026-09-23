@@ -2,92 +2,145 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: S04-P8R
+current_phase: S04-RESET
 status: autonomous_execution
-last_updated: "2026-09-11T00:00:00Z"
+last_updated: "2026-09-23T00:00:00Z"
 progress:
   total_phases: 14
   completed_phases: 9
   total_plans: 35
 completed_plans: 33
-current_phase_name: results-first-performance-ladder
+current_phase_name: reuse-first-5090-acceleration
 parallel_research_phase: none
 s03f_01_status: research_complete_capacity_quality_blocked
 ---
 
 # Project State
 
-**Project:** SuperInfer
-**Milestone:** V0 — Qwen proof, results-first performance ladder, Flash-Next architecture proof, research loop, model-family validation
-**Status:** RECOVERY SPRINT COMPLETE (success path). S03/S03-R complete under D-021; R01 baseline captured; R02 one profiler-selected optimization with retained fallback; R03 reproduced positive end-to-end decode gain in a second fresh session.
-**Current lane:** S04-P8R-Q **CLOSED as classification B**. The experimental SM120 native NVFP4 MMA provider was integrated behind a specialization-time selector (P7 retained as oracle/fallback) and run through the real model. It is materially faster (integrated chat-60 ~1.09-1.13x E2E; projection subsystem 55.3 proj-tok/s; PREDICTION-ONLY whole-model bound ~16 tok/s) and deterministic at the kernel level, **but activation quantisation breaks the unchanged, binding local gates**: layer-3 `max_abs=3.10462` (threshold 2e-2) and GDN `max_abs=6.044`. Model-level D-021 margin verdict passed (240 strict rows greedy-exact) while the stricter same-artifact contract flagged 11 greedy flips. **P7 remains production; kernel 27 is not promoted.** See `artifacts/S04/p8rq/S04-P8RQ-SUMMARY.md`.
-**Branch:** `sol/results-first-recovery` (draft PR #1)
-**Performance headline:** decode **0.032 -> ~8.3 tok/s** cumulative across 8 profiler-selected loops (~260x). GPU kernel time 11.54 -> 7.25 s / 60 tokens. Loops: NVFP4 row-parallel (33x), KV-attention caching (4,320x), NVFP4 vectorization (5.48x), GDN parallel (128x), RMSNorm parallel (21.9x), elementwise/cast block-parallel (39x), NVFP4 warp-per-row GEMV (1.66x local), NVFP4 decode decomposition + shape-adaptive dispatch (1.05x). Loop 7 warp-per-row and the shape-adaptive warp branch are tolerance-qualified and D-021-passing; loops 1-6 and the row-per-thread branch are bit-exact. **>=5 tok/s checkpoint MET; decode now GPU-bound.**
+**Project:** SuperInfer  
+**Branch:** sol/results-first-recovery  
+**Reset base:** 2983d28  
+**Active authority:** D-022 and .planning/phases/S04-performance-reset/
 
-## Operational Truth
+## Current lane
 
-| Workstream | Status | Key evidence |
-|---|---|---|
-| S00 foundation | Complete | S00-01/02 summaries |
-| S01 artifact + IR | Complete; Gate A reached (not user-passed) | S01-01/02/03 summaries |
-| S02 sm120 baseline | Complete; Gate B reached (not user-passed) | S02-03 summary |
-| S03 Qwen E2E | **Complete** | `S03-R-SUMMARY.md`; D-021 contract + session-1/2 evidence |
-| S03-R decisive closure | **Complete — Outcome A** | `artifacts/S03R/`; D-021 |
-| R01 baseline + profile | **Complete** | `R01-SUMMARY.md`; `benchmarks/runs/R01-baseline/`; 0.032 tok/s, NVFP4 97.7% |
-| R02 first bottleneck | **Complete** | `R02-PLAN.md`; row-parallel NVFP4, 33x local, bit-identical |
-| R03 first speed proof | **Complete — PASS** | `R03-SUMMARY.md`; `benchmarks/runs/R03/`; 7.6–9.4x E2E reproduced |
-| Recovery sprint | **Complete** | stop condition met |
-| S04 performance ladder | **P8-R spike complete; P8-RQ closed classification B (native performant, activation-quant breaks local gates); P7 retained as production** | `S04-P1/`..`S04-P8/`; `artifacts/S04/p8rq/`; 8 optimize loops, 0.032->~8.3 tok/s, D-021 pass |
-| S03F Flash-Next | S03F-01 retained; S03F-02+ deferred (D-019 binding, D-020 ordering) | `FLASH-NEXT-DESIGN.md`; capacity/quality blocked |
-| S05 autoresearch | Minimum runner implemented (`tools/autoresearch_runner.py`, `S04-AUTORESEARCH-RUNNER.md`); use it for experiment mechanics; do not expand scope | design grounded in the 8 proven loops |
-| S06/S07/S08 | Planned | Pending |
+The old incremental S04/P9 lane is frozen.
 
-## Current Focus
+The active lane is the **reuse-first RTX-5090 performance reset**:
 
-S03 correctness is closed and the first optimization loop is proven. The active lane is the profiler-driven S04 performance ladder: repeatedly (1) take a fresh profile of the current binary, (2) select the change with the largest defensible E2E opportunity, (3) optimize exactly that behind a retained fallback and an independent correctness oracle, (4) reproduce the benchmark in a second fresh session. Do not optimize by name or roadmap order. The minimum autoresearch runner is implemented (`tools/autoresearch_runner.py`, `S04-AUTORESEARCH-RUNNER.md`); use it for experiment mechanics and do not expand its scope. Loops 1-8 are complete; the >=5 decode tok/s checkpoint is met (~8.3 tok/s). **P8-R is RESOLVED**: the earlier classification-D was a false negative caused by a malformed PTX probe (missing trailing scale type `.ue4m3`). `sm_120a` **does** support warp-level block-scaled NVFP4 `mma.sync` (`mma.sync.aligned.m16n8k64.row.col.kind::mxf4nvf4.block_scale.scale_vec::4X.f32.e2m1.e2m1.f32.ue4m3`), proven to assemble (ptxas 13.1.115) and execute on the RTX 5090. The P8-R2 synthetic differential now passes **exactly (rel=0)** with random scales; the full fragment/scale contract is pinned in `S04-P8R-CONTRACT.md`. The Arm benchmark has been reconciled against the **derived 401-launch census** (`tools/qwen38_nvfp4_census.py`; the earlier six-class/321-launch table was partial and the earlier throughput labels were wrong). Corrected honest accounting: `mma_ms_per_token` 15.10, `activation_quant_ms_per_token` 2.97, `native_unfused_total` 18.07, repack one-time 1.00 ms. That is a **projection-subsystem** figure, not model throughput; the PREDICTION-ONLY whole-model bound with the P7 non-NVFP4 residual (44.3 ms/token) is **~16 tok/s** for the natural layout (~16.8 repacked), versus ~8.3 tok/s today. Arm B (N=8, batched/speculative) reaches ~496 proj-tok/s (610 repacked) assuming all columns accepted. The activation-quantization step adds a ~10% per-projection rel-L2 error on synthetic data (2.4-9.3% on real hidden vectors), so the decisive open item is the quality contract: wire the native path behind an experimental selector and run the layer-3/GDN differentials and full D-021. Per the promotion rule this requires a **separate provider/layout architecture decision**; even a performance-passing Arm A is not auto-promoted. See `tests/gpu/sm120/nvfp4_mma_bench.cu` and `artifacts/S04/p8r/p8r3_arm_abc_result.txt`. **Do not begin startup/TTFT or linear_f32 work until the P8-R quality gate is decided.** **Layer/GDN fixture debt is FIXED** (`tools/run_qwen38_layer_gdn_fixtures.py`; both now run and pass). The minimum autoresearch runner is implemented at `tools/autoresearch_runner.py`.
+1. bounded SparkInfer same-machine truth;
+2. E0a donor projection backend with unchanged Physical Plan command topology;
+3. E0b role fusion/lowering;
+4. <=40 ms/token architecture gate;
+5. recurrence + GPU feedback + CUDA graph + mature attention;
+6. >=67 tok/s one-week gate.
 
-Reference: `.planning/phases/R03-first-speed-proof/R03-SUMMARY.md`, `.planning/phases/R01-qwen-baseline/R01-SUMMARY.md`.
+Default action is implementation. Experiments exist only to select or verify code that will be integrated immediately.
+
+## Current performance truth
+
+P7 production remains about 123.6 ms/token device span / 8.1–8.3 tok/s.
+
+Measured P7 profile over 60 steps:
+
+- packed NVFP4 linears: about 82.87 ms/token;
+- linear_f32 control projections: about 18.51 ms/token;
+- RMSNorm: about 5.23 ms/token;
+- causal conv + SiLU: about 3.68 ms/token;
+- GDN recurrence: about 3.25 ms/token;
+- SiLU multiply: about 2.63 ms/token;
+- BF16->FP32 casts: about 1.09 ms/token;
+- device idle: about 2.3%.
+
+The immediate target is therefore the projection subsystem, not launch topology research.
+
+## P8/P9 status
+
+P8-R remains a valid hardware result: RTX 5090 / sm_120a executes native block-scaled NVFP4 MMA and the synthetic fragment/scale differential was proven.
+
+P8RQ remains evidence that the native path is fast but the tested activation recipe changed numerics materially.
+
+P9 is **not an active negative verdict on canonical NVFP4 quality**. The two-level implementation at 2983d28 writes raw global amax and then consumes it as s_global; the documented global_amax/(448*6) transformation is absent. E4M3/E2M1 encoder semantics also require independent verification. Therefore P9 is frozen, not extended.
+
+This does not block E0 because ordinary T=1 decode will first pursue a mature weight-only streaming path.
+
+## Architecture decision
+
+SuperInfer's near-term value is:
+
+- .sinf/provenance;
+- AOT specialization;
+- exact-shape/layout selection;
+- static memory planning;
+- fusion/layout generation;
+- correctness/evidence infrastructure.
+
+Commodity kernels may be imported/wrapped. Ownership of CUDA code is not itself a goal.
+
+The specialization-compiler thesis remains provisional and must later pass the retargeting-cost gate defined in 04-WEEK-ACCELERATION.md.
+
+## Active targets
+
+### E0a
+- donor-backed complete projection family;
+- specialized tiny control projections;
+- no command-topology changes;
+- full-model number by the first implementation milestone;
+- target <=55 ms/token.
+
+### E0b
+- gate/up/SwiGLU;
+- down/residual;
+- GDN norm/control/gating;
+- direct output routing;
+- survival <=40 ms/token;
+- target 30–35 ms/token.
+
+### Week
+- <=15 ms/token / >=67 tok/s;
+- >=70% of fastest qualified same-machine SparkInfer result;
+- stretch >=80 tok/s.
+
+## Frozen work
+
+Until the week gate:
+
+- P9/activation FP4 quality work;
+- persistent whole-model kernel;
+- TP2;
+- MTP/DSpark;
+- Flash-Next implementation;
+- generic scheduler/server;
+- new IR layers;
+- unrelated artifact redesign.
+
+Cheap metadata/inventory probes are allowed only if they do not interrupt the critical path.
+
+## Operational constraints
+
+- Do not disturb user-owned NInfer or other GPU workloads.
+- Do not assume a particular GPU index is free.
+- Preserve the pre-existing untracked S03 artifact.
+- P7 remains fallback/oracle until a replacement is qualified.
+- D-006 correctness remains binding.
+- D-014 autonomous understanding-gate override remains binding; no gate is falsely marked user-passed.
 
 ## Understanding Gate State
 
 | Field | Current value |
 |---|---|
-| Current historical gates | Gate A, Gate B, and L2 Gate C.1 (dense NVFP4 tensor cores) reached; none user-passed |
+| Historical gates | Gate A, Gate B, L2 Gate C.1 reached; none user-passed |
 | User status | Packets retained for later study under D-014 |
 | Highest passed L2 gate | None |
-| Debt policy | D-014 autonomous override active; no gate is marked passed on user's behalf |
-| Next understanding event | L2 Gate C.2 (attention/KV/QSA) or C.3 (fusion/persistent/MoE) at the next mechanism transition |
-| Blocked boundary | S03F-02+ until a lane decision + D-019 evidence |
-| Next optional user action | Study `.planning/understanding-packets/GATE-C1.md` and answer its five questions |
+| Debt policy | D-014 autonomous override active |
+| Next understanding event | C.2/C.3 when the relevant mechanism transition is actually reached |
+| S03F | Engineering deferred; D-019 still binding |
 
-Canonical protocol: [`.planning/UNDERSTANDING-GATES.md`](UNDERSTANDING-GATES.md). Durable user ledger: [`.planning/UNDERSTANDING.md`](UNDERSTANDING.md).
+Canonical protocol: .planning/UNDERSTANDING-GATES.md  
+Durable user ledger: .planning/UNDERSTANDING.md
 
-## Next Commands
+## Next command
 
-**Primary lane:** post-P8RQ. P7 is production. Two evidence-backed options, not yet selected:
-(a) the deferred startup/TTFT work (artifact/arena materialization dominates wall time and is now the
-largest remaining lever), and (b) a quantisation-research decision for a two-level activation scale
-(block-16 + global, or finer blocks) judged against the unchanged layer-3/GDN/D-021 gates. The
-experimental native provider stays in-tree behind `SUPERINFER_QWEN38_NATIVE_NVFP4` for that research.
+Read .planning/phases/S04-performance-reset/07-AGENT-KICKOFF.md and execute E0a immediately.
 
-**Deferred:** startup/TTFT, `linear_f32`, and Flash-Next selection pending the next lane choice. The
-autoresearch minimum runner is **already implemented** (`tools/autoresearch_runner.py`); use it for
-experiment mechanics, do not expand its scope.
-
-## Known Blockers / Decision Boundaries
-
-- Current headroom: runtime still ~2,424 launches/token, single-block kernels throughout; launch overhead and unfused elementwise kernels are open opportunities to evaluate from fresh profile evidence, not assumed targets.
-- `gated_delta_attention_f32` measured ~27% in the first R03 profile; this is an input to the fresh profile, not a preselected target.
-- A 103-token repeat prompt is a degenerate-repetition stress case (bilateral activation explosion); repetition robustness is S04+ research, not an S03 defect.
-- If acceptable full Flash-Next expert residency across two 5090s is not feasible, S03F-04 may not invent silent expert paging. Record a capacity/residency ADR first (D-019).
-- Dual-GPU runtime work must validate actual peer-access topology and retain a pinned-host staged fallback.
-- Flash-Next vision and MTP are explicitly outside S03F.
-- Historical S03-03 numerical-archaeology notes are archived at [`.planning/archive/S03-03-HISTORICAL-BLOCKERS.md`](archive/S03-03-HISTORICAL-BLOCKERS.md) and are superseded by D-021.
-
-## Planning Notes
-
-- `FLASH-NEXT-DESIGN.md` is the canonical architecture amendment for S03F.
-- S03-R superseded only the historical model-level `max_abs <= 0.5` gate via D-021; local kernel/layer gates are unchanged and binding.
-- Optimization hypotheses are now in scope (results-first lane); performance work never bypasses the D-021 correctness gate.
-- Decisions are captured in `.planning/DECISIONS.md`; changes require a superseding entry.
-- Order per D-020/D-021: S03-R -> R01 -> R02 -> R03 (done), then profiler-driven S04 ladder, then autoresearch/Flash-Next by evidence.
+Do not resume the historical profiler->5–15% optimization ladder.

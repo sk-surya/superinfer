@@ -162,3 +162,26 @@
 **Decision:** After S03 correctness closes, execute an early Qwen results-first lane consisting of a reproducible baseline/profile, one profiler-selected bottleneck optimization, and a reproduced end-to-end speedup before S03F-02+ Flash-Next runtime implementation. S03F-01 research evidence remains retained. Flash-Next remains a required V0 architecture proof unless separately superseded.
 **Why:** The current highest-value uncertainty is whether SuperInfer's hardware-specialization thesis produces measurable end-to-end Qwen improvement. Flash-Next is a broad six-plan architecture expansion and is independently quality-constrained by D-019; placing it before the first Qwen performance feedback loop delays the most decision-useful evidence.
 **Consequence:** D-006 correctness remains binding. D-019 remains binding. The first internal Qwen baseline may be captured immediately after S03 closes; broad S04 work and full autoresearch remain deferred until the results-first loop reproduces one positive end-to-end Qwen improvement.
+
+## D-022 — Reuse-first RTX-5090 performance reset
+
+**Status:** Accepted  
+**Supersedes:** D-020 ordering after the completed R01/R02/R03 proof; the active incremental S04/P9 sequencing; any state note that defers linear/control-projection work pending P9.  
+**Preserves:** D-001 through D-006 architectural/correctness invariants, D-009 hot-path rules, D-010 evidence discipline, D-014 autonomy, D-019 Flash-Next evidence boundary, and D-021 model-level acceptance.
+
+**Decision:** SuperInfer enters an implementation-first performance reset. The immediate data plane may reuse, port, or wrap mature open-source RTX-5090 primitives rather than hand-reimplement them. E0a replaces the complete projection subsystem behind the existing command topology, allowing deterministic offline/load-time prepared layouts through StoragePolicy. E0b then adds proven role-level fusions through lowering/Physical Plan changes. External benchmarking is bounded to establishing a same-machine frontier and selecting donor implementations; it is not a separate research program.
+
+**Primary comparator:** SparkInfer, because SuperInfer's pinned Qwen derivative is from the same gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090 lineage. NInfer is the primary C++/CUDA decode-kernel donor/reference. FlashInfer and CUTLASS/CuTe are preferred dependencies/references where stronger or simpler.
+
+**P9 status:** Frozen. The P9 two-level implementation at 2983d28 does not perform its documented global_amax/(448*6) transformation before consuming s_global, so its negative quality conclusion is not accepted as a canonical NVFP4 verdict. Native SM120 NVFP4 MMA capability remains proven and retained for later multi-token/pre-fill/verification work. P9 repair is not on the current critical path because T=1 decode first uses a mature weight-only streaming path.
+
+**Performance gates:**
+- E0a target: projection subsystem <=20 ms/token and full model <=55 ms/token.
+- E0b survival gate: <=40 ms/token; target 30–35 ms/token.
+- E0b at 40–49 ms/token permits one bounded 12-hour diagnosis/fix window.
+- E0b >=50 ms/token, or >40 after the bounded diagnosis, triggers a runtime/data-plane pivot instead of another incremental kernel ladder.
+- One-week target: <=15 ms/token / >=67 tok/s ordinary decode and >=70% of the fastest qualified same-machine SparkInfer result. Stretch: <=12.5 ms/token / >=80 tok/s.
+
+**Experiment budget:** Default action is integration. Microbenchmarks are allowed only to select or verify implementations intended for immediate integration. No isolated kernel experiment earns continued work without end-to-end impact or a decisive rejection.
+
+**Consequence:** P7 remains fallback/oracle during replacement, but it is no longer an optimization target. Work on P9, persistent whole-model kernels, TP2, speculation, Flash-Next, generic serving/scheduling, and new IR abstractions is frozen until the ordinary-decode week gate. After parity, the specialization-compiler thesis must pass a retargeting-cost falsification test rather than being assumed.

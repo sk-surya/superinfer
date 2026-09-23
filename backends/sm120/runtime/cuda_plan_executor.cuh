@@ -16,6 +16,9 @@
 #include <superinfer/base/views.hpp>
 #include <superinfer/ir/physical_plan.hpp>
 
+#include <cuda_fp4.h>
+#include <cuda_fp8.h>
+
 namespace superinfer::sm120::cuda_runtime {
 
 struct CudaExecutionTrace final {
@@ -582,6 +585,167 @@ __global__ inline void nvfp4_linear_warp_f32(const float* input, const std::uint
     sum += __shfl_down_sync(0xFFFFFFFFU, sum, offset);
   }
   if (lane == 0U) output[warp] = sum;
+}
+
+// ============================================================================================
+// S04 performance reset (D-022) E0a — donor-scheduled NVFP4 streaming GEMV.
+//
+// Schedule adapted from NInfer (Neroued/ninfer, Apache-2.0),
+// src/ops/linear/nvfp4/nvfp4_gemv.cuh + shapes/n5120_k6144.cu
+// (`Nvfp4GemvSchedule<8, 2, 16, 4, StagedRaw, Default, 2>`): multiple output rows per warp,
+// vector packed-code loads, independent accumulator chains, and hardware E2M1/E4M3 decode.
+//
+// The critical property P7 lacked: the activation value loaded by a lane is reused across
+// `ROWS_PER_WARP` output rows, so activation traffic drops by that factor. The donor's prepared
+// 128-row swizzled scale plane is not required here; SuperInfer keeps its existing row-major
+// `[rows][K/16]` E4M3 scale layout and its FP32 activation recipe (weight-only quantization).
+// ============================================================================================
+
+/** Hardware E2M1x2 decode: one packed byte -> two float values. */
+__device__ inline float2 decode_e2m1x2_device(std::uint8_t storage) {
+  __nv_fp4x2_e2m1 value;
+  value.__x = storage;
+  return static_cast<float2>(value);
+}
+
+/** Hardware E4M3 decode of a single (positive) block scale byte. */
+__device__ inline float decode_e4m3_scalar_device(std::uint8_t storage) {
+  __nv_fp8x2_e4m3 value;
+  value.__x = static_cast<std::uint16_t>(storage) | (static_cast<std::uint16_t>(storage) << 8);
+  return static_cast<float2>(value).x;
+}
+
+/**
+ * Donor-scheduled NVFP4 streaming GEMV: `output[row] = sum_k w[row,k] * input[k]`.
+ *
+ * Each warp owns ROWS_PER_WARP output rows. Every lane covers 16 K values per phase (exactly one
+ * 16-wide scale group per lane per phase) and reuses those 16 activations across all its rows.
+ * K must be a multiple of 512 and `rows` a multiple of WARPS_PER_CTA*ROWS_PER_WARP.
+ */
+template <int WARPS_PER_CTA, int ROWS_PER_WARP, int CHAINS, int MIN_BLOCKS>
+__global__ __launch_bounds__(WARPS_PER_CTA * 32, MIN_BLOCKS) void nvfp4_gemv_rows_f32(
+    const float* __restrict__ input, const std::uint8_t* __restrict__ packed,
+    const std::uint8_t* __restrict__ scales, const float* __restrict__ tensor_scale,
+    float* __restrict__ output, std::size_t rows, std::size_t inputs) {
+  constexpr int kValuesPerLane = 16;
+  constexpr int kValuesPerPhase = 32 * kValuesPerLane;  // 512
+  constexpr int kPairsPerLane = kValuesPerLane / 2;     // 8 packed bytes
+  constexpr int kRowsPerCta = WARPS_PER_CTA * ROWS_PER_WARP;
+
+  const int lane = static_cast<int>(threadIdx.x) & 31;
+  const int warp = static_cast<int>(threadIdx.x) >> 5;
+  const std::size_t row0 = static_cast<std::size_t>(blockIdx.x) * kRowsPerCta +
+                           static_cast<std::size_t>(warp) * ROWS_PER_WARP;
+  if (row0 >= rows) return;
+
+  const float tensor = *tensor_scale;
+  const std::size_t code_row_bytes = inputs / 2U;
+  const std::size_t scale_row_bytes = inputs / 16U;
+  const std::size_t phases = inputs / kValuesPerPhase;
+
+  float accumulators[ROWS_PER_WARP][CHAINS] = {};
+
+  for (std::size_t phase = 0; phase < phases; ++phase) {
+    const std::size_t value_base = phase * kValuesPerPhase + static_cast<std::size_t>(lane) * kValuesPerLane;
+    // One 16-value group per lane per phase: 4 x float4 activation loads.
+    const float4 a0 = *reinterpret_cast<const float4*>(input + value_base);
+    const float4 a1 = *reinterpret_cast<const float4*>(input + value_base + 4U);
+    const float4 a2 = *reinterpret_cast<const float4*>(input + value_base + 8U);
+    const float4 a3 = *reinterpret_cast<const float4*>(input + value_base + 12U);
+    const float activations[kValuesPerLane] = {a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w,
+                                               a2.x, a2.y, a2.z, a2.w, a3.x, a3.y, a3.z, a3.w};
+    const std::size_t group = phase * 32U + static_cast<std::size_t>(lane);
+    const std::size_t code_offset = phase * (kValuesPerPhase / 2U) + static_cast<std::size_t>(lane) * kPairsPerLane;
+
+#pragma unroll
+    for (int local_row = 0; local_row < ROWS_PER_WARP; ++local_row) {
+      const std::size_t row = row0 + static_cast<std::size_t>(local_row);
+      if (row >= rows) break;
+      const uint2 codes = *reinterpret_cast<const uint2*>(
+          packed + row * code_row_bytes + code_offset);
+      const float coefficient =
+          decode_e4m3_scalar_device(scales[row * scale_row_bytes + group]) * tensor;
+      const std::uint32_t words[2] = {codes.x, codes.y};
+#pragma unroll
+      for (int word = 0; word < 2; ++word) {
+#pragma unroll
+        for (int byte_in_word = 0; byte_in_word < 4; ++byte_in_word) {
+          const int pair = word * 4 + byte_in_word;
+          const std::uint8_t packed_byte =
+              static_cast<std::uint8_t>(words[word] >> (8 * byte_in_word));
+          const float2 decoded = decode_e2m1x2_device(packed_byte);
+          constexpr int kChainMask = CHAINS - 1;
+          const int chain_a = (2 * pair) & kChainMask;
+          const int chain_b = (2 * pair + 1) & kChainMask;
+          accumulators[local_row][chain_a] =
+              fmaf(decoded.x * coefficient, activations[2 * pair], accumulators[local_row][chain_a]);
+          accumulators[local_row][chain_b] = fmaf(decoded.y * coefficient,
+                                                  activations[2 * pair + 1],
+                                                  accumulators[local_row][chain_b]);
+        }
+      }
+    }
+  }
+
+#pragma unroll
+  for (int local_row = 0; local_row < ROWS_PER_WARP; ++local_row) {
+    const std::size_t row = row0 + static_cast<std::size_t>(local_row);
+    if (row >= rows) break;
+    float total = 0.0F;
+#pragma unroll
+    for (int chain = 0; chain < CHAINS; ++chain) total += accumulators[local_row][chain];
+    for (int offset = 16; offset > 0; offset >>= 1) {
+      total += __shfl_down_sync(0xFFFFFFFFU, total, offset);
+    }
+    if (lane == 0) output[row] = total;
+  }
+}
+
+/**
+ * E0a specialized small-output FP32 control projection (S04 performance reset, D-022).
+ *
+ * The incumbent `linear_f32` assigns one thread per output row and iterates the whole K serially at
+ * one FMA per step, so the 96 GDN control projections (48x5120 each) cost ~18.5 ms/token. This
+ * kernel assigns multiple rows per warp, vectorizes both the weight and the (shared) activation
+ * loads as float4, and reduces with warp shuffles.
+ */
+template <int WARPS_PER_CTA, int ROWS_PER_WARP>
+__global__ __launch_bounds__(WARPS_PER_CTA * 32, 4) void linear_f32_rows_kernel(
+    const float* __restrict__ input, const float* __restrict__ weights, float* __restrict__ output,
+    std::size_t inputs, std::size_t rows) {
+  constexpr int kRowsPerCta = WARPS_PER_CTA * ROWS_PER_WARP;
+  const int lane = static_cast<int>(threadIdx.x) & 31;
+  const int warp = static_cast<int>(threadIdx.x) >> 5;
+  const std::size_t row0 = static_cast<std::size_t>(blockIdx.x) * kRowsPerCta +
+                           static_cast<std::size_t>(warp) * ROWS_PER_WARP;
+  if (row0 >= rows) return;
+  const std::size_t quads = inputs / 4U;
+
+  float accumulators[ROWS_PER_WARP] = {};
+  for (std::size_t quad = static_cast<std::size_t>(lane); quad < quads; quad += 32U) {
+    const float4 activation = *reinterpret_cast<const float4*>(input + quad * 4U);
+#pragma unroll
+    for (int local_row = 0; local_row < ROWS_PER_WARP; ++local_row) {
+      const std::size_t row = row0 + static_cast<std::size_t>(local_row);
+      if (row >= rows) break;
+      const float4 weight = *reinterpret_cast<const float4*>(weights + row * inputs + quad * 4U);
+      accumulators[local_row] =
+          fmaf(weight.x, activation.x,
+               fmaf(weight.y, activation.y,
+                    fmaf(weight.z, activation.z,
+                         fmaf(weight.w, activation.w, accumulators[local_row]))));
+    }
+  }
+#pragma unroll
+  for (int local_row = 0; local_row < ROWS_PER_WARP; ++local_row) {
+    const std::size_t row = row0 + static_cast<std::size_t>(local_row);
+    if (row >= rows) break;
+    float total = accumulators[local_row];
+    for (int offset = 16; offset > 0; offset >>= 1) {
+      total += __shfl_down_sync(0xFFFFFFFFU, total, offset);
+    }
+    if (lane == 0) output[row] = total;
+  }
 }
 
 // ============================================================================================
@@ -1286,6 +1450,73 @@ inline cudaError_t launch_nvfp4_linear(const ir::physical::CommandDescriptor& co
 }
 
 /**
+ * E0a donor-scheduled streaming GEMV launch (S04 performance reset, D-022).
+ *
+ * Consumes the existing row-major packed weights (`[rows][K/2]`), the existing row-major E4M3
+ * block-scale plane (`[rows][K/16]`), and the existing FP32 activation buffer. No per-token
+ * conversion kernel and no repack: the schedule is what changed.
+ */
+inline cudaError_t launch_nvfp4_linear_gemv_rows(const ir::physical::CommandDescriptor& command,
+                                                 const ir::physical::Plan& plan, void* arena, void*,
+                                                 cudaStream_t stream) {
+  if (command.buffers.size() != 5) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& packed = plan.buffers()[command.buffers[1].value()];
+  const auto& scales = plan.buffers()[command.buffers[2].value()];
+  const auto& tensor_scale = plan.buffers()[command.buffers[3].value()];
+  const auto& output = plan.buffers()[command.buffers[4].value()];
+  const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
+  const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
+  constexpr std::uint32_t kWarpsPerCta = 8;
+  constexpr std::uint32_t kRowsPerWarp = 4;
+  constexpr std::uint32_t kChains = 4;
+  constexpr std::uint32_t kRowsPerCta = kWarpsPerCta * kRowsPerWarp;
+  if (input_elements == 0U || output_elements == 0U || input_elements % 512U != 0U ||
+      output_elements % kRowsPerCta != 0U) {
+    return cudaErrorInvalidValue;
+  }
+  const std::uint32_t blocks = static_cast<std::uint32_t>(output_elements / kRowsPerCta);
+  nvfp4_gemv_rows_f32<kWarpsPerCta, kRowsPerWarp, kChains, 2>
+      <<<(blocks == 0U ? 1U : blocks), kWarpsPerCta * 32U, 0, stream>>>(
+          static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+          static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id)),
+          static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)),
+          static_cast<const float*>(buffer_pointer(plan, arena, tensor_scale.id)),
+          static_cast<float*>(buffer_pointer(plan, arena, output.id)), output_elements,
+          input_elements);
+  return cudaGetLastError();
+}
+
+/**
+ * E0a launch for the specialized FP32 control projection (kernel 30).
+ */
+inline cudaError_t launch_linear_f32_rows(const ir::physical::CommandDescriptor& command,
+                                          const ir::physical::Plan& plan, void* arena, void*,
+                                          cudaStream_t stream) {
+  if (command.buffers.size() != 3) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& weights = plan.buffers()[command.buffers[1].value()];
+  const auto& output = plan.buffers()[command.buffers[2].value()];
+  const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
+  const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
+  constexpr std::uint32_t kWarpsPerCta = 8;
+  constexpr std::uint32_t kRowsPerWarp = 2;
+  constexpr std::uint32_t kRowsPerCta = kWarpsPerCta * kRowsPerWarp;
+  if (input_elements == 0U || output_elements == 0U || input_elements % 4U != 0U) {
+    return cudaErrorInvalidValue;
+  }
+  const std::uint32_t blocks =
+      static_cast<std::uint32_t>((output_elements + kRowsPerCta - 1U) / kRowsPerCta);
+  linear_f32_rows_kernel<kWarpsPerCta, kRowsPerWarp>
+      <<<(blocks == 0U ? 1U : blocks), kWarpsPerCta * 32U, 0, stream>>>(
+          static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+          static_cast<const float*>(buffer_pointer(plan, arena, weights.id)),
+          static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,
+          output_elements);
+  return cudaGetLastError();
+}
+
+/**
  * S04-P8R-Q experimental native NVFP4 projection launch.
  *
  * Quantises the activation into the session workspace (allocated once; no allocation here) and runs
@@ -1801,7 +2032,8 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
         return base::Status::invalid_argument("CUDA F32-to-BF16 cast has invalid buffers");
       }
       return {};
-    case 10: {
+    case 10:
+    case 30: {
       if (!exact_buffers(3) || plan.buffers()[command.buffers[0].value()].size == 0 ||
           !all_dtype(ir::physical::PhysicalDType::f32) ||
           plan.buffers()[command.buffers[1].value()].size == 0 ||
@@ -1822,6 +2054,10 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
           weight_elements / input_elements != output_elements) {
         return base::Status::invalid_argument(
             "CUDA LM head weight shape does not match input and output");
+      }
+      if (command.kernel.value() == 30 && input_elements % 4U != 0U) {
+        return base::Status::invalid_argument(
+            "CUDA specialized control projection requires K % 4 == 0");
       }
       return {};
     }
@@ -1849,7 +2085,8 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
     }
     case 13:
     case 27:
-    case 28: {
+    case 28:
+    case 29: {
       if (!exact_buffers(5)) {
         return base::Status::invalid_argument(
             "CUDA NVFP4 linear requires f32 input, packed weights, scales, tensor scale, and output buffers");
@@ -1891,6 +2128,13 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
             command.workspace_size == 0U) {
           return base::Status::invalid_argument(
               "CUDA native NVFP4 MMA requires K % 64 == 0, rows % 16 == 0, and workspace");
+        }
+      }
+      if (command.kernel.value() == 29) {
+        // Donor-schedule streaming GEMV contract: 512-wide K phases, 32-row CTAs.
+        if (input_elements % 512U != 0U || output_elements % 32U != 0U) {
+          return base::Status::invalid_argument(
+              "CUDA NVFP4 streaming GEMV requires K % 512 == 0 and rows % 32 == 0");
         }
       }
       return {};
@@ -2196,6 +2440,8 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 26: return &launch_split_last;
     // S04-P8R-Q experimental native SM120 block-scaled NVFP4 MMA projection.
     case 27: return &launch_nvfp4_linear_mma;
+    case 29: return &launch_nvfp4_linear_gemv_rows;
+    case 30: return &launch_linear_f32_rows;
     case 28: return &launch_nvfp4_linear_mma_two_level;
     default: return nullptr;
   }

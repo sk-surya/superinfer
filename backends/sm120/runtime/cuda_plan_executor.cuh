@@ -1233,9 +1233,11 @@ __global__ inline void gated_delta_attention_register_f32(
  */
 __global__ inline void rms_norm_f32_bf16_scale_parallel(
     const float* input, const std::uint16_t* scale, float* output, std::size_t elements,
-    std::size_t scale_elements, float epsilon, bool add_one_to_scale) {
+    std::size_t scale_elements, float epsilon, bool add_one_to_scale, bool parallel_mode,
+    bool audit_enabled, float* audit) {
   alignas(16) __shared__ float row_values[8192];
   __shared__ float denominator_slot;
+  __shared__ float warp_partials[32];
   const std::size_t rows = elements / scale_elements;
   const std::size_t row = blockIdx.x;
   if (row >= rows) return;
@@ -1245,6 +1247,7 @@ __global__ inline void rms_norm_f32_bf16_scale_parallel(
     row_values[index] = input_row[index];
   }
   __syncthreads();
+  float serial_denominator = 0.0F;
   if (threadIdx.x == 0) {
     // S04 reset phase 2: the accumulation order is unchanged (index 0,1,2,... strictly in
     // sequence); only the shared-memory load width changed to float4, so the dependent FMA chain
@@ -1264,7 +1267,59 @@ __global__ inline void rms_norm_f32_bf16_scale_parallel(
       const float value = row_values[index];
       sum_squares += value * value;
     }
-    denominator_slot = sqrtf(sum_squares / static_cast<float>(scale_elements) + epsilon);
+    serial_denominator = sqrtf(sum_squares / static_cast<float>(scale_elements) + epsilon);
+  }
+  __syncthreads();
+
+  // ---------------------------------------------------------------------------------------
+  // Experimental parallel reduction (S04 performance reset E0b form), selectable at runtime so
+  // the accepted serial order stays the production path. The FP64 audit is diagnostic only: it
+  // measures which order is closer to a double-precision RMSNorm denominator on the real inputs
+  // this model actually feeds the norm.
+  // ---------------------------------------------------------------------------------------
+  float parallel_denominator = 0.0F;
+  if (parallel_mode || audit_enabled) {
+    float partial = 0.0F;
+    for (std::size_t index = threadIdx.x; index < scale_elements; index += blockDim.x) {
+      const float value = row_values[index];
+      partial = fmaf(value, value, partial);
+    }
+    for (int offset = 16; offset > 0; offset >>= 1) {
+      partial += __shfl_down_sync(0xFFFFFFFFU, partial, offset);
+    }
+    if ((threadIdx.x & 31) == 0) warp_partials[threadIdx.x >> 5] = partial;
+    __syncthreads();
+    if (threadIdx.x == 0) {
+      float total = 0.0F;
+      for (int index = 0; index < static_cast<int>(blockDim.x >> 5); ++index) {
+        total += warp_partials[index];
+      }
+      parallel_denominator =
+          sqrtf(total / static_cast<float>(scale_elements) + epsilon);
+    }
+    __syncthreads();
+  }
+  if (audit_enabled && audit != nullptr && threadIdx.x == 0) {
+    double sum64 = 0.0;
+    for (std::size_t index = 0; index < scale_elements; ++index) {
+      const double value = static_cast<double>(row_values[index]);
+      sum64 += value * value;
+    }
+    const double denominator64 =
+        sqrt(sum64 / static_cast<double>(scale_elements) + static_cast<double>(epsilon));
+    const double serial_error = fabs(static_cast<double>(serial_denominator) - denominator64);
+    const double parallel_error = fabs(static_cast<double>(parallel_denominator) - denominator64);
+    atomicAdd(&audit[0], static_cast<float>(serial_error));
+    atomicAdd(&audit[1], static_cast<float>(parallel_error));
+    atomicAdd(&audit[2], 1.0F);
+    if (denominator64 > 0.0) {
+      atomicAdd(&audit[3], static_cast<float>(serial_error / denominator64));
+      atomicAdd(&audit[4], static_cast<float>(parallel_error / denominator64));
+      atomicAdd(&audit[5], static_cast<float>(denominator64));
+    }
+  }
+  if (threadIdx.x == 0) {
+    denominator_slot = parallel_mode ? parallel_denominator : serial_denominator;
   }
   __syncthreads();
   const float denominator = denominator_slot;
@@ -2059,6 +2114,35 @@ inline cudaError_t launch_rms_norm(const ir::physical::CommandDescriptor& comman
   return cudaGetLastError();
 }
 
+/** Diagnostic-only FP64 RMSNorm audit accumulator (6 slots). Never used by production paths. */
+inline float* rms_audit_buffer() {
+  static float* buffer = nullptr;
+  static bool enabled = false;
+  if (buffer == nullptr) {
+    enabled = std::getenv("SUPERINFER_QWEN38_RMS_AUDIT") != nullptr;
+    if (!enabled) return nullptr;
+    if (cudaMalloc(&buffer, sizeof(float) * 8U) != cudaSuccess) {
+      buffer = nullptr;
+      return nullptr;
+    }
+    (void)cudaMemset(buffer, 0, sizeof(float) * 8U);
+  }
+  return buffer;
+}
+
+/** Prints the FP64 audit accumulator: [serial_abs_err, parallel_abs_err, rows, serial_rel, parallel_rel, denom64]. */
+inline void rms_audit_report() {
+  float* buffer = rms_audit_buffer();
+  if (buffer == nullptr) return;
+  float host[8] = {0};
+  if (cudaMemcpy(host, buffer, sizeof(float) * 8U, cudaMemcpyDeviceToHost) != cudaSuccess) return;
+  const double rows = host[2] > 0.0F ? static_cast<double>(host[2]) : 1.0;
+  std::printf(
+      "RMS_AUDIT rows=%.0f serial_abs_mean=%.6e parallel_abs_mean=%.6e "
+      "serial_rel_mean=%.6e parallel_rel_mean=%.6e denom64_sum=%.6e\n",
+      rows, host[0] / rows, host[1] / rows, host[3] / rows, host[4] / rows, host[5]);
+}
+
 inline cudaError_t launch_rms_norm_bf16(const ir::physical::CommandDescriptor& command,
                                         const ir::physical::Plan& plan, void* arena, void*,
                                         cudaStream_t stream) {
@@ -2075,11 +2159,16 @@ inline cudaError_t launch_rms_norm_bf16(const ir::physical::CommandDescriptor& c
   }
   const std::size_t rows = elements / scale_elements;
   if (scale_elements <= 8192U && rows != 0 && rows <= 65535U) {
+    static const bool rms_parallel_enabled =
+        std::getenv("SUPERINFER_QWEN38_RMS_PARALLEL") != nullptr;
+    static const bool rms_audit_enabled =
+        std::getenv("SUPERINFER_QWEN38_RMS_AUDIT") != nullptr;
     rms_norm_f32_bf16_scale_parallel<<<static_cast<std::uint32_t>(rows), 256, 0, stream>>>(
         static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
         static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, scale.id)),
         static_cast<float*>(buffer_pointer(plan, arena, output.id)), elements, scale_elements,
-        command.epsilon, command.add_one_to_scale);
+        command.epsilon, command.add_one_to_scale, rms_parallel_enabled, rms_audit_enabled,
+        rms_audit_buffer());
     return cudaGetLastError();
   }
   rms_norm_f32_bf16_scale<<<1, 1, 0, stream>>>(

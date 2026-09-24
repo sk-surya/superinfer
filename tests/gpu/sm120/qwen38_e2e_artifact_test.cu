@@ -1026,5 +1026,6 @@ int main() {
   if (capacity_rejected) std::cout << " capacity_rejection=pass";
   if (boundary_executed) std::cout << " boundary_position=4095 boundary_allocations=stable";
   std::cout << '\n';
+  superinfer::sm120::cuda_runtime::detail::rms_audit_report();
   return 0;
 }

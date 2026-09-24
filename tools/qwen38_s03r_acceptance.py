@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import struct
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -213,8 +214,54 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def repeat_semantics(contract: dict[str, Any], d021_present: bool,
+                     repeat: int) -> tuple[bool, str | None]:
+    """A repeatability requirement cannot be met by a single capture.
+
+    One hash trivially has cardinality one, so ``repeat == 1`` would report ``repeatable`` for any
+    implementation. Treat that as a misconfiguration (inconclusive) rather than silently widening the
+    requested repeat count.
+    """
+    required = bool(contract.get("require_repeatable", True)) or d021_present
+    if required and repeat < 2:
+        return True, "D-021 repeatability requires at least two fresh process captures"
+    return False, None
+
+
+def first_divergence(a: bytes, b: bytes, vocab: int) -> dict[str, Any]:
+    """Locate the exact first difference between two FP32 logits captures."""
+    result: dict[str, Any] = {"identical": a == b, "length_a": len(a), "length_b": len(b)}
+    if a == b:
+        return result
+    limit = min(len(a), len(b))
+    first_byte = next((index for index in range(limit) if a[index] != b[index]), None)
+    if first_byte is None:
+        result["reason"] = "length mismatch with identical prefix"
+        return result
+    result["first_differing_byte"] = first_byte
+    element = first_byte // 4
+    result["first_differing_element"] = element
+    if vocab > 0:
+        result["first_differing_row"] = element // vocab
+        result["first_differing_vocab_index"] = element % vocab
+    floats_a = struct.unpack(f"<{len(a) // 4}f", a)
+    floats_b = struct.unpack(f"<{len(b) // 4}f", b)
+    result["value_run_a"] = floats_a[element]
+    result["value_run_b"] = floats_b[element]
+    result["abs_difference"] = abs(floats_a[element] - floats_b[element])
+    if vocab > 0:
+        row = element // vocab
+        row_a = floats_a[row * vocab:(row + 1) * vocab]
+        row_b = floats_b[row * vocab:(row + 1) * vocab]
+        result["max_abs_over_row"] = max(
+            (abs(x - y) for x, y in zip(row_a, row_b)), default=0.0)
+        result["differing_elements_in_row"] = sum(1 for x, y in zip(row_a, row_b) if x != y)
+    return result
+
+
 def _run_superinfer_case(executable: Path, artifact: Path, case: dict[str, Any],
-                         output_dir: Path, repeat: int) -> dict[str, Any]:
+                         output_dir: Path, repeat: int,
+                         retain_dir: Path | None = None) -> dict[str, Any]:
     token_ids = [int(t) for t in case["token_ids"]]
     output_dir.mkdir(parents=True, exist_ok=True)
     runs: list[dict[str, Any]] = []
@@ -252,6 +299,10 @@ def _run_superinfer_case(executable: Path, artifact: Path, case: dict[str, Any],
             "state_buffers": parsed["state_buffers"],
             "logits": list(struct.unpack(f"<{len(payload) // 4}f", payload)),
         })
+    if retain_dir is not None:
+        retain_dir.mkdir(parents=True, exist_ok=True)
+        for artefact in sorted(output_dir.iterdir()):
+            shutil.copy2(artefact, retain_dir / artefact.name)
     return {
         "id": case["id"],
         "token_ids": token_ids,
@@ -276,12 +327,19 @@ def main() -> int:
                         help="JSON with same_artifact_* bounds; decision uses it verbatim")
     parser.add_argument("--d021-contract", type=Path, default=None,
                         help="D-021 margin-qualified contract JSON; adds a verdict section")
+    parser.add_argument("--retain-repeat-captures", type=Path, default=None,
+                        help="directory to retain every per-iteration capture, stdout/stderr, and a "
+                             "first-divergence JSON when repeats differ")
     args = parser.parse_args()
     if args.repeat < 1:
         raise SystemExit("--repeat must be positive")
 
     corpus = json.loads(args.corpus.read_text())
     contract = json.loads(args.contract.read_text()) if args.contract else {}
+    # A repeatability requirement cannot be satisfied by a single capture: one hash trivially has
+    # cardinality one. Never silently widen the requested repeat count; report inconclusive.
+    repeat_semantics_invalid, repeat_semantics_reason = repeat_semantics(
+        contract, args.d021_contract is not None, args.repeat)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     case_reports: list[dict[str, Any]] = []
     all_rows: list[dict[str, Any]] = []
@@ -300,9 +358,35 @@ def main() -> int:
             vocab = int(ref_diag["logits_per_step"])
             rows = len(token_ids)
             ref_rows = [ref_logits[i * vocab:(i + 1) * vocab] for i in range(rows)]
+            retain_dir = (args.retain_repeat_captures / case_id
+                          if args.retain_repeat_captures is not None else None)
             target = _run_superinfer_case(args.executable, args.artifact, case,
-                                          Path(temporary) / case_id, args.repeat)
+                                          Path(temporary) / case_id, args.repeat, retain_dir)
             overall_repeatable = overall_repeatable and target["repeatable"]
+            if retain_dir is not None and not target["repeatable"]:
+                hashes = {r["payload_sha256"]: i for i, r in enumerate(target["runs"])}
+                mismatch_path = retain_dir / "mismatch.json"
+                mismatch: dict[str, Any] = {
+                    "case": case_id,
+                    "vocab": vocab,
+                    "runs": [{"iteration": r["iteration"],
+                              "payload_sha256": r["payload_sha256"],
+                              "greedy": r["greedy"]} for r in target["runs"]],
+                }
+                if len(hashes) > 1:
+                    with (retain_dir / "superinfer-0.f32").open("rb") as stream:
+                        baseline = stream.read()
+                    if len(token_ids) > 1:
+                        with (retain_dir / "superinfer-0-continuation.f32").open("rb") as stream:
+                            baseline += stream.read()
+                    for run in target["runs"][1:]:
+                        if run["payload_sha256"] == target["runs"][0]["payload_sha256"]:
+                            continue
+                        current = struct.pack(f"<{len(run['logits'])}f", *run["logits"])
+                        mismatch["first_divergence_vs_run0"] = first_divergence(
+                            baseline, current, vocab)
+                        break
+                mismatch_path.write_text(json.dumps(mismatch, indent=2, sort_keys=True) + "\n")
             first = target["runs"][0]["logits"]
             cand_rows = [first[i * vocab:(i + 1) * vocab] for i in range(rows)]
             row_metrics = [compare_distribution(ref_rows[i], cand_rows[i], top_k=args.top_k)
@@ -328,6 +412,8 @@ def main() -> int:
                      for i in range(rows)] if source_rows is not None else None),
             })
             all_rows.extend(row_metrics)
+    if repeat_semantics_invalid:
+        overall_repeatable = False
     summary = aggregate_rows(all_rows, repeatable=overall_repeatable)
     decision = decide_s03r(summary, contract)
     d021_verdict = None
@@ -336,6 +422,10 @@ def main() -> int:
         d021_rows = {report["id"]: report["rows"] for report in case_reports
                      if report.get("status") == "pass"}
         d021_verdict = decide_d021(d021_rows, d021, overall_repeatable)
+    if repeat_semantics_invalid:
+        decision = {"decision": "inconclusive", "reasons": [repeat_semantics_reason]}
+        if d021_verdict is not None:
+            d021_verdict = {"verdict": "inconclusive", "reasons": [repeat_semantics_reason]}
     report = {
         "schema": SCHEMA,
         "artifact": {"path": str(args.artifact), "sha256": _sha256(args.artifact)},

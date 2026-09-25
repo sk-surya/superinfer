@@ -98,7 +98,13 @@ def main() -> int:
         )
     layer.load_state_dict(state, strict=True)
 
-    original_conv_update = layer.linear_attn.causal_conv1d_update
+    # transformers 5.16 exposes the fused GDN update as a module-level function,
+    # not a method on the layer. Wrap the module function for this layer.
+    import transformers.models.qwen3_5.modeling_qwen3_5 as modeling_module
+
+    if not hasattr(modeling_module, "causal_conv1d_update"):
+        raise SystemExit("transformers GDN fused update entry point is missing")
+    original_conv_update = modeling_module.causal_conv1d_update
 
     def deployment_conv_update(mixed_qkv, *conv_args,
                                _original_conv_update=original_conv_update, **conv_kwargs):
@@ -107,7 +113,7 @@ def main() -> int:
         rounded = mixed_qkv.to(torch.bfloat16).to(torch.float32)
         return _original_conv_update(rounded, *conv_args, **conv_kwargs)
 
-    layer.linear_attn.causal_conv1d_update = deployment_conv_update
+    modeling_module.causal_conv1d_update = deployment_conv_update
 
     cache = DeploymentStorageDynamicCache(config=config, round_linear_state=True)
     if custom_step:
@@ -120,32 +126,28 @@ def main() -> int:
             conv_elements = 4 * 10240
             if state_values.numel() != delta_elements + conv_elements:
                 raise SystemExit("custom GDN state has an unexpected element count")
-            cache.layers[args.layer].recurrent_states = state_values[:delta_elements].reshape(
+            cache.layers[args.layer].recurrent_states[0] = state_values[:delta_elements].reshape(
                 1, 48, 128, 128
             ).clone()
-            cache.layers[args.layer].conv_states = state_values[delta_elements:].reshape(
+            cache.layers[args.layer].conv_states[0] = state_values[delta_elements:].reshape(
                 4, 10240
             ).transpose(0, 1).unsqueeze(0).clone()
-            cache.layers[args.layer].dtype = cache.layers[args.layer].recurrent_states.dtype
-            cache.layers[args.layer].device = cache.layers[args.layer].recurrent_states.device
-            cache.layers[args.layer].is_conv_states_initialized = True
-            cache.layers[args.layer].is_recurrent_states_initialized = True
-            cache.layers[args.layer].has_previous_state = True
+            cache.layers[args.layer].is_conv_states_initialized[0] = True
+            cache.layers[args.layer].is_recurrent_states_initialized[0] = True
+            cache.layers[args.layer].has_previous_state[0] = True
         else:
-            cache.layers[args.layer].conv_states = torch.zeros(
+            cache.layers[args.layer].conv_states[0] = torch.zeros(
                 (1, layer.linear_attn.conv_dim, layer.linear_attn.conv_kernel_size),
                 dtype=torch.float32,
             )
-            cache.layers[args.layer].recurrent_states = torch.zeros(
+            cache.layers[args.layer].recurrent_states[0] = torch.zeros(
                 (1, layer.linear_attn.num_v_heads, layer.linear_attn.head_k_dim,
                  layer.linear_attn.head_v_dim),
                 dtype=torch.float32,
             )
-            cache.layers[args.layer].dtype = torch.float32
-            cache.layers[args.layer].device = torch.device("cpu")
-            cache.layers[args.layer].is_conv_states_initialized = True
-            cache.layers[args.layer].is_recurrent_states_initialized = True
-            cache.layers[args.layer].has_previous_state = True
+            cache.layers[args.layer].is_conv_states_initialized[0] = True
+            cache.layers[args.layer].is_recurrent_states_initialized[0] = True
+            cache.layers[args.layer].has_previous_state[0] = True
     outputs = []
     attention_outputs = []
     recurrent_states = []
@@ -217,7 +219,7 @@ def main() -> int:
                 past_key_values=cache,
             )
         outputs.append(output.reshape(-1).contiguous())
-        recurrent_states.append(cache.layers[args.layer].recurrent_states.reshape(-1).float().detach().clone())
+        recurrent_states.append(cache.layers[args.layer].recurrent_states[0].reshape(-1).float().detach().clone())
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.cat(outputs).numpy().astype("float32").tofile(args.output)

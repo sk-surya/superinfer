@@ -1,0 +1,42 @@
+NVFP4 GEMV layout/candidate benchmark (device: NVIDIA GeForce RTX 5090)
+lm_head_248320x5120  (packed 635.7 MB, scales 79.46 MB)
+  incumbent                 1.347 ms     531.1 GB/s   29.7% roofline
+  A interleaved             1.030 ms     694.4 GB/s   38.8% roofline
+  B warp-per-row            4.060 ms     176.1 GB/s    9.8% roofline
+    A bit-exact: yes   B max_abs=8.9407e-08 rmse=8.62447e-09
+mlp_17408x5120  (packed 44.6 MB, scales 5.57 MB)
+  incumbent                 0.253 ms     198.5 GB/s   11.1% roofline
+  A interleaved             0.235 ms     213.2 GB/s   11.9% roofline
+  B warp-per-row            0.292 ms     171.5 GB/s    9.6% roofline
+    A bit-exact: yes   B max_abs=6.33299e-08 rmse=8.46937e-09
+qkv_12288x5120  (packed 31.5 MB, scales 3.93 MB)
+  incumbent                 0.253 ms     139.9 GB/s    7.8% roofline
+  A interleaved             0.235 ms     150.6 GB/s    8.4% roofline
+  B warp-per-row            0.224 ms     157.8 GB/s    8.8% roofline
+    A bit-exact: yes   B max_abs=7.07805e-08 rmse=8.58468e-09
+gdn_10240x5120  (packed 26.2 MB, scales 3.28 MB)
+  incumbent                 0.253 ms     116.6 GB/s    6.5% roofline
+  A interleaved             0.236 ms     125.1 GB/s    7.0% roofline
+  B warp-per-row            0.181 ms     162.8 GB/s    9.1% roofline
+    A bit-exact: yes   B max_abs=6.70552e-08 rmse=8.60247e-09
+attn_6144x5120  (packed 15.7 MB, scales 1.97 MB)
+  incumbent                 0.253 ms      70.0 GB/s    3.9% roofline
+  A interleaved             0.235 ms      75.3 GB/s    4.2% roofline
+  B warp-per-row            0.115 ms     154.2 GB/s    8.6% roofline
+    A bit-exact: yes   B max_abs=7.17118e-08 rmse=8.85628e-09
+down_5120x17408  (packed 44.6 MB, scales 5.57 MB)
+  incumbent                 0.848 ms      59.1 GB/s    3.3% roofline
+  A interleaved             0.797 ms      62.9 GB/s    3.5% roofline
+  B warp-per-row            0.312 ms     160.5 GB/s    9.0% roofline
+    A bit-exact: yes   B max_abs=1.86265e-07 rmse=2.96891e-08
+down_5120x6144  (packed 15.7 MB, scales 1.97 MB)
+  incumbent                 0.319 ms      55.5 GB/s    3.1% roofline
+  A interleaved             0.282 ms      62.7 GB/s    3.5% roofline
+  B warp-per-row            0.110 ms     161.0 GB/s    9.0% roofline
+    A bit-exact: yes   B max_abs=9.12696e-08 rmse=1.01975e-08
+small_1024x5120  (packed 2.6 MB, scales 0.33 MB)
+  incumbent                 0.251 ms      11.8 GB/s    0.7% roofline
+  A interleaved             0.234 ms      12.6 GB/s    0.7% roofline
+  B warp-per-row            0.025 ms     117.9 GB/s    6.6% roofline
+    A bit-exact: yes   B max_abs=4.28408e-08 rmse=8.3739e-09
+EXIT=0

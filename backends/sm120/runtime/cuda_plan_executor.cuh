@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <string>
@@ -14,6 +16,9 @@
 #include <sm120/runtime/cuda_ownership.cuh>
 #include <superinfer/base/views.hpp>
 #include <superinfer/ir/physical_plan.hpp>
+
+#include <cuda_fp4.h>
+#include <cuda_fp8.h>
 
 namespace superinfer::sm120::cuda_runtime {
 
@@ -206,6 +211,98 @@ __global__ inline void grouped_attention_bf16_cache(
   }
 }
 
+__device__ inline float bf16_bits_to_float_device(std::uint16_t value) {
+  return __uint_as_float(static_cast<std::uint32_t>(value) << 16U);
+}
+
+/** KV-window attention with scores computed once (S04-P1).
+ *
+ * Bit-identical to `grouped_attention_bf16_cache`: the per-position Q·K score,
+ * the max, the per-position softmax numerator, and the per-dimension value
+ * accumulation all use the same operands in the same order. The only change is
+ * that Q·K is computed once instead of three times, and the value pass no
+ * longer recomputes it inside a per-dimension loop (removing an O(head_dim^2)
+ * factor). Grid: one block per query head; shared memory holds `positions`
+ * scores followed by `positions` probabilities.
+ */
+__global__ inline void grouped_attention_bf16_cache_cached(
+    const float* query, const std::uint16_t* keys, const std::uint16_t* values, float* output,
+    std::size_t query_heads, std::size_t kv_heads, std::size_t head_dimension,
+    std::size_t positions) {
+  extern __shared__ float shared[];
+  float* scores = shared;
+  float* probabilities = shared + positions;
+  const std::size_t group = query_heads / kv_heads;
+  const float scale = rsqrtf(static_cast<float>(head_dimension));
+  const std::size_t query_head = blockIdx.x;
+  if (query_head >= query_heads) return;
+  const std::size_t kv_head = query_head / group;
+  // Phase 1: Q.K score per position, once. Each thread keeps the incumbent's
+  // serial dimension accumulation for the positions it owns.
+  for (std::size_t position = threadIdx.x; position < positions; position += blockDim.x) {
+    float score = 0.0F;
+    for (std::size_t dimension = 0; dimension < head_dimension; ++dimension) {
+      const std::size_t cache_index =
+          (position * kv_heads + kv_head) * head_dimension + dimension;
+      score += query[query_head * head_dimension + dimension] *
+               bf16_bits_to_float_device(keys[cache_index]);
+    }
+    scores[position] = score;
+  }
+  __syncthreads();
+  // Max over positions: fmaxf is exact and order-independent, so any reduction
+  // order reproduces the incumbent's sequential maximum bit-for-bit.
+  __shared__ float reduction[256];
+  float local_max = -3.402823466e+38F;
+  for (std::size_t position = threadIdx.x; position < positions; position += blockDim.x) {
+    local_max = fmaxf(local_max, scores[position] * scale);
+  }
+  reduction[threadIdx.x] = local_max;
+  __syncthreads();
+  for (std::size_t stride = blockDim.x / 2U; stride > 0U; stride >>= 1U) {
+    if (threadIdx.x < stride) {
+      reduction[threadIdx.x] = fmaxf(reduction[threadIdx.x], reduction[threadIdx.x + stride]);
+    }
+    __syncthreads();
+  }
+  __shared__ float maximum_shared;
+  if (threadIdx.x == 0) maximum_shared = reduction[0];
+  __syncthreads();
+  const float maximum = maximum_shared;
+  // Phase 2: softmax numerator per position (parallel) then denominator summed
+  // sequentially by thread 0 to preserve the incumbent's summation order.
+  for (std::size_t position = threadIdx.x; position < positions; position += blockDim.x) {
+    probabilities[position] = expf(scores[position] * scale - maximum);
+  }
+  __syncthreads();
+  __shared__ float denominator_shared;
+  if (threadIdx.x == 0) {
+    float denominator = 0.0F;
+    for (std::size_t position = 0; position < positions; ++position) {
+      denominator += probabilities[position];
+    }
+    denominator_shared = denominator;
+  }
+  __syncthreads();
+  const float denominator = denominator_shared;
+  for (std::size_t position = threadIdx.x; position < positions; position += blockDim.x) {
+    probabilities[position] = probabilities[position] / denominator;
+  }
+  __syncthreads();
+  // Phase 4: value accumulation, dimension-outer/position-inner exactly as the
+  // incumbent, reusing the cached probabilities instead of recomputing Q.K.
+  for (std::size_t dimension = threadIdx.x; dimension < head_dimension;
+       dimension += blockDim.x) {
+    float result = 0.0F;
+    for (std::size_t position = 0; position < positions; ++position) {
+      const std::size_t value_index =
+          (position * kv_heads + kv_head) * head_dimension + dimension;
+      result += probabilities[position] * bf16_bits_to_float_device(values[value_index]);
+    }
+    output[query_head * head_dimension + dimension] = result;
+  }
+}
+
 __global__ inline void embedding_f32(const std::uint32_t* token, const float* table, float* output,
                                      std::size_t vocabulary, std::size_t hidden) {
   const std::uint32_t row = *token;
@@ -327,7 +424,556 @@ __global__ inline void nvfp4_linear_f32(const float* input, const std::uint8_t* 
   }
 }
 
+/** Row-parallel NVFP4 projection (R02): identical per-row operation order to
+ * `nvfp4_linear_f32`, spread over up to 2048 blocks. Each output row is still
+ * reduced serially by exactly one thread in column order, so results are
+ * bit-identical to the baseline for every shape; only SM occupancy changes.
+ * The incumbent stays available as the promotion fallback.
+ */
+__global__ inline void nvfp4_linear_rows_f32(const float* input, const std::uint8_t* packed,
+                                            const std::uint8_t* scales,
+                                            const float* tensor_scale, float* output,
+                                            std::size_t input_elements,
+                                            std::size_t output_elements) {
+  for (std::size_t row = blockIdx.x * blockDim.x + threadIdx.x; row < output_elements;
+       row += blockDim.x * gridDim.x) {
+    float sum = 0.0F;
+    for (std::size_t column = 0; column < input_elements; ++column) {
+      const std::uint8_t packed_value = packed[(row * input_elements + column) / 2U];
+      const std::uint8_t code = (column % 2U == 0) ? (packed_value & 0x0FU) : (packed_value >> 4U);
+      const float weight = decode_e2m1_device(code) *
+                           decode_e4m3fn_device(scales[(row * input_elements + column) / 16U]) *
+                           *tensor_scale;
+      sum += weight * input[column];
+    }
+    output[row] = sum;
+  }
+}
+
+/** Vectorized NVFP4 projection (S04-P2).
+ *
+ * Bit-identical to `nvfp4_linear_rows_f32`: the same per-row, per-column
+ * accumulation order is preserved. Only the memory access pattern and the
+ * redundant block-scale decode change:
+ *  - the FP8 block scale is decoded once per 16 columns instead of per column;
+ *  - packed weights are read 16 bytes at a time (32 codes) instead of one byte
+ *    per two columns.
+ * Falls back to the scalar incumbent when the row is not 32-element aligned or
+ * the packed pointer is not 16-byte aligned.
+ */
+__device__ inline void accumulate_nvfp4_code(std::uint8_t code, float scale, float tensor,
+                                             const float* input, std::size_t column,
+                                             float& sum) {
+  sum += (decode_e2m1_device(code) * scale * tensor) * input[column];
+}
+
+__global__ inline void nvfp4_linear_rows_vec_f32(const float* input,
+                                                 const std::uint8_t* packed,
+                                                 const std::uint8_t* scales,
+                                                 const float* tensor_scale, float* output,
+                                                 std::size_t input_elements,
+                                                 std::size_t output_elements) {
+  const float tensor = *tensor_scale;
+  for (std::size_t row = blockIdx.x * blockDim.x + threadIdx.x; row < output_elements;
+       row += blockDim.x * gridDim.x) {
+    const std::uint8_t* packed_row = packed + row * (input_elements / 2U);
+    const std::uint8_t* scale_row = scales + row * (input_elements / 16U);
+    float sum = 0.0F;
+    std::size_t column = 0;
+    // The 16-byte packed load requires each row to start 16-byte aligned, i.e.
+    // input_elements % 32 == 0. Otherwise the whole row takes the scalar path.
+    const bool vector_aligned = (input_elements % 32U == 0U) &&
+                                (reinterpret_cast<std::uintptr_t>(packed_row) % 16U == 0U);
+    for (; vector_aligned && column + 32U <= input_elements; column += 32U) {
+      const uint4 word = *reinterpret_cast<const uint4*>(packed_row + column / 2U);
+      const std::uint8_t bytes[16] = {
+          static_cast<std::uint8_t>(word.x), static_cast<std::uint8_t>(word.x >> 8U),
+          static_cast<std::uint8_t>(word.x >> 16U), static_cast<std::uint8_t>(word.x >> 24U),
+          static_cast<std::uint8_t>(word.y), static_cast<std::uint8_t>(word.y >> 8U),
+          static_cast<std::uint8_t>(word.y >> 16U), static_cast<std::uint8_t>(word.y >> 24U),
+          static_cast<std::uint8_t>(word.z), static_cast<std::uint8_t>(word.z >> 8U),
+          static_cast<std::uint8_t>(word.z >> 16U), static_cast<std::uint8_t>(word.z >> 24U),
+          static_cast<std::uint8_t>(word.w), static_cast<std::uint8_t>(word.w >> 8U),
+          static_cast<std::uint8_t>(word.w >> 16U), static_cast<std::uint8_t>(word.w >> 24U)};
+      const float scale0 = decode_e4m3fn_device(scale_row[column / 16U]);
+      const float scale1 = decode_e4m3fn_device(scale_row[column / 16U + 1U]);
+      for (std::size_t pair = 0; pair < 8U; ++pair) {
+        accumulate_nvfp4_code(bytes[pair] & 0x0FU, scale0, tensor, input, column + pair * 2U,
+                              sum);
+        accumulate_nvfp4_code(bytes[pair] >> 4U, scale0, tensor, input, column + pair * 2U + 1U,
+                              sum);
+      }
+      for (std::size_t pair = 8U; pair < 16U; ++pair) {
+        accumulate_nvfp4_code(bytes[pair] & 0x0FU, scale1, tensor, input, column + pair * 2U,
+                              sum);
+        accumulate_nvfp4_code(bytes[pair] >> 4U, scale1, tensor, input, column + pair * 2U + 1U,
+                              sum);
+      }
+    }
+    for (; column < input_elements; ++column) {
+      const std::uint8_t packed_value = packed_row[column / 2U];
+      const std::uint8_t code = (column % 2U == 0) ? (packed_value & 0x0FU) : (packed_value >> 4U);
+      accumulate_nvfp4_code(code, decode_e4m3fn_device(scale_row[column / 16U]), tensor, input,
+                            column, sum);
+    }
+    output[row] = sum;
+  }
+}
+
 /** Reference-correct grouped-query attention over a pre-materialized contiguous KV window. */
+
+/** Warp-per-output-row NVFP4 GEMV (S04-P6 candidate B).
+ *
+ * Maps one warp to each output row; each lane reduces a contiguous column
+ * range and the warp tree-reduces. Global weight loads are naturally coalesced
+ * (lanes read contiguous column groups of the same row). The accumulation order
+ * differs from the serial incumbent, so this is tolerance-qualified, not
+ * bit-exact.
+ */
+__global__ inline void nvfp4_linear_warp_f32(const float* input, const std::uint8_t* packed,
+                                             const std::uint8_t* scales,
+                                             const float* tensor_scale, float* output,
+                                             std::size_t input_elements,
+                                             std::size_t output_elements) {
+  const float tensor = *tensor_scale;
+  const std::size_t warp = (blockIdx.x * blockDim.x + threadIdx.x) / 32U;
+  const std::size_t lane = threadIdx.x % 32U;
+  if (warp >= output_elements) return;
+  const std::uint8_t* packed_row = packed + warp * (input_elements / 2U);
+  const std::uint8_t* scale_row = scales + warp * (input_elements / 16U);
+  const std::size_t chunk = ((input_elements + 31U) / 32U + 31U) / 32U * 32U;
+  const std::size_t begin = lane * chunk;
+  const std::size_t end = begin < input_elements
+                              ? (begin + chunk < input_elements ? begin + chunk : input_elements)
+                              : input_elements;
+  float sum = 0.0F;
+  std::size_t column = begin;
+  for (; column + 32U <= end; column += 32U) {
+    const std::size_t group = column / 32U;
+    const uint4 word = *reinterpret_cast<const uint4*>(packed_row + group * 16U);
+    const std::uint8_t bytes[16] = {
+        static_cast<std::uint8_t>(word.x), static_cast<std::uint8_t>(word.x >> 8U),
+        static_cast<std::uint8_t>(word.x >> 16U), static_cast<std::uint8_t>(word.x >> 24U),
+        static_cast<std::uint8_t>(word.y), static_cast<std::uint8_t>(word.y >> 8U),
+        static_cast<std::uint8_t>(word.y >> 16U), static_cast<std::uint8_t>(word.y >> 24U),
+        static_cast<std::uint8_t>(word.z), static_cast<std::uint8_t>(word.z >> 8U),
+        static_cast<std::uint8_t>(word.z >> 16U), static_cast<std::uint8_t>(word.z >> 24U),
+        static_cast<std::uint8_t>(word.w), static_cast<std::uint8_t>(word.w >> 8U),
+        static_cast<std::uint8_t>(word.w >> 16U), static_cast<std::uint8_t>(word.w >> 24U)};
+    const float scale0 = decode_e4m3fn_device(scale_row[group * 2U]);
+    const float scale1 = decode_e4m3fn_device(scale_row[group * 2U + 1U]);
+    for (std::size_t pair = 0; pair < 8U; ++pair) {
+      sum += (decode_e2m1_device(bytes[pair] & 0x0FU) * scale0 * tensor) *
+             input[column + pair * 2U];
+      sum += (decode_e2m1_device(bytes[pair] >> 4U) * scale0 * tensor) *
+             input[column + pair * 2U + 1U];
+    }
+    for (std::size_t pair = 8U; pair < 16U; ++pair) {
+      sum += (decode_e2m1_device(bytes[pair] & 0x0FU) * scale1 * tensor) *
+             input[column + pair * 2U];
+      sum += (decode_e2m1_device(bytes[pair] >> 4U) * scale1 * tensor) *
+             input[column + pair * 2U + 1U];
+    }
+  }
+  for (; column < end; ++column) {
+    const std::uint8_t packed_value = packed_row[column / 2U];
+    const std::uint8_t code =
+        (column % 2U == 0) ? (packed_value & 0x0FU) : (packed_value >> 4U);
+    sum += (decode_e2m1_device(code) * decode_e4m3fn_device(scale_row[column / 16U]) * tensor) *
+           input[column];
+  }
+  for (std::size_t offset = 16U; offset > 0U; offset >>= 1U) {
+    sum += __shfl_down_sync(0xFFFFFFFFU, sum, offset);
+  }
+  if (lane == 0U) output[warp] = sum;
+}
+
+// ============================================================================================
+// S04 performance reset (D-022) E0a — donor-scheduled NVFP4 streaming GEMV.
+//
+// Schedule adapted from NInfer (Neroued/ninfer, Apache-2.0),
+// src/ops/linear/nvfp4/nvfp4_gemv.cuh + shapes/n5120_k6144.cu
+// (`Nvfp4GemvSchedule<8, 2, 16, 4, StagedRaw, Default, 2>`): multiple output rows per warp,
+// vector packed-code loads, independent accumulator chains, and hardware E2M1/E4M3 decode.
+//
+// The critical property P7 lacked: the activation value loaded by a lane is reused across
+// `ROWS_PER_WARP` output rows, so activation traffic drops by that factor. The donor's prepared
+// 128-row swizzled scale plane is not required here; SuperInfer keeps its existing row-major
+// `[rows][K/16]` E4M3 scale layout and its FP32 activation recipe (weight-only quantization).
+// ============================================================================================
+
+/**
+ * Streaming 8-byte packed-code load (`ld.global.cg.v2.u32`). Weight codes are read exactly once per
+ * token, so bypassing L1 keeps the cache available for the reused activation vector.
+ */
+__device__ inline uint2 load_codes_streaming(const std::uint8_t* pointer) {
+  uint2 result;
+  asm volatile("ld.global.cg.v2.u32 {%0, %1}, [%2];\n"
+               : "=r"(result.x), "=r"(result.y)
+               : "l"(pointer));
+  return result;
+}
+
+/** Hardware E2M1x2 decode: one packed byte -> two float values. */
+__device__ inline float2 decode_e2m1x2_device(std::uint8_t storage) {
+  __nv_fp4x2_e2m1 value;
+  value.__x = storage;
+  return static_cast<float2>(value);
+}
+
+/** Hardware E4M3 decode of a single (positive) block scale byte. */
+__device__ inline float decode_e4m3_scalar_device(std::uint8_t storage) {
+  __nv_fp8x2_e4m3 value;
+  value.__x = static_cast<std::uint16_t>(storage) | (static_cast<std::uint16_t>(storage) << 8);
+  return static_cast<float2>(value).x;
+}
+
+/**
+ * Donor-scheduled NVFP4 streaming GEMV: `output[row] = sum_k w[row,k] * input[k]`.
+ *
+ * Each warp owns ROWS_PER_WARP output rows. Every lane covers 16 K values per phase (exactly one
+ * 16-wide scale group per lane per phase) and reuses those 16 activations across all its rows.
+ * K must be a multiple of 512 and `rows` a multiple of WARPS_PER_CTA*ROWS_PER_WARP.
+ */
+template <int WARPS_PER_CTA, int ROWS_PER_WARP, int CHAINS, int MIN_BLOCKS>
+__global__ __launch_bounds__(WARPS_PER_CTA * 32, MIN_BLOCKS) void nvfp4_gemv_rows_f32(
+    const float* __restrict__ input, const std::uint8_t* __restrict__ packed,
+    const std::uint8_t* __restrict__ scales, const float* __restrict__ tensor_scale,
+    float* __restrict__ output, std::size_t rows, std::size_t inputs) {
+  constexpr int kValuesPerLane = 16;
+  constexpr int kValuesPerPhase = 32 * kValuesPerLane;  // 512
+  constexpr int kPairsPerLane = kValuesPerLane / 2;     // 8 packed bytes
+  constexpr int kRowsPerCta = WARPS_PER_CTA * ROWS_PER_WARP;
+
+  const int lane = static_cast<int>(threadIdx.x) & 31;
+  const int warp = static_cast<int>(threadIdx.x) >> 5;
+  const std::size_t row0 = static_cast<std::size_t>(blockIdx.x) * kRowsPerCta +
+                           static_cast<std::size_t>(warp) * ROWS_PER_WARP;
+  if (row0 >= rows) return;
+
+  const float tensor = *tensor_scale;
+  const std::size_t code_row_bytes = inputs / 2U;
+  const std::size_t scale_row_bytes = inputs / 16U;
+  const std::size_t phases = inputs / kValuesPerPhase;
+
+  float accumulators[ROWS_PER_WARP][CHAINS] = {};
+
+  for (std::size_t phase = 0; phase < phases; ++phase) {
+    const std::size_t value_base = phase * kValuesPerPhase + static_cast<std::size_t>(lane) * kValuesPerLane;
+    // One 16-value group per lane per phase: 4 x float4 activation loads.
+    const float4 a0 = *reinterpret_cast<const float4*>(input + value_base);
+    const float4 a1 = *reinterpret_cast<const float4*>(input + value_base + 4U);
+    const float4 a2 = *reinterpret_cast<const float4*>(input + value_base + 8U);
+    const float4 a3 = *reinterpret_cast<const float4*>(input + value_base + 12U);
+    const float activations[kValuesPerLane] = {a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w,
+                                               a2.x, a2.y, a2.z, a2.w, a3.x, a3.y, a3.z, a3.w};
+    const std::size_t group = phase * 32U + static_cast<std::size_t>(lane);
+    const std::size_t code_offset = phase * (kValuesPerPhase / 2U) + static_cast<std::size_t>(lane) * kPairsPerLane;
+
+#pragma unroll
+    for (int local_row = 0; local_row < ROWS_PER_WARP; ++local_row) {
+      const std::size_t row = row0 + static_cast<std::size_t>(local_row);
+      if (row >= rows) break;
+      const uint2 codes = load_codes_streaming(packed + row * code_row_bytes + code_offset);
+      const float coefficient =
+          decode_e4m3_scalar_device(scales[row * scale_row_bytes + group]) * tensor;
+      const std::uint32_t words[2] = {codes.x, codes.y};
+#pragma unroll
+      for (int word = 0; word < 2; ++word) {
+#pragma unroll
+        for (int byte_in_word = 0; byte_in_word < 4; ++byte_in_word) {
+          const int pair = word * 4 + byte_in_word;
+          const std::uint8_t packed_byte =
+              static_cast<std::uint8_t>(words[word] >> (8 * byte_in_word));
+          const float2 decoded = decode_e2m1x2_device(packed_byte);
+          constexpr int kChainMask = CHAINS - 1;
+          const int chain_a = (2 * pair) & kChainMask;
+          const int chain_b = (2 * pair + 1) & kChainMask;
+          accumulators[local_row][chain_a] =
+              fmaf(decoded.x * coefficient, activations[2 * pair], accumulators[local_row][chain_a]);
+          accumulators[local_row][chain_b] = fmaf(decoded.y * coefficient,
+                                                  activations[2 * pair + 1],
+                                                  accumulators[local_row][chain_b]);
+        }
+      }
+    }
+  }
+
+#pragma unroll
+  for (int local_row = 0; local_row < ROWS_PER_WARP; ++local_row) {
+    const std::size_t row = row0 + static_cast<std::size_t>(local_row);
+    if (row >= rows) break;
+    float total = 0.0F;
+#pragma unroll
+    for (int chain = 0; chain < CHAINS; ++chain) total += accumulators[local_row][chain];
+    for (int offset = 16; offset > 0; offset >>= 1) {
+      total += __shfl_down_sync(0xFFFFFFFFU, total, offset);
+    }
+    if (lane == 0) output[row] = total;
+  }
+}
+
+/**
+ * E0a specialized small-output FP32 control projection (S04 performance reset, D-022).
+ *
+ * The incumbent `linear_f32` assigns one thread per output row and iterates the whole K serially at
+ * one FMA per step, so the 96 GDN control projections (48x5120 each) cost ~18.5 ms/token. This
+ * kernel assigns multiple rows per warp, vectorizes both the weight and the (shared) activation
+ * loads as float4, and reduces with warp shuffles.
+ */
+template <int WARPS_PER_CTA, int ROWS_PER_WARP>
+__global__ __launch_bounds__(WARPS_PER_CTA * 32, 4) void linear_f32_rows_kernel(
+    const float* __restrict__ input, const float* __restrict__ weights, float* __restrict__ output,
+    std::size_t inputs, std::size_t rows) {
+  constexpr int kRowsPerCta = WARPS_PER_CTA * ROWS_PER_WARP;
+  const int lane = static_cast<int>(threadIdx.x) & 31;
+  const int warp = static_cast<int>(threadIdx.x) >> 5;
+  const std::size_t row0 = static_cast<std::size_t>(blockIdx.x) * kRowsPerCta +
+                           static_cast<std::size_t>(warp) * ROWS_PER_WARP;
+  if (row0 >= rows) return;
+  const std::size_t quads = inputs / 4U;
+
+  float accumulators[ROWS_PER_WARP] = {};
+  for (std::size_t quad = static_cast<std::size_t>(lane); quad < quads; quad += 32U) {
+    const float4 activation = *reinterpret_cast<const float4*>(input + quad * 4U);
+#pragma unroll
+    for (int local_row = 0; local_row < ROWS_PER_WARP; ++local_row) {
+      const std::size_t row = row0 + static_cast<std::size_t>(local_row);
+      if (row >= rows) break;
+      const float4 weight = *reinterpret_cast<const float4*>(weights + row * inputs + quad * 4U);
+      accumulators[local_row] =
+          fmaf(weight.x, activation.x,
+               fmaf(weight.y, activation.y,
+                    fmaf(weight.z, activation.z,
+                         fmaf(weight.w, activation.w, accumulators[local_row]))));
+    }
+  }
+#pragma unroll
+  for (int local_row = 0; local_row < ROWS_PER_WARP; ++local_row) {
+    const std::size_t row = row0 + static_cast<std::size_t>(local_row);
+    if (row >= rows) break;
+    float total = accumulators[local_row];
+    for (int offset = 16; offset > 0; offset >>= 1) {
+      total += __shfl_down_sync(0xFFFFFFFFU, total, offset);
+    }
+    if (lane == 0) output[row] = total;
+  }
+}
+
+// ============================================================================================
+// S04-P8R-Q experimental native path: SM120 block-scaled NVFP4 tensor-core GEMV
+// (`mma.sync.aligned.m16n8k64.row.col.kind::mxf4nvf4.block_scale.scale_vec::4X.f32.e2m1.e2m1.f32.ue4m3`).
+//
+// The weight operand keeps the existing row-major `.sinf` layout. The activation is dynamically
+// quantised to block-16 E2M1 codes plus UE4M3 scales using the pinned `amax/6` rule. The P7 software
+// kernels remain the oracle and the fallback; this path is selected at specialization time and never
+// branches on model identity or environment inside the hot path.
+// ============================================================================================
+
+__device__ inline std::uint8_t encode_e2m1_device(float value) {
+  constexpr float magnitudes[8] = {0.0F, 0.5F, 1.0F, 1.5F, 2.0F, 3.0F, 4.0F, 6.0F};
+  const float magnitude = fabsf(value);
+  int best = 0;
+  float best_delta = 1.0e30F;
+  for (int index = 0; index < 8; ++index) {
+    const float delta = fabsf(magnitude - magnitudes[index]);
+    if (delta < best_delta) {
+      best_delta = delta;
+      best = index;
+    }
+  }
+  return static_cast<std::uint8_t>(value < 0.0F ? (best | 0x08) : best);
+}
+
+__device__ inline std::uint8_t encode_e4m3fn_device(float value) {
+  if (!(value > 0.0F)) return 0;
+  int exponent = static_cast<int>(floorf(log2f(value))) + 7;
+  if (exponent < 1) exponent = 1;
+  if (exponent > 15) return 0x7FU;
+  const float base = exp2f(static_cast<float>(exponent) - 7.0F);
+  int mantissa = static_cast<int>(lroundf((value / base - 1.0F) * 8.0F));
+  if (mantissa >= 8) {
+    mantissa = 0;
+    if (++exponent > 15) return 0x7FU;
+  }
+  if (mantissa < 0) mantissa = 0;
+  return static_cast<std::uint8_t>((exponent << 3) | mantissa);
+}
+
+/** Accumulating M16N8K64 block-scaled NVFP4 MMA. `d` is both C and D (no separate zero C). */
+__device__ inline void mma_mxf4_device(const std::uint32_t a[4], const std::uint32_t b[2],
+                                       std::uint32_t scale_a, std::uint32_t scale_b, float d[4]) {
+  const float c0 = d[0], c1 = d[1], c2 = d[2], c3 = d[3];
+  asm volatile(
+      "mma.sync.aligned.m16n8k64.row.col.kind::mxf4nvf4.block_scale.scale_vec::4X."
+      "f32.e2m1.e2m1.f32.ue4m3 "
+      "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%10,%11,%12,%13}, "
+      "%14, {%15, %16}, %17, {%18, %19};\n"
+      : "=f"(d[0]), "=f"(d[1]), "=f"(d[2]), "=f"(d[3])
+      : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b[0]), "r"(b[1]), "f"(c0), "f"(c1),
+        "f"(c2), "f"(c3), "r"(scale_a), "h"(static_cast<std::uint16_t>(0)),
+        "h"(static_cast<std::uint16_t>(0)), "r"(scale_b), "h"(static_cast<std::uint16_t>(0)),
+        "h"(static_cast<std::uint16_t>(0)));
+}
+
+/**
+ * Dynamic block-16 activation quantisation: `input[input_elements]` (f32) -> packed E2M1 codes
+ * `packed[input_elements/2]` (low nibble = even column) plus UE4M3 scales `scales[input_elements/16]`.
+ * The scale is `amax/6` encoded as UE4M3, the pinned P8-R reference rule.
+ */
+__global__ inline void nvfp4_activation_quantize_f32(const float* input, std::uint8_t* packed,
+                                                     std::uint8_t* scales,
+                                                     std::size_t input_elements) {
+  const std::size_t block = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (block * 16U >= input_elements) return;
+  const float* values = input + block * 16U;
+  float amax = 0.0F;
+  for (int index = 0; index < 16; ++index) amax = fmaxf(amax, fabsf(values[index]));
+  const std::uint8_t scale_code = encode_e4m3fn_device(amax / 6.0F);
+  const float scale = decode_e4m3fn_device(scale_code);
+  const float inverse = scale > 0.0F ? 1.0F / scale : 0.0F;
+  scales[block] = scale_code;
+  for (int index = 0; index < 8; ++index) {
+    const float low = fminf(fmaxf(values[index * 2] * inverse, -6.0F), 6.0F);
+    const float high = fminf(fmaxf(values[index * 2 + 1] * inverse, -6.0F), 6.0F);
+    packed[block * 8U + index] =
+        static_cast<std::uint8_t>((encode_e2m1_device(high) << 4) | encode_e2m1_device(low));
+  }
+}
+
+/**
+ * Reduce the global amax of one activation vector (single-token decode: one FP32 global scale).
+ * One block; shared-memory tree reduction. Deterministic.
+ */
+__global__ inline void nvfp4_activation_global_amax_f32(const float* input,
+                                                        std::size_t input_elements,
+                                                        float* global_amax) {
+  __shared__ float scratch[256];
+  float local = 0.0F;
+  for (std::size_t index = threadIdx.x; index < input_elements; index += blockDim.x) {
+    local = fmaxf(local, fabsf(input[index]));
+  }
+  scratch[threadIdx.x] = local;
+  __syncthreads();
+  for (int stride = static_cast<int>(blockDim.x) / 2; stride > 0; stride >>= 1) {
+    if (static_cast<int>(threadIdx.x) < stride) {
+      scratch[threadIdx.x] = fmaxf(scratch[threadIdx.x], scratch[threadIdx.x + stride]);
+    }
+    __syncthreads();
+  }
+  if (threadIdx.x == 0) *global_amax = scratch[0];
+}
+
+/**
+ * Canonical two-level (hierarchical) NVFP4 activation quantization:
+ *   x ~= q_e2m1 * s_block_e4m3 * s_global_f32
+ *   s_global      = global_amax / (448 * 6)          [FP32, one value per activation vector]
+ *   s_block_real  = (block_amax / 6) / s_global
+ *   s_block       = round_E4M3(s_block_real)         [clamped to the E4M3 normal range]
+ *   q             = round_E2M1(x / (s_global * s_block))
+ * Zero global amax, zero/denormal block amax are handled explicitly and deterministically.
+ */
+__global__ inline void nvfp4_activation_quantize_two_level_f32(const float* input,
+                                                               std::size_t input_elements,
+                                                               const float* global_scale,
+                                                               std::uint8_t* packed,
+                                                               std::uint8_t* scales) {
+  const std::size_t block = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (block * 16U >= input_elements) return;
+  const float s_global = *global_scale;
+  const float* values = input + block * 16U;
+  float amax = 0.0F;
+  for (int index = 0; index < 16; ++index) amax = fmaxf(amax, fabsf(values[index]));
+  std::uint8_t scale_code = 0;
+  float s_block = 0.0F;
+  if (s_global > 0.0F && amax > 0.0F) {
+    const float block_precision_floor = 1.0e-6F;  // smallest E4M3 normal
+    float block_scale = (amax / 6.0F) / s_global;
+    if (block_scale < block_precision_floor) block_scale = block_precision_floor;
+    if (block_scale > 448.0F) block_scale = 448.0F;
+    scale_code = encode_e4m3fn_device(block_scale);
+    s_block = decode_e4m3fn_device(scale_code);
+  }
+  scales[block] = scale_code;
+  const float denominator = s_global * s_block;
+  const float inverse = denominator > 0.0F ? 1.0F / denominator : 0.0F;
+  for (int index = 0; index < 8; ++index) {
+    const float low =
+        inverse > 0.0F ? fminf(fmaxf(values[index * 2] * inverse, -6.0F), 6.0F) : 0.0F;
+    const float high =
+        inverse > 0.0F ? fminf(fmaxf(values[index * 2 + 1] * inverse, -6.0F), 6.0F) : 0.0F;
+    packed[block * 8U + index] =
+        static_cast<std::uint8_t>((encode_e2m1_device(high) << 4) | encode_e2m1_device(low));
+  }
+}
+
+/**
+ * Native NVFP4 projection: one warp per 16 output rows, one M16N8K64 MMA per 64 K.
+ *
+ * Fragment and scale-ownership contract is the P8-R2-verified one: A reg r -> row g+8*(r&1),
+ * K 8*quad+(v%8)+32*(r/2); SFA lane 4g -> row g, lane 4g+1 -> row g+8 (four bytes = four K-blocks);
+ * B lane (g,quad) -> column g, K 8*quad.. and 32+8*quad..; SFB lane 4n -> column n. Only output
+ * column 0 is consumed (single-token decode); the other seven are unused output.
+ * `activation_global` is the FP32 activation global scale (1.0 for the one-level representation).
+ */
+__global__ inline void nvfp4_linear_mma_f32(const std::uint8_t* packed, const std::uint8_t* scales,
+                                            const std::uint8_t* activation_packed,
+                                            const std::uint8_t* activation_scales,
+                                            const float* tensor_scale,
+                                            const float* activation_global, float* output,
+                                            std::size_t rows, std::size_t inputs) {
+  const int lane = static_cast<int>(threadIdx.x & 31U);
+  const int warp = static_cast<int>((blockIdx.x * blockDim.x + threadIdx.x) / 32U);
+  const int group = lane >> 2;
+  const int quad = lane & 3;
+  const std::size_t row0 = static_cast<std::size_t>(warp) * 16U;
+  if (row0 >= rows) return;
+  // One device-scalar read per warp (broadcast/cached); no host round trip.
+  const float tensor = (*tensor_scale) * (activation_global != nullptr ? *activation_global : 1.0F);
+  const std::size_t weight_row = inputs / 2U;
+  const std::size_t scale_row = inputs / 16U;
+  const int scale_owner = (lane & 1) ? (group + 8) : group;
+  float d[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+  for (std::size_t k = 0; k < inputs; k += 64U) {
+    const std::size_t byte_offset = k / 2U;
+    const std::size_t block = k / 16U;
+    const std::uint32_t a[4] = {
+        *reinterpret_cast<const std::uint32_t*>(packed + (row0 + group) * weight_row +
+                                                byte_offset + 4U * static_cast<std::size_t>(quad)),
+        *reinterpret_cast<const std::uint32_t*>(packed + (row0 + group + 8) * weight_row +
+                                                byte_offset + 4U * static_cast<std::size_t>(quad)),
+        *reinterpret_cast<const std::uint32_t*>(packed + (row0 + group) * weight_row + byte_offset +
+                                                16U + 4U * static_cast<std::size_t>(quad)),
+        *reinterpret_cast<const std::uint32_t*>(packed + (row0 + group + 8) * weight_row +
+                                                byte_offset + 16U +
+                                                4U * static_cast<std::size_t>(quad))};
+    const std::uint32_t scale_a =
+        *reinterpret_cast<const std::uint32_t*>(scales + (row0 + scale_owner) * scale_row + block);
+    std::uint32_t b0 = 0;
+    std::uint32_t b1 = 0;
+    std::uint32_t scale_b = 0;
+    if (group == 0) {
+      b0 = *reinterpret_cast<const std::uint32_t*>(activation_packed + byte_offset +
+                                                   4U * static_cast<std::size_t>(quad));
+      b1 = *reinterpret_cast<const std::uint32_t*>(activation_packed + byte_offset + 16U +
+                                                   4U * static_cast<std::size_t>(quad));
+    }
+    if (lane == 0) {
+      scale_b = *reinterpret_cast<const std::uint32_t*>(activation_scales + block);
+    }
+    const std::uint32_t b[2] = {b0, b1};
+    mma_mxf4_device(a, b, scale_a, scale_b, d);
+  }
+  if (quad == 0) {
+    if (row0 + static_cast<std::size_t>(group) < rows) {
+      output[row0 + static_cast<std::size_t>(group)] = d[0] * tensor;
+    }
+    if (row0 + static_cast<std::size_t>(group) + 8U < rows) {
+      output[row0 + static_cast<std::size_t>(group) + 8U] = d[2] * tensor;
+    }
+  }
+}
+
 __global__ inline void grouped_attention_f32(const float* query, const float* keys,
                                              const float* values, float* output,
                                              std::size_t query_heads, std::size_t kv_heads,
@@ -424,6 +1070,262 @@ __global__ inline void gated_delta_attention_f32(
       }
       output[output_base + value_index] = result * scale;
     }
+  }
+}
+
+/** Gated DeltaNet with value-dimension parallelism (S04-P3).
+ *
+ * Bit-identical to `gated_delta_attention_f32`: each `value_index` is an
+ * independent recurrence column, so assigning one thread per (value head,
+ * value index) preserves every summation and update order. Only the head-level
+ * scalars (norms, scales, decay, beta) are shared to avoid redundant work; they
+ * are computed with the identical expressions.
+ */
+__global__ inline void gated_delta_attention_parallel_f32(
+    const float* query, const float* keys, const float* values, const float* log_decay,
+    const float* beta, float* state, float* output, std::size_t key_heads,
+    std::size_t value_heads, std::size_t key_dimension, std::size_t value_dimension,
+    std::size_t positions) {
+  const std::size_t head = blockIdx.x;
+  if (head >= value_heads) return;
+  const std::size_t heads_per_value = value_heads / key_heads;
+  const std::size_t key_head = head / heads_per_value;
+  const std::size_t state_base = head * key_dimension * value_dimension;
+  const float scale = rsqrtf(static_cast<float>(key_dimension));
+  __shared__ float shared_query_scale;
+  __shared__ float shared_key_scale;
+  __shared__ float shared_beta;
+  __shared__ float shared_decay;
+  for (std::size_t position = 0; position < positions; ++position) {
+    const std::size_t query_base = (position * key_heads + key_head) * key_dimension;
+    const std::size_t value_base = (position * value_heads + head) * value_dimension;
+    if (threadIdx.x == 0) {
+      float query_norm = 0.0F;
+      float key_norm = 0.0F;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        query_norm += query[query_base + key_index] * query[query_base + key_index];
+        key_norm += keys[query_base + key_index] * keys[query_base + key_index];
+      }
+      shared_query_scale = rsqrtf(query_norm + 1.0e-6F);
+      shared_key_scale = rsqrtf(key_norm + 1.0e-6F);
+      shared_beta = beta[position * value_heads + head];
+      shared_decay = expf(log_decay[position * value_heads + head]);
+    }
+    __syncthreads();
+    const float query_scale = shared_query_scale;
+    const float key_scale = shared_key_scale;
+    const float beta_value = shared_beta;
+    const float decay = shared_decay;
+    for (std::size_t value_index = threadIdx.x; value_index < value_dimension;
+         value_index += blockDim.x) {
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        state[state_base + key_index * value_dimension + value_index] *= decay;
+      }
+      float key_value = 0.0F;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        key_value += state[state_base + key_index * value_dimension + value_index] *
+                     (keys[query_base + key_index] * key_scale);
+      }
+      const float delta = (values[value_base + value_index] - key_value) * beta_value;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        state[state_base + key_index * value_dimension + value_index] +=
+            (keys[query_base + key_index] * key_scale) * delta;
+      }
+      float result = 0.0F;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        result += state[state_base + key_index * value_dimension + value_index] *
+                  (query[query_base + key_index] * query_scale);
+      }
+      output[value_base + value_index] = result * scale;
+    }
+    __syncthreads();
+  }
+}
+
+/** GDN recurrent decode with the per-value state column held in registers.
+ *
+ * S04 reset phase 4. The incumbent `gated_delta_attention_parallel_f32` walks the whole
+ * `key_dimension x value_dimension` state in global memory seven times per position (decay scale,
+ * key dot, delta update, query dot, plus write-back), because each of the four passes is a separate
+ * loop over global memory. Here each thread owns one value column for the whole transition: the
+ * decayed column is materialised once into registers, used for the key dot, updated by the delta,
+ * used for the query dot, and written back exactly once. That is 1 read + 1 write of the state
+ * instead of 5 reads + 2 writes.
+ *
+ * Every arithmetic operation and its order are unchanged (the same per-element multiply, the same
+ * accumulation sequence over key_index); only the storage location of the intermediate column
+ * changed. The result is bit-identical to the incumbent for the same inputs.
+ */
+template <std::size_t KEY_DIM>
+__global__ inline void gated_delta_attention_register_f32(
+    const float* query, const float* keys, const float* values, const float* log_decay,
+    const float* beta, float* state, float* output, std::size_t key_heads,
+    std::size_t value_heads, std::size_t key_dimension, std::size_t value_dimension,
+    std::size_t positions) {
+  if (key_dimension != KEY_DIM) return;
+  const std::size_t head = blockIdx.x;
+  if (head >= value_heads) return;
+  const std::size_t heads_per_value = value_heads / key_heads;
+  const std::size_t key_head = head / heads_per_value;
+  const std::size_t state_base = head * key_dimension * value_dimension;
+  const float scale = rsqrtf(static_cast<float>(key_dimension));
+  __shared__ float shared_query_scale;
+  __shared__ float shared_key_scale;
+  __shared__ float shared_beta;
+  __shared__ float shared_decay;
+  for (std::size_t position = 0; position < positions; ++position) {
+    const std::size_t query_base = (position * key_heads + key_head) * key_dimension;
+    const std::size_t value_base = (position * value_heads + head) * value_dimension;
+    if (threadIdx.x == 0) {
+      float query_norm = 0.0F;
+      float key_norm = 0.0F;
+      for (std::size_t key_index = 0; key_index < key_dimension; ++key_index) {
+        query_norm += query[query_base + key_index] * query[query_base + key_index];
+        key_norm += keys[query_base + key_index] * keys[query_base + key_index];
+      }
+      shared_query_scale = rsqrtf(query_norm + 1.0e-6F);
+      shared_key_scale = rsqrtf(key_norm + 1.0e-6F);
+      shared_beta = beta[position * value_heads + head];
+      shared_decay = expf(log_decay[position * value_heads + head]);
+    }
+    __syncthreads();
+    const float query_scale = shared_query_scale;
+    const float key_scale = shared_key_scale;
+    const float beta_value = shared_beta;
+    const float decay = shared_decay;
+    for (std::size_t value_index = threadIdx.x; value_index < value_dimension;
+         value_index += blockDim.x) {
+      float column[KEY_DIM];
+#pragma unroll
+      for (std::size_t key_index = 0; key_index < KEY_DIM; ++key_index) {
+        column[key_index] = state[state_base + key_index * value_dimension + value_index] * decay;
+      }
+      float key_value = 0.0F;
+#pragma unroll
+      for (std::size_t key_index = 0; key_index < KEY_DIM; ++key_index) {
+        key_value += column[key_index] * (keys[query_base + key_index] * key_scale);
+      }
+      const float delta = (values[value_base + value_index] - key_value) * beta_value;
+#pragma unroll
+      for (std::size_t key_index = 0; key_index < KEY_DIM; ++key_index) {
+        column[key_index] += (keys[query_base + key_index] * key_scale) * delta;
+      }
+      float result = 0.0F;
+#pragma unroll
+      for (std::size_t key_index = 0; key_index < KEY_DIM; ++key_index) {
+        result += column[key_index] * (query[query_base + key_index] * query_scale);
+      }
+#pragma unroll
+      for (std::size_t key_index = 0; key_index < KEY_DIM; ++key_index) {
+        state[state_base + key_index * value_dimension + value_index] = column[key_index];
+      }
+      output[value_base + value_index] = result * scale;
+    }
+    __syncthreads();
+  }
+}
+
+/** RMSNorm with BF16 scale, row-parallel (S04-P4).
+ *
+ * Bit-identical to `rms_norm_f32_bf16_scale`: the sum of squares is still accumulated sequentially in
+ * the original element order (thread 0 over a shared-memory staging of the row), so the denominator
+ * is bit-for-bit the same. The staging load and the output write are parallelised. One block per row.
+ */
+__global__ inline void rms_norm_f32_bf16_scale_parallel(
+    const float* input, const std::uint16_t* scale, float* output, std::size_t elements,
+    std::size_t scale_elements, float epsilon, bool add_one_to_scale, bool parallel_mode,
+    bool audit_enabled, float* audit) {
+  alignas(16) __shared__ float row_values[8192];
+  __shared__ float denominator_slot;
+  __shared__ float warp_partials[32];
+  const std::size_t rows = elements / scale_elements;
+  const std::size_t row = blockIdx.x;
+  if (row >= rows) return;
+  const float* input_row = input + row * scale_elements;
+  float* output_row = output + row * scale_elements;
+  for (std::size_t index = threadIdx.x; index < scale_elements; index += blockDim.x) {
+    row_values[index] = input_row[index];
+  }
+  __syncthreads();
+  float serial_denominator = 0.0F;
+  if (threadIdx.x == 0) {
+    // S04 reset phase 2: the accumulation order is unchanged (index 0,1,2,... strictly in
+    // sequence); only the shared-memory load width changed to float4, so the dependent FMA chain
+    // issues four terms per LDS instead of one. Every intermediate value is identical.
+    float sum_squares = 0.0F;
+    const std::uint32_t count = static_cast<std::uint32_t>(scale_elements);
+    const std::uint32_t quads = count / 4U;
+    const float4* vector = reinterpret_cast<const float4*>(row_values);
+    for (std::uint32_t index = 0; index < quads; ++index) {
+      const float4 value = vector[index];
+      sum_squares += value.x * value.x;
+      sum_squares += value.y * value.y;
+      sum_squares += value.z * value.z;
+      sum_squares += value.w * value.w;
+    }
+    for (std::uint32_t index = quads * 4U; index < count; ++index) {
+      const float value = row_values[index];
+      sum_squares += value * value;
+    }
+    serial_denominator = sqrtf(sum_squares / static_cast<float>(scale_elements) + epsilon);
+  }
+  __syncthreads();
+
+  // ---------------------------------------------------------------------------------------
+  // Experimental parallel reduction (S04 performance reset E0b form), selectable at runtime so
+  // the accepted serial order stays the production path. The FP64 audit is diagnostic only: it
+  // measures which order is closer to a double-precision RMSNorm denominator on the real inputs
+  // this model actually feeds the norm.
+  // ---------------------------------------------------------------------------------------
+  float parallel_denominator = 0.0F;
+  if (parallel_mode || audit_enabled) {
+    float partial = 0.0F;
+    for (std::size_t index = threadIdx.x; index < scale_elements; index += blockDim.x) {
+      const float value = row_values[index];
+      partial = fmaf(value, value, partial);
+    }
+    for (int offset = 16; offset > 0; offset >>= 1) {
+      partial += __shfl_down_sync(0xFFFFFFFFU, partial, offset);
+    }
+    if ((threadIdx.x & 31) == 0) warp_partials[threadIdx.x >> 5] = partial;
+    __syncthreads();
+    if (threadIdx.x == 0) {
+      float total = 0.0F;
+      for (int index = 0; index < static_cast<int>(blockDim.x >> 5); ++index) {
+        total += warp_partials[index];
+      }
+      parallel_denominator =
+          sqrtf(total / static_cast<float>(scale_elements) + epsilon);
+    }
+    __syncthreads();
+  }
+  if (audit_enabled && audit != nullptr && threadIdx.x == 0) {
+    double sum64 = 0.0;
+    for (std::size_t index = 0; index < scale_elements; ++index) {
+      const double value = static_cast<double>(row_values[index]);
+      sum64 += value * value;
+    }
+    const double denominator64 =
+        sqrt(sum64 / static_cast<double>(scale_elements) + static_cast<double>(epsilon));
+    const double serial_error = fabs(static_cast<double>(serial_denominator) - denominator64);
+    const double parallel_error = fabs(static_cast<double>(parallel_denominator) - denominator64);
+    atomicAdd(&audit[0], static_cast<float>(serial_error));
+    atomicAdd(&audit[1], static_cast<float>(parallel_error));
+    atomicAdd(&audit[2], 1.0F);
+    if (denominator64 > 0.0) {
+      atomicAdd(&audit[3], static_cast<float>(serial_error / denominator64));
+      atomicAdd(&audit[4], static_cast<float>(parallel_error / denominator64));
+      atomicAdd(&audit[5], static_cast<float>(denominator64));
+    }
+  }
+  if (threadIdx.x == 0) {
+    denominator_slot = parallel_mode ? parallel_denominator : serial_denominator;
+  }
+  __syncthreads();
+  const float denominator = denominator_slot;
+  const float offset = add_one_to_scale ? 1.0F : 0.0F;
+  for (std::size_t index = threadIdx.x; index < scale_elements; index += blockDim.x) {
+    output_row[index] = row_values[index] / denominator * (bf16_to_float_device(scale[index]) + offset);
   }
 }
 
@@ -552,10 +1454,15 @@ inline cudaError_t launch_cast_bf16_to_f32(const ir::physical::CommandDescriptor
   const auto& output = plan.buffers()[command.buffers[1].value()];
   if (input.size == 0 || input.size % sizeof(std::uint16_t) != 0 ||
       output.size != input.size * 2U) return cudaErrorInvalidValue;
-  cast_bf16_to_f32<<<1, 256, 0, stream>>>(
+  const std::size_t elements = static_cast<std::size_t>(input.size / sizeof(std::uint16_t));
+  // S04-P5: the kernel is elementwise and its loop is already grid-stride, so
+  // occupying the device is bit-identical; only the block count changes.
+  std::uint32_t blocks = static_cast<std::uint32_t>((elements + 255U) / 256U);
+  if (blocks == 0U) blocks = 1U;
+  if (blocks > 4096U) blocks = 4096U;
+  cast_bf16_to_f32<<<blocks, 256, 0, stream>>>(
       static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, input.id)),
-      static_cast<float*>(buffer_pointer(plan, arena, output.id)),
-      static_cast<std::size_t>(input.size / sizeof(std::uint16_t)));
+      static_cast<float*>(buffer_pointer(plan, arena, output.id)), elements);
   return cudaGetLastError();
 }
 
@@ -567,10 +1474,13 @@ inline cudaError_t launch_cast_f32_to_bf16(const ir::physical::CommandDescriptor
   const auto& output = plan.buffers()[command.buffers[1].value()];
   if (input.size == 0 || input.size % sizeof(float) != 0 ||
       output.size != input.size / 2U) return cudaErrorInvalidValue;
-  cast_f32_to_bf16<<<1, 256, 0, stream>>>(
+  const std::size_t elements = static_cast<std::size_t>(input.size / sizeof(float));
+  std::uint32_t blocks = static_cast<std::uint32_t>((elements + 255U) / 256U);
+  if (blocks == 0U) blocks = 1U;
+  if (blocks > 4096U) blocks = 4096U;
+  cast_f32_to_bf16<<<blocks, 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
-      static_cast<std::uint16_t*>(buffer_pointer(plan, arena, output.id)),
-      static_cast<std::size_t>(input.size / sizeof(float)));
+      static_cast<std::uint16_t*>(buffer_pointer(plan, arena, output.id)), elements);
   return cudaGetLastError();
 }
 
@@ -603,7 +1513,11 @@ inline cudaError_t launch_lm_head(const ir::physical::CommandDescriptor& command
   const auto& output = plan.buffers()[command.buffers[2].value()];
   const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
   const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
-  linear_f32<<<1, 256, 0, stream>>>(
+  // S04-P5: row-parallel launch (lm_head); each row reduction order is unchanged.
+  std::uint32_t blocks = static_cast<std::uint32_t>((output_elements + 255U) / 256U);
+  if (blocks == 0U) blocks = 1U;
+  if (blocks > 4096U) blocks = 4096U;
+  linear_f32<<<blocks, 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, weights.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,
@@ -642,13 +1556,252 @@ inline cudaError_t launch_nvfp4_linear(const ir::physical::CommandDescriptor& co
   const auto& output = plan.buffers()[command.buffers[4].value()];
   const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
   const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
-  nvfp4_linear_f32<<<1, 256, 0, stream>>>(
+  // Row-parallel launch (R02): one 256-thread block per 256 output rows keeps the
+  // per-row operation order bit-identical to the single-block baseline while
+  // occupying the device. Small shapes collapse to a single block, i.e. the
+  // exact baseline mapping.
+  std::uint32_t blocks =
+      static_cast<std::uint32_t>((output_elements + 255U) / 256U);
+  if (blocks == 0U) blocks = 1U;
+  if (blocks > 2048U) blocks = 2048U;
+  // S04-P2: vectorized/scale-hoisted path when alignment permits; the scalar
+  // row-parallel incumbent is the fallback.
+  const auto* packed_pointer =
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id));
+  const bool vectorizable =
+      (input_elements % 32U == 0U) && (reinterpret_cast<std::uintptr_t>(packed_pointer) % 16U == 0U);
+  // P7-0 shape-adaptive dispatch (verified in the P6/decode harness):
+  // warp-per-row wins on the many small/medium projections, while the
+  // row-per-thread vector kernel wins on the two very large ones (LM head and
+  // the 17408x5120 MLP). The choice is a deterministic function of the
+  // compile-time output size, not a model-name or environment decision.
+  const char* warp_selector = std::getenv("SUPERINFER_QWEN38_NVFP4_WARP");
+  constexpr std::size_t kWarpMaxRows = 16384U;
+  const bool use_warp = vectorizable && output_elements < kWarpMaxRows &&
+                        !(warp_selector != nullptr && warp_selector[0] == '0');
+  if (use_warp) {
+    std::uint32_t warp_blocks =
+        static_cast<std::uint32_t>((output_elements * 32U + 255U) / 256U);
+    if (warp_blocks == 0U) warp_blocks = 1U;
+    nvfp4_linear_warp_f32<<<warp_blocks, 256, 0, stream>>>(
+        static_cast<const float*>(buffer_pointer(plan, arena, input.id)), packed_pointer,
+        static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)),
+        static_cast<const float*>(buffer_pointer(plan, arena, tensor_scale.id)),
+        static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,
+        output_elements);
+    return cudaGetLastError();
+  }
+  if (vectorizable) {
+    nvfp4_linear_rows_vec_f32<<<blocks, 256, 0, stream>>>(
+        static_cast<const float*>(buffer_pointer(plan, arena, input.id)), packed_pointer,
+        static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)),
+        static_cast<const float*>(buffer_pointer(plan, arena, tensor_scale.id)),
+        static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,
+        output_elements);
+    return cudaGetLastError();
+  }
+  nvfp4_linear_rows_f32<<<blocks, 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id)),
       static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, tensor_scale.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,
       output_elements);
+  return cudaGetLastError();
+}
+
+/**
+ * E0a donor-scheduled streaming GEMV launch (S04 performance reset, D-022).
+ *
+ * Consumes the existing row-major packed weights (`[rows][K/2]`), the existing row-major E4M3
+ * block-scale plane (`[rows][K/16]`), and the existing FP32 activation buffer. No per-token
+ * conversion kernel and no repack: the schedule is what changed.
+ */
+inline cudaError_t launch_nvfp4_linear_gemv_rows(const ir::physical::CommandDescriptor& command,
+                                                 const ir::physical::Plan& plan, void* arena, void*,
+                                                 cudaStream_t stream) {
+  if (command.buffers.size() != 5) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& packed = plan.buffers()[command.buffers[1].value()];
+  const auto& scales = plan.buffers()[command.buffers[2].value()];
+  const auto& tensor_scale = plan.buffers()[command.buffers[3].value()];
+  const auto& output = plan.buffers()[command.buffers[4].value()];
+  const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
+  const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
+  if (input_elements == 0U || output_elements == 0U || input_elements % 512U != 0U) {
+    return cudaErrorInvalidValue;
+  }
+  const float* input_pointer = static_cast<const float*>(buffer_pointer(plan, arena, input.id));
+  const std::uint8_t* packed_pointer =
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id));
+  const std::uint8_t* scale_pointer =
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id));
+  const float* tensor_pointer =
+      static_cast<const float*>(buffer_pointer(plan, arena, tensor_scale.id));
+  float* output_pointer = static_cast<float*>(buffer_pointer(plan, arena, output.id));
+  // Per-shape schedule (S04 reset phase 1). The donor uses 16 rows per CTA for its 5120-row
+  // geometries; a single 32-row CTA configuration under-occupies the device on the small and
+  // medium row counts because it yields too few CTAs to fill 148 SMs. Large row counts keep the
+  // wider CTA (more activation reuse per warp), small/medium row counts use a narrower CTA so the
+  // grid covers the device.
+  auto run = [&](auto warps_per_cta, auto rows_per_warp, auto chains, auto min_blocks) {
+    constexpr std::uint32_t kW = decltype(warps_per_cta)::value;
+    constexpr std::uint32_t kR = decltype(rows_per_warp)::value;
+    constexpr std::uint32_t kC = decltype(chains)::value;
+    constexpr std::uint32_t kM = decltype(min_blocks)::value;
+    constexpr std::uint32_t kRowsPerCta = kW * kR;
+    if (output_elements % kRowsPerCta != 0U) return false;
+    const std::uint32_t blocks = static_cast<std::uint32_t>(output_elements / kRowsPerCta);
+    nvfp4_gemv_rows_f32<kW, kR, kC, kM><<<(blocks == 0U ? 1U : blocks), kW * 32U, 0, stream>>>(
+        input_pointer, packed_pointer, scale_pointer, tensor_pointer, output_pointer,
+        output_elements, input_elements);
+    return true;
+  };
+  const bool large = output_elements >= 32768U;
+  const bool tiny = output_elements < 4096U;
+  if (large && run(std::integral_constant<std::uint32_t, 8>{},
+                   std::integral_constant<std::uint32_t, 4>{},
+                   std::integral_constant<std::uint32_t, 4>{},
+                   std::integral_constant<std::uint32_t, 2>{})) {
+    return cudaGetLastError();
+  }
+  if (tiny && run(std::integral_constant<std::uint32_t, 4>{},
+                  std::integral_constant<std::uint32_t, 2>{},
+                  std::integral_constant<std::uint32_t, 4>{},
+                  std::integral_constant<std::uint32_t, 4>{})) {
+    return cudaGetLastError();
+  }
+  if (!large && run(std::integral_constant<std::uint32_t, 8>{},
+                    std::integral_constant<std::uint32_t, 2>{},
+                    std::integral_constant<std::uint32_t, 4>{},
+                    std::integral_constant<std::uint32_t, 4>{})) {
+    return cudaGetLastError();
+  }
+  if (!run(std::integral_constant<std::uint32_t, 8>{},
+           std::integral_constant<std::uint32_t, 4>{},
+           std::integral_constant<std::uint32_t, 4>{},
+           std::integral_constant<std::uint32_t, 2>{})) {
+    return cudaErrorInvalidValue;
+  }
+  return cudaGetLastError();
+}
+
+/**
+ * E0a launch for the specialized FP32 control projection (kernel 30).
+ */
+inline cudaError_t launch_linear_f32_rows(const ir::physical::CommandDescriptor& command,
+                                          const ir::physical::Plan& plan, void* arena, void*,
+                                          cudaStream_t stream) {
+  if (command.buffers.size() != 3) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& weights = plan.buffers()[command.buffers[1].value()];
+  const auto& output = plan.buffers()[command.buffers[2].value()];
+  const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
+  const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
+  constexpr std::uint32_t kWarpsPerCta = 8;
+  constexpr std::uint32_t kRowsPerWarp = 2;
+  constexpr std::uint32_t kRowsPerCta = kWarpsPerCta * kRowsPerWarp;
+  if (input_elements == 0U || output_elements == 0U || input_elements % 4U != 0U) {
+    return cudaErrorInvalidValue;
+  }
+  const std::uint32_t blocks =
+      static_cast<std::uint32_t>((output_elements + kRowsPerCta - 1U) / kRowsPerCta);
+  linear_f32_rows_kernel<kWarpsPerCta, kRowsPerWarp>
+      <<<(blocks == 0U ? 1U : blocks), kWarpsPerCta * 32U, 0, stream>>>(
+          static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+          static_cast<const float*>(buffer_pointer(plan, arena, weights.id)),
+          static_cast<float*>(buffer_pointer(plan, arena, output.id)), input_elements,
+          output_elements);
+  return cudaGetLastError();
+}
+
+/**
+ * S04-P8R-Q experimental native NVFP4 projection launch.
+ *
+ * Quantises the activation into the session workspace (allocated once; no allocation here) and runs
+ * the warp-per-16-rows MMA GEMV. Requires the contract the provider advertises: sm_120a,
+ * `inputs % 64 == 0`, `rows % 16 == 0` (guarded below; the provider only selects it when satisfied).
+ * The plan is single-stream ordered, so the shared scratch cannot be aliased by a concurrent command.
+ */
+inline cudaError_t launch_nvfp4_linear_mma(const ir::physical::CommandDescriptor& command,
+                                           const ir::physical::Plan& plan, void* arena,
+                                           void* workspace, cudaStream_t stream) {
+  if (command.buffers.size() != 5) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& packed = plan.buffers()[command.buffers[1].value()];
+  const auto& scales = plan.buffers()[command.buffers[2].value()];
+  const auto& tensor_scale = plan.buffers()[command.buffers[3].value()];
+  const auto& output = plan.buffers()[command.buffers[4].value()];
+  const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
+  const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
+  if (input_elements == 0U || output_elements == 0U || input_elements % 64U != 0U) {
+    return cudaErrorInvalidValue;
+  }
+  if (workspace == nullptr) return cudaErrorInvalidValue;
+  auto* activation_packed = static_cast<std::uint8_t*>(workspace);
+  const std::size_t activation_packed_bytes = ((input_elements / 2U) + 15U) / 16U * 16U;
+  auto* activation_scales = activation_packed + activation_packed_bytes;
+  const float* input_pointer = static_cast<const float*>(buffer_pointer(plan, arena, input.id));
+  const std::uint32_t quantize_blocks =
+      static_cast<std::uint32_t>((input_elements / 16U + 255U) / 256U);
+  nvfp4_activation_quantize_f32<<<(quantize_blocks == 0U ? 1U : quantize_blocks), 256, 0, stream>>>(
+      input_pointer, activation_packed, activation_scales, input_elements);
+  const std::uint32_t warps = static_cast<std::uint32_t>((output_elements + 15U) / 16U);
+  const std::uint32_t blocks = (warps * 32U + 255U) / 256U;
+  nvfp4_linear_mma_f32<<<(blocks == 0U ? 1U : blocks), 256, 0, stream>>>(
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id)),
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)), activation_packed,
+      activation_scales, static_cast<const float*>(buffer_pointer(plan, arena, tensor_scale.id)),
+      nullptr, static_cast<float*>(buffer_pointer(plan, arena, output.id)), output_elements,
+      input_elements);
+  return cudaGetLastError();
+}
+
+/**
+ * S04-P9-1 canonical two-level activation scaling launch (kernel 28).
+ *
+ * Two-phase: reduce the activation global amax, form `s_global = global_amax/(448*6)`, then quantize
+ * each block with `s_block = round_E4M3((block_amax/6)/s_global)`. The MMA consumes E2M1 + UE4M3 as
+ * before; the FP32 `s_global` is applied in the epilogue together with the weight tensor scale.
+ * Workspace layout: [packed | scales | global_scale(f32)].
+ */
+inline cudaError_t launch_nvfp4_linear_mma_two_level(const ir::physical::CommandDescriptor& command,
+                                                     const ir::physical::Plan& plan, void* arena,
+                                                     void* workspace, cudaStream_t stream) {
+  if (command.buffers.size() != 5) return cudaErrorInvalidValue;
+  const auto& input = plan.buffers()[command.buffers[0].value()];
+  const auto& packed = plan.buffers()[command.buffers[1].value()];
+  const auto& scales = plan.buffers()[command.buffers[2].value()];
+  const auto& tensor_scale = plan.buffers()[command.buffers[3].value()];
+  const auto& output = plan.buffers()[command.buffers[4].value()];
+  const std::size_t input_elements = static_cast<std::size_t>(input.size / sizeof(float));
+  const std::size_t output_elements = static_cast<std::size_t>(output.size / sizeof(float));
+  if (input_elements == 0U || output_elements == 0U || input_elements % 64U != 0U) {
+    return cudaErrorInvalidValue;
+  }
+  if (workspace == nullptr) return cudaErrorInvalidValue;
+  auto* activation_packed = static_cast<std::uint8_t*>(workspace);
+  const std::size_t activation_packed_bytes = ((input_elements / 2U) + 15U) / 16U * 16U;
+  auto* activation_scales = activation_packed + activation_packed_bytes;
+  const std::size_t activation_scales_bytes = ((input_elements / 16U) + 15U) / 16U * 16U;
+  auto* activation_global = reinterpret_cast<float*>(activation_scales + activation_scales_bytes);
+  const float* input_pointer = static_cast<const float*>(buffer_pointer(plan, arena, input.id));
+  nvfp4_activation_global_amax_f32<<<1, 256, 0, stream>>>(input_pointer, input_elements,
+                                                          activation_global);
+  const std::uint32_t quantize_blocks =
+      static_cast<std::uint32_t>((input_elements / 16U + 255U) / 256U);
+  nvfp4_activation_quantize_two_level_f32<<<(quantize_blocks == 0U ? 1U : quantize_blocks), 256, 0,
+                                            stream>>>(input_pointer, input_elements,
+                                                      activation_global, activation_packed,
+                                                      activation_scales);
+  const std::uint32_t warps = static_cast<std::uint32_t>((output_elements + 15U) / 16U);
+  const std::uint32_t blocks = (warps * 32U + 255U) / 256U;
+  nvfp4_linear_mma_f32<<<(blocks == 0U ? 1U : blocks), 256, 0, stream>>>(
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, packed.id)),
+      static_cast<const std::uint8_t*>(buffer_pointer(plan, arena, scales.id)), activation_packed,
+      activation_scales, static_cast<const float*>(buffer_pointer(plan, arena, tensor_scale.id)),
+      activation_global, static_cast<float*>(buffer_pointer(plan, arena, output.id)), output_elements,
+      input_elements);
   return cudaGetLastError();
 }
 
@@ -675,6 +1828,50 @@ inline cudaError_t launch_gated_delta_attention(
     void*, cudaStream_t stream) {
   if (command.buffers.size() != 7) return cudaErrorInvalidValue;
   const auto dimensions = command.attention;
+  // S04-P3: parallelize across value heads/dimensions when the shape permits;
+  // the single-block incumbent is the fallback.
+  const std::size_t block = dimensions.value_dimension == 0
+                                ? 0
+                                : (dimensions.value_dimension < 128
+                                       ? dimensions.value_dimension
+                                       : (dimensions.value_dimension < 256 ? 128U : 256U));
+  // S04 reset phase 4: register-tiled recurrent transition for the model's 128-wide key geometry.
+  // Same arithmetic and order as the incumbent; the state column stops round-tripping through
+  // global memory on every pass.
+  static const bool reference_gdn = std::getenv("SUPERINFER_QWEN38_REFERENCE_GDN") != nullptr;
+  if (!reference_gdn && dimensions.head_dimension == 128U && dimensions.value_heads != 0 &&
+      dimensions.key_value_heads != 0 && block != 0 && dimensions.value_heads <= 65535U) {
+    gated_delta_attention_register_f32<128U>
+        <<<static_cast<std::uint32_t>(dimensions.value_heads),
+           static_cast<std::uint32_t>(block), 0, stream>>>(
+            static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[0].value()].id)),
+            static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[1].value()].id)),
+            static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[2].value()].id)),
+            static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[3].value()].id)),
+            static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[4].value()].id)),
+            static_cast<float*>(buffer_pointer(plan, arena, command.buffers[5].value() >= 0
+                                                          ? plan.buffers()[command.buffers[5].value()].id
+                                                          : plan.buffers()[command.buffers[5].value()].id)),
+            static_cast<float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[6].value()].id)),
+            dimensions.key_value_heads, dimensions.value_heads, dimensions.head_dimension,
+            dimensions.value_dimension, dimensions.positions);
+    return cudaGetLastError();
+  }
+  if (dimensions.value_heads != 0 && dimensions.key_value_heads != 0 && block != 0 &&
+      dimensions.value_heads <= 65535U) {
+    gated_delta_attention_parallel_f32<<<static_cast<std::uint32_t>(dimensions.value_heads),
+                                        static_cast<std::uint32_t>(block), 0, stream>>>(
+        static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[0].value()].id)),
+        static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[1].value()].id)),
+        static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[2].value()].id)),
+        static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[3].value()].id)),
+        static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[4].value()].id)),
+        static_cast<float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[5].value()].id)),
+        static_cast<float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[6].value()].id)),
+        dimensions.key_value_heads, dimensions.value_heads, dimensions.head_dimension,
+        dimensions.value_dimension, dimensions.positions);
+    return cudaGetLastError();
+  }
   gated_delta_attention_f32<<<1, 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[0].value()].id)),
       static_cast<const float*>(buffer_pointer(plan, arena, plan.buffers()[command.buffers[1].value()].id)),
@@ -697,7 +1894,9 @@ inline cudaError_t launch_residual(const ir::physical::CommandDescriptor& comman
   const auto& output = plan.buffers()[command.buffers[2].value()];
   const std::uint64_t bytes = left.size;
   if (bytes % sizeof(float) != 0) return cudaErrorInvalidValue;
-  residual_f32<<<1, 256, 0, stream>>>(
+  const std::uint32_t residual_blocks = static_cast<std::uint32_t>(
+      (static_cast<std::size_t>(bytes / sizeof(float)) + 255U) / 256U);
+  residual_f32<<<(residual_blocks == 0U ? 1U : residual_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, left.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, right.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)),
@@ -713,7 +1912,9 @@ inline cudaError_t launch_silu_mul(const ir::physical::CommandDescriptor& comman
   const auto& value = plan.buffers()[command.buffers[1].value()];
   const auto& output = plan.buffers()[command.buffers[2].value()];
   if (gate.size % sizeof(float) != 0) return cudaErrorInvalidValue;
-  silu_mul_f32<<<1, 256, 0, stream>>>(
+  const std::uint32_t silu_blocks = static_cast<std::uint32_t>(
+      (static_cast<std::size_t>(gate.size / sizeof(float)) + 255U) / 256U);
+  silu_mul_f32<<<(silu_blocks == 0U ? 1U : silu_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, gate.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, value.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)),
@@ -729,7 +1930,9 @@ inline cudaError_t launch_sigmoid_mul(const ir::physical::CommandDescriptor& com
   const auto& value = plan.buffers()[command.buffers[1].value()];
   const auto& output = plan.buffers()[command.buffers[2].value()];
   if (gate.size % sizeof(float) != 0) return cudaErrorInvalidValue;
-  sigmoid_mul_f32<<<1, 256, 0, stream>>>(
+  const std::uint32_t sigmoid_blocks = static_cast<std::uint32_t>(
+      (static_cast<std::size_t>(gate.size / sizeof(float)) + 255U) / 256U);
+  sigmoid_mul_f32<<<(sigmoid_blocks == 0U ? 1U : sigmoid_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, gate.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, value.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)),
@@ -746,7 +1949,8 @@ inline cudaError_t launch_split(const ir::physical::CommandDescriptor& command,
   const auto& second = plan.buffers()[command.buffers[2].value()];
   const std::size_t first_elements = static_cast<std::size_t>(first.size / sizeof(float));
   const std::size_t total_elements = static_cast<std::size_t>(input.size / sizeof(float));
-  split_f32<<<1, 256, 0, stream>>>(
+  const std::uint32_t split_blocks = static_cast<std::uint32_t>((total_elements + 255U) / 256U);
+  split_f32<<<(split_blocks == 0U ? 1U : split_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<float*>(buffer_pointer(plan, arena, first.id)),
       static_cast<float*>(buffer_pointer(plan, arena, second.id)), first_elements,
@@ -762,7 +1966,11 @@ inline cudaError_t launch_split_last(const ir::physical::CommandDescriptor& comm
   const auto& first = plan.buffers()[command.buffers[1].value()];
   const auto& second = plan.buffers()[command.buffers[2].value()];
   const auto dimensions = command.split;
-  split_last_f32<<<1, 256, 0, stream>>>(
+  const std::uint32_t split_last_blocks = static_cast<std::uint32_t>(
+      (static_cast<std::size_t>(dimensions.outer) *
+           (static_cast<std::size_t>(dimensions.first) + dimensions.second) +
+       255U) / 256U);
+  split_last_f32<<<(split_last_blocks == 0U ? 1U : split_last_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<float*>(buffer_pointer(plan, arena, first.id)),
       static_cast<float*>(buffer_pointer(plan, arena, second.id)), dimensions.outer,
@@ -777,7 +1985,9 @@ inline cudaError_t launch_rope(const ir::physical::CommandDescriptor& command,
   const auto& input = plan.buffers()[command.buffers[0].value()];
   const auto& output = plan.buffers()[command.buffers[1].value()];
   const auto dimensions = command.rope;
-  rope_f32<<<1, 256, 0, stream>>>(
+  const std::uint32_t rope_blocks = static_cast<std::uint32_t>(
+      (static_cast<std::size_t>(dimensions.heads) * dimensions.head_dimension + 255U) / 256U);
+  rope_f32<<<(rope_blocks == 0U ? 1U : rope_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<float*>(buffer_pointer(plan, arena, output.id)), dimensions.heads,
       dimensions.head_dimension, dimensions.rotary_dimension, dimensions.position,
@@ -833,7 +2043,13 @@ inline cudaError_t launch_causal_conv_silu(const ir::physical::CommandDescriptor
   const auto& weights = plan.buffers()[command.buffers[1].value()];
   const auto& state = plan.buffers()[command.buffers[2].value()];
   const auto& output = plan.buffers()[command.buffers[3].value()];
-  causal_conv_silu_f32<<<1, 256, 0, stream>>>(
+  // S04 performance reset E0b: was <<<1,256>>>; the kernel is a grid-stride loop over channels.
+  static const bool reference_conv = std::getenv("SUPERINFER_QWEN38_REFERENCE_CONV") != nullptr;
+  const std::uint32_t conv_blocks =
+      reference_conv ? 1U
+                     : static_cast<std::uint32_t>(
+                           (static_cast<std::size_t>(dimensions.channels) + 255U) / 256U);
+  causal_conv_silu_f32<<<(conv_blocks == 0U ? 1U : conv_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, weights.id)),
       static_cast<std::uint16_t*>(buffer_pointer(plan, arena, state.id)),
@@ -851,6 +2067,35 @@ inline cudaError_t launch_attention_bf16_cache(
   const auto& values = plan.buffers()[command.buffers[2].value()];
   const auto& output = plan.buffers()[command.buffers[3].value()];
   const auto dimensions = command.attention;
+  // S04-P1: compute Q.K once per position (bit-identical, removes the
+  // O(head_dim^2) value pass). Guard on the shared-memory budget; fall back to
+  // the incumbent single-block kernel when the KV window cannot be cached.
+  const std::size_t cached_bytes = 2U * dimensions.positions * sizeof(float);
+  const std::size_t query_heads = dimensions.query_heads;
+  // The cached window needs 2*positions*4 bytes of dynamic shared plus ~1 KiB of static shared.
+  // Qwen's declared capacity (4096 positions -> 32768 B) is comfortably inside the ordinary 48 KiB
+  // per-block limit, so this path must NOT opt in to oversized shared memory. Mutating a function's
+  // MaxDynamicSharedMemorySize on every launch is both unnecessary and a host-side call issued while
+  // earlier launches of the same function may still be in flight.
+  static const std::size_t kDefaultDynamicSharedLimit = [] {
+    int per_block = 0;
+    if (cudaDeviceGetAttribute(&per_block, cudaDevAttrMaxSharedMemoryPerBlock, 0) != cudaSuccess) {
+      return static_cast<std::size_t>(48U * 1024U);
+    }
+    return static_cast<std::size_t>(per_block);
+  }();
+  static const bool reference_attention =
+      std::getenv("SUPERINFER_QWEN38_REFERENCE_ATTENTION") != nullptr;
+  if (!reference_attention && query_heads != 0 && cached_bytes <= kDefaultDynamicSharedLimit) {
+    grouped_attention_bf16_cache_cached<<<static_cast<std::uint32_t>(query_heads), 256,
+                                          cached_bytes, stream>>>(
+        static_cast<const float*>(buffer_pointer(plan, arena, query.id)),
+        static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, keys.id)),
+        static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, values.id)),
+        static_cast<float*>(buffer_pointer(plan, arena, output.id)), dimensions.query_heads,
+        dimensions.key_value_heads, dimensions.head_dimension, dimensions.positions);
+    return cudaGetLastError();
+  }
   grouped_attention_bf16_cache<<<1, 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, query.id)),
       static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, keys.id)),
@@ -880,6 +2125,35 @@ inline cudaError_t launch_rms_norm(const ir::physical::CommandDescriptor& comman
   return cudaGetLastError();
 }
 
+/** Diagnostic-only FP64 RMSNorm audit accumulator (6 slots). Never used by production paths. */
+inline float* rms_audit_buffer() {
+  static float* buffer = nullptr;
+  static bool enabled = false;
+  if (buffer == nullptr) {
+    enabled = std::getenv("SUPERINFER_QWEN38_RMS_AUDIT") != nullptr;
+    if (!enabled) return nullptr;
+    if (cudaMalloc(&buffer, sizeof(float) * 8U) != cudaSuccess) {
+      buffer = nullptr;
+      return nullptr;
+    }
+    (void)cudaMemset(buffer, 0, sizeof(float) * 8U);
+  }
+  return buffer;
+}
+
+/** Prints the FP64 audit accumulator: [serial_abs_err, parallel_abs_err, rows, serial_rel, parallel_rel, denom64]. */
+inline void rms_audit_report() {
+  float* buffer = rms_audit_buffer();
+  if (buffer == nullptr) return;
+  float host[8] = {0};
+  if (cudaMemcpy(host, buffer, sizeof(float) * 8U, cudaMemcpyDeviceToHost) != cudaSuccess) return;
+  const double rows = host[2] > 0.0F ? static_cast<double>(host[2]) : 1.0;
+  std::printf(
+      "RMS_AUDIT rows=%.0f serial_abs_mean=%.6e parallel_abs_mean=%.6e "
+      "serial_rel_mean=%.6e parallel_rel_mean=%.6e denom64_sum=%.6e\n",
+      rows, host[0] / rows, host[1] / rows, host[3] / rows, host[4] / rows, host[5]);
+}
+
 inline cudaError_t launch_rms_norm_bf16(const ir::physical::CommandDescriptor& command,
                                         const ir::physical::Plan& plan, void* arena, void*,
                                         cudaStream_t stream) {
@@ -893,6 +2167,20 @@ inline cudaError_t launch_rms_norm_bf16(const ir::physical::CommandDescriptor& c
       scale.size == 0 || scale.size % sizeof(std::uint16_t) != 0 ||
       elements % scale_elements != 0) {
     return cudaErrorInvalidValue;
+  }
+  const std::size_t rows = elements / scale_elements;
+  if (scale_elements <= 8192U && rows != 0 && rows <= 65535U) {
+    static const bool rms_parallel_enabled =
+        std::getenv("SUPERINFER_QWEN38_RMS_PARALLEL") != nullptr;
+    static const bool rms_audit_enabled =
+        std::getenv("SUPERINFER_QWEN38_RMS_AUDIT") != nullptr;
+    rms_norm_f32_bf16_scale_parallel<<<static_cast<std::uint32_t>(rows), 256, 0, stream>>>(
+        static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
+        static_cast<const std::uint16_t*>(buffer_pointer(plan, arena, scale.id)),
+        static_cast<float*>(buffer_pointer(plan, arena, output.id)), elements, scale_elements,
+        command.epsilon, command.add_one_to_scale, rms_parallel_enabled, rms_audit_enabled,
+        rms_audit_buffer());
+    return cudaGetLastError();
   }
   rms_norm_f32_bf16_scale<<<1, 1, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
@@ -1025,7 +2313,8 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
         return base::Status::invalid_argument("CUDA F32-to-BF16 cast has invalid buffers");
       }
       return {};
-    case 10: {
+    case 10:
+    case 30: {
       if (!exact_buffers(3) || plan.buffers()[command.buffers[0].value()].size == 0 ||
           !all_dtype(ir::physical::PhysicalDType::f32) ||
           plan.buffers()[command.buffers[1].value()].size == 0 ||
@@ -1046,6 +2335,10 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
           weight_elements / input_elements != output_elements) {
         return base::Status::invalid_argument(
             "CUDA LM head weight shape does not match input and output");
+      }
+      if (command.kernel.value() == 30 && input_elements % 4U != 0U) {
+        return base::Status::invalid_argument(
+            "CUDA specialized control projection requires K % 4 == 0");
       }
       return {};
     }
@@ -1071,7 +2364,10 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
       }
       return {};
     }
-    case 13: {
+    case 13:
+    case 27:
+    case 28:
+    case 29: {
       if (!exact_buffers(5)) {
         return base::Status::invalid_argument(
             "CUDA NVFP4 linear requires f32 input, packed weights, scales, tensor scale, and output buffers");
@@ -1106,6 +2402,21 @@ inline base::Status validate_command(const ir::physical::CommandDescriptor& comm
           scales.size % scale_row_bytes != 0 || scales.size / scale_row_bytes != output_elements) {
         return base::Status::invalid_argument(
             "CUDA NVFP4 linear packed weights or scales have an invalid shape");
+      }
+      if (command.kernel.value() == 27 || command.kernel.value() == 28) {
+        // Native MMA contract: M16N8K64 tile, four 16-wide scale blocks, and workspace scratch.
+        if (input_elements % 64U != 0U || output_elements % 16U != 0U ||
+            command.workspace_size == 0U) {
+          return base::Status::invalid_argument(
+              "CUDA native NVFP4 MMA requires K % 64 == 0, rows % 16 == 0, and workspace");
+        }
+      }
+      if (command.kernel.value() == 29) {
+        // Donor-schedule streaming GEMV contract: 512-wide K phases, 32-row CTAs.
+        if (input_elements % 512U != 0U || output_elements % 32U != 0U) {
+          return base::Status::invalid_argument(
+              "CUDA NVFP4 streaming GEMV requires K % 512 == 0 and rows % 32 == 0");
+        }
       }
       return {};
     }
@@ -1408,6 +2719,11 @@ inline LaunchFunction resolve(std::uint64_t kernel_id) {
     case 24: return &launch_gated_delta_parameters;
     case 25: return &launch_causal_conv_silu;
     case 26: return &launch_split_last;
+    // S04-P8R-Q experimental native SM120 block-scaled NVFP4 MMA projection.
+    case 27: return &launch_nvfp4_linear_mma;
+    case 29: return &launch_nvfp4_linear_gemv_rows;
+    case 30: return &launch_linear_f32_rows;
+    case 28: return &launch_nvfp4_linear_mma_two_level;
     default: return nullptr;
   }
 }
@@ -1470,7 +2786,11 @@ class CudaPlanSession final {
       const detail::LaunchFunction launcher = detail::resolve(command.kernel.value());
       if (launcher == nullptr) return base::Status::unsupported("CUDA kernel ID is not registered");
       ++session.lifecycle_trace_->kernel_bindings;
-      if (command.workspace_size != 0) {
+      // The baseline catalog has no per-command workspace contract. The experimental native NVFP4
+      // MMA kernel (id 27) is the one exception: it uses the session workspace for the dynamically
+      // quantised activation scratch, sized by the provider and allocated once at session creation.
+      if (command.workspace_size != 0 && command.kernel.value() != 27 &&
+          command.kernel.value() != 28) {
         return base::Status::unsupported("CUDA baseline has no command workspace contract");
       }
       const base::Status command_status = detail::validate_command(command, plan);

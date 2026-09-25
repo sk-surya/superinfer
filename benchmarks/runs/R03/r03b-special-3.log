@@ -1,0 +1,1 @@
+qwen38 e2e token=248045 greedy=8678 logit=25 checksum=-705028 state_buffers=128 commands=7272 arena_bytes=19191265792 continuation_steps=2 token=1 greedy=198 logit=27.5 token=2 greedy=3710 logit=13.1875

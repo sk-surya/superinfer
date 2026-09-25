@@ -1,0 +1,149 @@
+{
+  "kernel_count": 145440,
+  "kernel_total_ms": 14311.623237000002,
+  "device_span_ms": 14477.287069,
+  "device_idle_ms": 165.663832,
+  "device_idle_pct_of_span": 1.144301630619272,
+  "synchronizations": 120,
+  "memcpy_events": 2249,
+  "memcpy_bytes": 19218373908,
+  "kernel_table": [
+    {
+      "kernel": "nvfp4_linear_rows_vec_f32",
+      "launches": 24060,
+      "total_ms": 9274.46361,
+      "avg_us": 385.4723029925187,
+      "max_us": 1374.573
+    },
+    {
+      "kernel": "cast_bf16_to_f32",
+      "launches": 45240,
+      "total_ms": 2715.950914,
+      "avg_us": 60.034281918656056,
+      "max_us": 409.851
+    },
+    {
+      "kernel": "linear_f32",
+      "launches": 5760,
+      "total_ms": 1106.539725,
+      "avg_us": 192.10759114583334,
+      "max_us": 213.565
+    },
+    {
+      "kernel": "rms_norm_f32_bf16_scale_parallel",
+      "launches": 12540,
+      "total_ms": 314.390622,
+      "avg_us": 25.071022488038277,
+      "max_us": 40.543
+    },
+    {
+      "kernel": "causal_conv_silu_f32",
+      "launches": 2880,
+      "total_ms": 221.06708,
+      "avg_us": 76.75940277777778,
+      "max_us": 78.207
+    },
+    {
+      "kernel": "gated_delta_attention_parallel_f32",
+      "launches": 2880,
+      "total_ms": 195.112871,
+      "avg_us": 67.74752465277778,
+      "max_us": 69.247
+    },
+    {
+      "kernel": "silu_mul_f32",
+      "launches": 6720,
+      "total_ms": 158.114213,
+      "avg_us": 23.52890074404762,
+      "max_us": 32.895
+    },
+    {
+      "kernel": "cast_f32_to_bf16",
+      "launches": 23220,
+      "total_ms": 146.702972,
+      "avg_us": 6.317957450473729,
+      "max_us": 345.243
+    },
+    {
+      "kernel": "split_f32",
+      "launches": 5760,
+      "total_ms": 56.299695,
+      "avg_us": 9.774252604166666,
+      "max_us": 11.008
+    }
+  ],
+  "runtime_api_table": [
+    {
+      "api": "cudaLaunchKernel_v7000",
+      "calls": 145440,
+      "total_ms": 8185.164159,
+      "avg_us": 56.278631456270624
+    },
+    {
+      "api": "cudaDeviceSynchronize_v3020",
+      "calls": 120,
+      "total_ms": 6106.626469,
+      "avg_us": 50888.55390833333
+    },
+    {
+      "api": "cudaMemcpy_v3020",
+      "calls": 2249,
+      "total_ms": 865.864366,
+      "avg_us": 384.999718096932
+    },
+    {
+      "api": "cuKernelGetName",
+      "calls": 145440,
+      "total_ms": 9.051159,
+      "avg_us": 0.062232941419141916
+    },
+    {
+      "api": "cudaFree_v3020",
+      "calls": 1,
+      "total_ms": 5.53015,
+      "avg_us": 5530.15
+    },
+    {
+      "api": "cudaMalloc_v3020",
+      "calls": 1,
+      "total_ms": 1.608258,
+      "avg_us": 1608.258
+    },
+    {
+      "api": "cuLibraryLoadData",
+      "calls": 1,
+      "total_ms": 0.184273,
+      "avg_us": 184.273
+    },
+    {
+      "api": "cudaStreamCreateWithFlags_v5000",
+      "calls": 1,
+      "total_ms": 0.085801,
+      "avg_us": 85.801
+    },
+    {
+      "api": "cudaStreamDestroy_v5050",
+      "calls": 1,
+      "total_ms": 0.01454,
+      "avg_us": 14.54
+    },
+    {
+      "api": "cuLibraryGetKernel",
+      "calls": 16,
+      "total_ms": 0.00373,
+      "avg_us": 0.233125
+    },
+    {
+      "api": "cuModuleGetLoadingMode",
+      "calls": 1,
+      "total_ms": 0.00327,
+      "avg_us": 3.27
+    },
+    {
+      "api": "cudaGetDeviceProperties_v12000",
+      "calls": 2,
+      "total_ms": 0.00284,
+      "avg_us": 1.42
+    }
+  ]
+}

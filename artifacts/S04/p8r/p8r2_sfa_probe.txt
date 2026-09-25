@@ -1,0 +1,8 @@
+=== SFA supplier probe (A single nonzero on lane0; sfa byte0=0x38|(lane&7), sb=0x38) ===
+A slot 0 (nonzero on lane0): D[lane] for lanes0..8: 9 9 9 9 11.25 11.25 11.25 11.25 9
+A slot 1 (nonzero on lane0): D[lane] for lanes0..8: 0 0 0 0 0 0 0 0 0
+A slot 2 (nonzero on lane0): D[lane] for lanes0..8: 9 9 9 9 9 9 9 9 9
+A slot 3 (nonzero on lane0): D[lane] for lanes0..8: 0 0 0 0 0 0 0 0 0
+
+=== current differential ===
+P8R2 differential: max_abs=96.1685 max_mag=88.7988 rel=1.08299

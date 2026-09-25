@@ -1,0 +1,7 @@
+P7    chat-60 wall: 	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:35.60
+NATIVE chat-60 wall: 	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:32.54
+
+layer3 P7     : max_abs=0.00106812 mean_abs=3.55909e-05 exit=0
+layer3 NATIVE : max_abs=3.10462    mean_abs=0.14473    exit=1 (threshold max_abs<=2e-2, mean_abs<=2e-4)
+gdn    P7     : max_abs=0.000312805 mean_abs=3.07891e-06 exit=0
+gdn    NATIVE : max_abs=6.044       mean_abs=0.0458481   exit=1

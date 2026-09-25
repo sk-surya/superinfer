@@ -52,6 +52,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--sinf-artifact", type=Path, default=None,
+                        help="when set, load packed weights from this .sinf artifact "
+                             "instead of the safetensors directory (same-artifact oracle)")
     parser.add_argument("--device", default="cpu",
                         help="Transformers oracle device, for example cpu or cuda")
     parser.add_argument("--case", action="append", dest="case_ids")
@@ -138,7 +141,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                linear_state_case: str | None = None,
                linear_state_step: int | None = None,
                linear_state_layer: int | None = None,
-               device_name: str = "cpu") -> dict[str, Any]:
+               device_name: str = "cpu",
+               sinf_artifact: Path | None = None) -> dict[str, Any]:
     import torch
     import torch.nn.functional as F
     from safetensors import safe_open
@@ -153,6 +157,40 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
     device = torch.device(device_name)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("requested CUDA reference device but CUDA is unavailable")
+
+    sinf_weights = None
+    weights_provenance: dict[str, Any] = {"source": "safetensors", "model_dir": str(model_dir)}
+    if sinf_artifact is not None:
+        from tools.qwen38_sinf_weights import SinfWeights
+
+        sinf_weights = SinfWeights(sinf_artifact)
+        weights_provenance = {
+            "source": "sinf",
+            "artifact": str(sinf_artifact),
+            "tensor_count": sinf_weights.tensor_count(),
+        }
+
+    def load_fp32(name: str) -> torch.Tensor:
+        if sinf_weights is not None:
+            return sinf_weights.load(name).to(device=device, dtype=torch.float32)
+        with safe_open(str(model_dir / index[name]), framework="pt", device="cpu") as handle:
+            return handle.get_tensor(name).to(device=device, dtype=torch.float32)
+
+    def load_raw(name: str) -> torch.Tensor:
+        if sinf_weights is not None:
+            return sinf_weights.load(name)
+        with safe_open(str(model_dir / index[name]), framework="pt", device="cpu") as handle:
+            return handle.get_tensor(name)
+
+    def load_nvfp4(name: str) -> torch.Tensor:
+        if sinf_weights is not None:
+            return sinf_weights.nvfp4(name).to(device)
+        return reference._nvfp4(model_dir, index, name).to(device)
+
+    def has_scale_sidecar(name: str) -> bool:
+        if sinf_weights is not None:
+            return (name + "_scale") in sinf_weights
+        return (name + "_scale") in index
 
     class DeploymentStorageDynamicCache(DynamicCache):
         """DynamicCache with explicit deployment storage contracts for diagnostic qualification."""
@@ -176,21 +214,19 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
     def initialize_decode_state(cache: DynamicCache, layer: Any, layer_index: int) -> None:
         """Make a fresh cache follow the deployment's one-token decode path from position zero."""
         cache_layer = cache.layers[layer_index]
-        if not hasattr(layer, "linear_attn") or cache_layer.has_previous_state:
+        if not hasattr(layer, "linear_attn") or cache_layer.has_previous_state.get(0, False):
             return
         linear = layer.linear_attn
-        cache_layer.conv_states = torch.zeros(
+        cache_layer.conv_states[0] = torch.zeros(
             (1, linear.conv_dim, linear.conv_kernel_size), device=device, dtype=torch.float32
         )
-        cache_layer.recurrent_states = torch.zeros(
+        cache_layer.recurrent_states[0] = torch.zeros(
             (1, linear.num_v_heads, linear.head_k_dim, linear.head_v_dim),
             device=device, dtype=torch.float32,
         )
-        cache_layer.dtype = torch.float32
-        cache_layer.device = device
-        cache_layer.is_conv_states_initialized = True
-        cache_layer.is_recurrent_states_initialized = True
-        cache_layer.has_previous_state = True
+        cache_layer.is_conv_states_initialized[0] = True
+        cache_layer.is_recurrent_states_initialized[0] = True
+        cache_layer.has_previous_state[0] = True
 
     def round_linear_cache_state(cache: DynamicCache, layer_idx: int) -> None:
         """Model BF16 causal-convolution state after both prefill and single-token decode."""
@@ -198,8 +234,9 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             return
         layer_cache = cache.layers[layer_idx]
         conv_states = getattr(layer_cache, "conv_states", None)
-        if conv_states is not None:
-            layer_cache.conv_states = conv_states.to(torch.bfloat16).to(torch.float32)
+        current = conv_states.get(0) if isinstance(conv_states, dict) else conv_states
+        if current is not None:
+            layer_cache.conv_states[0] = current.to(torch.bfloat16).to(torch.float32)
 
     root = json.loads((model_dir / "config.json").read_text())
     config = Qwen3_5TextConfig.from_dict(root["text_config"])
@@ -219,10 +256,7 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
     # Load embeddings once. The expensive checkpoint work that dominates the old oracle is the
     # repeated layer construction/dequantization; that work is shared below, while each case
     # still owns an independent cache and hidden-state list.
-    with safe_open(str(model_dir / index["model.language_model.embed_tokens.weight"]),
-                   framework="pt", device="cpu") as handle:
-        embedding = handle.get_tensor("model.language_model.embed_tokens.weight").to(
-            device=device, dtype=torch.float32)
+    embedding = load_fp32("model.language_model.embed_tokens.weight")
     states = [
         {
             "id": case_id,
@@ -256,16 +290,17 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             state_dict: dict[str, torch.Tensor] = {}
             for key in layer.state_dict():
                 source_name = prefix + key
-                if source_name not in index:
+                if sinf_weights is not None and source_name not in sinf_weights:
                     raise KeyError(source_name)
-                if source_name.endswith(".weight") and source_name + "_scale" in index:
-                    state_dict[key] = reference._nvfp4(model_dir, index, source_name).to(device)
+                if sinf_weights is None and source_name not in index:
+                    raise KeyError(source_name)
+                if source_name.endswith(".weight") and has_scale_sidecar(source_name):
+                    state_dict[key] = load_nvfp4(source_name)
                 else:
-                    with safe_open(str(model_dir / index[source_name]), framework="pt", device="cpu") as handle:
-                        value = handle.get_tensor(source_name)
-                        if round_bf16_weights and value.dtype == torch.bfloat16:
-                            value = value.to(torch.bfloat16).to(torch.float32)
-                        state_dict[key] = value.to(device=device, dtype=torch.float32)
+                    value = load_raw(source_name)
+                    if round_bf16_weights and value.dtype == torch.bfloat16:
+                        value = value.to(torch.bfloat16).to(torch.float32)
+                    state_dict[key] = value.to(device=device, dtype=torch.float32)
             layer.load_state_dict(state_dict, strict=True)
             del state_dict
 
@@ -305,16 +340,26 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                 # The deployment causal-convolution kernel stores the current qkv row as BF16
                 # and immediately consumes that stored row. Match that operation ordering in
                 # the independent oracle; rounding only the cache after the layer call is too
-                # late for the current token.
-                original_conv_update = layer.linear_attn.causal_conv1d_update
+                # late for the current token. transformers 5.16 exposes the fused update as
+                # a module-level function, so wrap it for the duration of this layer.
+                import transformers.models.qwen3_5.modeling_qwen3_5 as modeling_module
 
-                def deployment_conv_update(mixed_qkv: Any, *args: Any,
-                                            _original_conv_update: Any = original_conv_update,
-                                            **kwargs: Any) -> Any:
-                    rounded = mixed_qkv.to(torch.bfloat16).to(torch.float32)
-                    return _original_conv_update(rounded, *args, **kwargs)
+                if not hasattr(modeling_module, "causal_conv1d_update"):
+                    raise RuntimeError("transformers GDN fused update entry point is missing")
+                if getattr(modeling_module.causal_conv1d_update, "__superinfer_wrapped__", False):
+                    original_conv_update = modeling_module.causal_conv1d_update.__superinfer_original__
+                else:
+                    original_conv_update = modeling_module.causal_conv1d_update
 
-                layer.linear_attn.causal_conv1d_update = deployment_conv_update
+                    def deployment_conv_update(mixed_qkv: Any, *args: Any,
+                                               _original_conv_update: Any = original_conv_update,
+                                               **kwargs: Any) -> Any:
+                        rounded = mixed_qkv.to(torch.bfloat16).to(torch.float32)
+                        return _original_conv_update(rounded, *args, **kwargs)
+
+                    deployment_conv_update.__superinfer_wrapped__ = True  # type: ignore[attr-defined]
+                    deployment_conv_update.__superinfer_original__ = original_conv_update  # type: ignore[attr-defined]
+                    modeling_module.causal_conv1d_update = deployment_conv_update
 
                 for state in states:
                     initialize_decode_state(state["cache"], layer, layer_index)
@@ -335,10 +380,12 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                 for position, hidden in enumerate(state["hidden"]):
                     position_ids = torch.full((1, 1), position, dtype=torch.long, device=device)
                     position_embeddings = rotary(hidden, position_ids)
-                    causal_mask = torch.zeros((1, 1, 1, position + 1), dtype=torch.float32,
-                                              device=device)
+                    # Decode replay has no padding tokens. transformers 5.16 applies a
+                    # 2D-or-None padding mask directly to hidden states, so the legacy
+                    # 4D causal zeros mask must not be passed; None is the identical
+                    # no-mask semantic for single-token cached decode.
                     output = layer(hidden, position_embeddings=position_embeddings,
-                                   attention_mask=causal_mask, position_ids=position_ids,
+                                   attention_mask=None, position_ids=position_ids,
                                    past_key_values=state["cache"])
                     updated = output[0] if isinstance(output, tuple) else output
                     round_linear_cache_state(state["cache"], layer_index)
@@ -381,6 +428,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
                         layer_cache = state["cache"].layers[layer_index]
                         recurrent = getattr(layer_cache, "recurrent_states", None)
                         convolution = getattr(layer_cache, "conv_states", None)
+                        recurrent = recurrent.get(0) if isinstance(recurrent, dict) else recurrent
+                        convolution = convolution.get(0) if isinstance(convolution, dict) else convolution
                         if recurrent is None or convolution is None:
                             raise ValueError(
                                 f"layer {layer_index} has no complete linear state at step {position}")
@@ -404,11 +453,11 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             del layer
             gc.collect()
 
-        final_norm = reference._tensor(model_dir, index, "model.language_model.norm.weight")
+        final_norm = load_raw("model.language_model.norm.weight")
         if round_bf16_weights and final_norm.dtype == torch.bfloat16:
             final_norm = final_norm.to(torch.bfloat16).to(torch.float32)
         final_norm = final_norm.to(device=device, dtype=torch.float32)
-        lm_head = reference._nvfp4(model_dir, index, "lm_head.weight").to(device)
+        lm_head = load_nvfp4("lm_head.weight")
         hidden_payload = bytearray()
         hidden_capture_metadata: dict[str, Any] | None = None
         for state in states:
@@ -523,6 +572,8 @@ def _run_cases(model_dir: Path, cases: Sequence[dict[str, Any]], output_dir: Pat
             "round_linear_state": round_linear_state,
             "device": str(device),
             "evaluation_order": "one checkpoint layer across all selected cases, then next layer",
+            "attention_mask_contract": "none (single-token decode replay has no padding tokens)",
+            "weights": weights_provenance,
         }
         diagnostics_path = output.with_suffix(".json")
         diagnostics_path.write_text(json.dumps(diagnostics, indent=2) + "\n")
@@ -583,7 +634,8 @@ def main() -> int:
                         args.attention_boundary_step, args.kv_output, args.kv_case,
                         args.kv_step, args.kv_layer, args.linear_state_output,
                         args.linear_state_case, args.linear_state_step,
-                        args.linear_state_layer, args.device)
+                        args.linear_state_layer, args.device,
+                        sinf_artifact=args.sinf_artifact)
     (args.output_dir / "corpus-reference.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({"status": report["status"], "cases": [case["id"] for case in report["cases"]]}, indent=2))
     return 0

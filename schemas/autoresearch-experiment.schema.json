@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://superinfer.dev/schemas/autoresearch-experiment.schema.json",
+  "title": "SuperInfer Autoresearch Experiment Manifest",
+  "description": "Declarative manifest for tools/autoresearch_runner.py. Declares the incumbent and candidate, the ordered stages of the proven manual optimization loop, the numeric metrics parsed from stage stdout, and the thresholds that gate promotion. The runner never invents a tolerance; absent thresholds yield a non-promote verdict.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "incumbent_commit",
+    "candidate_commit",
+    "benchmark_manifest",
+    "local_differential_command",
+    "correctness_command",
+    "profile_command",
+    "benchmark_command",
+    "reproduction_command",
+    "metrics",
+    "thresholds",
+    "evidence_dir"
+  ],
+  "properties": {
+    "id": {
+      "description": "Stable experiment identifier, recorded in the result and report.",
+      "type": "string",
+      "minLength": 1
+    },
+    "incumbent_commit": {
+      "description": "Git commit of the retained incumbent. Recorded for provenance; the runner never resets it.",
+      "type": "string",
+      "minLength": 1
+    },
+    "candidate_commit": {
+      "description": "Git commit of the candidate under test.",
+      "type": "string",
+      "minLength": 1
+    },
+    "candidate_worktree": {
+      "description": "Optional isolated worktree or directory for the candidate. Resolved relative to the manifest directory when not absolute. When absent the incumbent directory is used.",
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "benchmark_manifest": {
+      "description": "Path to the fixed benchmark manifest that defines the measured workload. Recorded and hashed for provenance.",
+      "type": "string",
+      "minLength": 1
+    },
+    "local_differential_command": {
+      "description": "Required command (argv, no shell) that runs the local incumbent-vs-candidate differential. Must exit 0 or the candidate is rejected and later stages do not run.",
+      "$ref": "#/$defs/command"
+    },
+    "correctness_command": {
+      "description": "Required for GPU experiments: the model/layer correctness command (for example the D-021 acceptance runner). Null for CPU-only experiments. Must exit 0 when present.",
+      "oneOf": [
+        {"$ref": "#/$defs/command"},
+        {"type": "null"}
+      ]
+    },
+    "profile_command": {
+      "description": "Optional profile command (for example an Nsight Systems capture). Stdout is captured to the evidence directory. Must exit 0 when present.",
+      "oneOf": [
+        {"$ref": "#/$defs/command"},
+        {"type": "null"}
+      ]
+    },
+    "benchmark_command": {
+      "description": "Required fixed benchmark command, executed once in the incumbent context (before) and once in the candidate context (after). Must exit 0 in both contexts.",
+      "$ref": "#/$defs/command"
+    },
+    "reproduction_command": {
+      "description": "Required fresh-session command that runs the benchmark a second time in the candidate context. Must exit 0; context metrics are checked for a reproduced direction.",
+      "$ref": "#/$defs/command"
+    },
+    "metrics": {
+      "description": "Numeric metrics parsed from stage stdout by single-capture-group regexes. Absence of a declared metric is missing evidence, never zero.",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["regex", "direction"],
+        "properties": {
+          "regex": {
+            "description": "Regular expression with exactly one capture group; the group is parsed as a float.",
+            "type": "string",
+            "minLength": 1
+          },
+          "direction": {
+            "description": "Whether a larger parsed value is better or worse. Used to compute the before/after gain for context metrics.",
+            "enum": ["higher_is_better", "lower_is_better"]
+          },
+          "stage": {
+            "description": "Which stage produces this metric. 'local' is the local differential; 'benchmark' is parsed for both the benchmark and reproduction runs; 'reproduction' is parsed only for the reproduction run. Defaults to 'benchmark'.",
+            "enum": ["local", "benchmark", "reproduction"],
+            "default": "benchmark"
+          },
+          "compare": {
+            "description": "'direct' means the parsed value already is the gated gain (for example a reported local speedup). 'context' means the raw value is compared between the incumbent and candidate benchmark runs. Defaults to 'direct' for local metrics and 'context' otherwise.",
+            "enum": ["direct", "context"]
+          }
+        }
+      }
+    },
+    "thresholds": {
+      "description": "Promotion thresholds. At least one is meaningful only when non-null; if both are null the verdict is inconclusive and can never be promote.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min_local_speedup", "min_e2e_gain"],
+      "properties": {
+        "min_local_speedup": {
+          "description": "Minimum gain required from every local-stage metric. Null disables the gate.",
+          "type": ["number", "null"]
+        },
+        "min_e2e_gain": {
+          "description": "Minimum gain required from every benchmark-stage metric. Null disables the gate.",
+          "type": ["number", "null"]
+        }
+      }
+    },
+    "evidence_dir": {
+      "description": "Directory (resolved relative to the manifest directory when not absolute) where result.json, REPORT.md, and captured stage output are written.",
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "description": "Optional human-readable note. Ignored by the runner.",
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "command": {
+      "description": "An executable and its arguments. Executed directly without a shell.",
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    }
+  }
+}

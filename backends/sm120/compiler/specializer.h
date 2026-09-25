@@ -474,11 +474,18 @@ class Specializer final {
       }
       operand_dtypes.push_back(dtype_name(lowered.tensors()[operand.value()].storage_dtype));
     }
+    std::uint64_t activation_elements = 0;
+    std::uint64_t output_elements = 0;
+    if (!requirement.operands.empty()) {
+      activation_elements = element_count(lowered.tensors()[requirement.operands.front().value()]);
+      output_elements = element_count(lowered.tensors()[requirement.operands.back().value()]);
+    }
     const auto candidates = provider.enumerate(
         {requirement.operation, requirement.target_capability, storage_dtype,
          requirement.operands.size(), std::move(operand_dtypes),
          requirement.attributes.attention_output_gate !=
-             ir::semantic::AttentionOutputGate::none});
+             ir::semantic::AttentionOutputGate::none,
+         activation_elements, output_elements});
     if (!candidates.has_value()) return candidates.error();
     if (candidates.value().empty()) {
       return base::Status::unsupported("kernel provider returned no candidates");
@@ -498,8 +505,16 @@ class Specializer final {
     return SelectedKernel{selected->id, selected->workspace_bytes};
   }
 
-  static std::string_view dtype_name(ir::semantic::DType dtype) noexcept {
-    switch (dtype) {
+  /** Total element count of a lowered tensor's physical shape (projection extent facts). */
+  static std::uint64_t element_count(const ir::lowered::Tensor& tensor) noexcept {
+    std::uint64_t elements = 1;
+    for (const std::uint64_t dimension : tensor.physical_shape) {
+      elements *= dimension;
+    }
+    return elements;
+  }
+
+  static std::string_view dtype_name(ir::semantic::DType dtype) noexcept {    switch (dtype) {
       case ir::semantic::DType::f32: return "f32";
       case ir::semantic::DType::f16: return "f16";
       case ir::semantic::DType::bf16: return "bf16";

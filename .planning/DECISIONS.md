@@ -114,11 +114,11 @@
 
 ## D-017 — Flash-Next is the second flagship architecture proof
 
-**Status:** Accepted
+**Status:** Superseded in ordering by D-020
 **Supersedes:** D-007 ordering only
 **Decision:** Finish S03 Qwen3.8 correctness unchanged, then execute S03F Flash-Next bring-up before S04 kernel optimization. S03F-01 contract/capacity research may run in parallel with the tail of S03; S03F-02 through S03F-06 runtime work is blocked until S03 closes.
 **Why:** Flash-Next directly exercises extension points SuperInfer was designed to support—heterogeneous storage, stateful execution, MoE, sparse attention and multi-device specialization—while Qwen provides the simpler debugging ladder needed to validate the compiler/runtime first.
-**Consequence:** Gemma moves from “second model” to later model-family portability audit. Vision and MTP remain excluded from initial Flash-Next correctness.
+**Consequence:** Gemma moves from “second model” to later model-family portability audit. Vision and MTP remain excluded from initial Flash-Next correctness. D-020 later changes only when Flash-Next implementation occurs relative to the first Qwen performance proof; its architecture scope remains valid.
 
 ## D-018 — Initial Flash-Next placement uses contiguous layers and first-class PLE residency
 
@@ -133,3 +133,55 @@
 **Decision:** S03F-01 cannot select a full-expert residency or quantization recipe because the exact Flash-Next artifact and pinned reference revision are unavailable. Until that evidence is supplied, `full_expert_residency_feasible` is unknown, no quality-preserving quantization claim is made, and S03F implementation may not add expert staging, caching, or paging.
 **Why:** The checked-in evidence contains no exact Flash-Next safetensors headers, packed byte ranges, or reference evaluation. Parameter-count estimates and near-name model artifacts do not satisfy FN-001/FN-002.
 **Consequence:** S03F-02 remains engineering-blocked after the existing S03 dependency; the next research action is to provide the exact source/reference inputs and regenerate the canonical ledgers.
+
+## D-020 — Qwen performance proof precedes Flash-Next implementation
+
+**Status:** Accepted
+**Supersedes:** D-017 ordering only
+**Decision:** After S03 correctness closes, execute an early Qwen results-first lane consisting of a reproducible baseline/profile, one profiler-selected bottleneck optimization, and a reproduced end-to-end speedup before S03F-02+ Flash-Next runtime implementation. S03F-01 research evidence remains retained. Flash-Next remains a required V0 architecture proof unless separately superseded.
+**Why:** The current highest-value uncertainty is whether SuperInfer's hardware-specialization thesis produces measurable end-to-end Qwen improvement. Flash-Next is a broad six-plan architecture expansion and is independently quality-constrained by D-019; placing it before the first Qwen performance feedback loop delays the most decision-useful evidence.
+**Consequence:** D-006 correctness remains binding. D-019 remains binding. The first internal Qwen baseline may be captured immediately after S03 closes; broad S04 work and full autoresearch remain deferred until the results-first loop reproduces one positive end-to-end Qwen improvement.
+
+## D-021 — Quantized Qwen model-level acceptance contract (S03-R evidence-derived)
+
+**Status:** Accepted
+**Supersedes:** Historical full-model source-reference `max_abs <= 0.5` gate only (S03-03 era)
+**Decision:** Qwen3.8-27B NVFP4 deployment acceptance uses a margin-qualified greedy contract plus bounded distributional criteria over the results-first corpus. No local kernel/layer differential gate is changed by this decision.
+**Why:** S03-R same-artifact evidence shows SuperInfer faithfully executes exact packed `.sinf` semantics on all non-degenerate corpus inputs: 240/240 strict rows greedy-exact, all 5 observed winner swaps are reference runner-up swaps on margins below BF16 output discrimination (margin/ulp 0.02–0.46), the ported oracle is bit-identical to the historical 5.12.1 oracle, and the oracle is self-stable across placements (0 flips, <=0.05) wherever SuperInfer agrees with it. The historical `max_abs <= 0.5` source-reference gate measured deployment arithmetic conditioning (BF16 storage, NVFP4 execution, repetition sensitivity), not a SuperInfer implementation defect: per-layer traces show smooth relative error growth with no disproportional operation, and the highly repetitive long-103 prompt drives BOTH implementations into activation explosion (~400 hidden magnitude) where even oracle-vs-oracle degrades 200x (0.008 -> 1.5).
+**Consequence / contract:**
+- Strict rows (reference winner margin > `ulp_BF16(|reference winner|)`): greedy tokens must match exactly.
+- Near-tie rows (margin <= that magnitude-dependent floor): the candidate winner must lie in the reference top-5, top-5 overlap >= 0.8, and row Jensen-Shannon divergence <= 0.001.
+- All in-scope rows: Jensen-Shannon divergence <= 0.005, RMSE <= 2.0, mean absolute error <= 0.9. Bounds follow the stated recipe: 2x the in-scope p99 rounded up to one significant digit, verified to clear the in-scope maximum (JS p99 0.0012/max 0.0022; RMSE p99 0.53/max 0.77; mean p99 0.43/max 0.61 over 252 in-scope rows).
+- Model-level max-absolute logit error is diagnostic, not blocking; any in-scope row above 5.0 triggers documented review under the escalation rule.
+- Degenerate-repetition inputs (exemplified by long-103 rows 37+: bilateral activation explosion, oracle self-degradation, 5 non-tie flips, JS up to 0.29) are recorded outliers with escalation evidence, not silent passes; repetition robustness is S04+ research, tracked explicitly.
+- Requires: two fresh-session SuperInfer captures that are byte-identical (repeatability), full corpus comparison under this contract, and unchanged passage of every operation/kernel/layer differential.
+- Escalation: any strict-row flip, tie-set/distributional breach, or repeatability failure reopens the Outcome-B lane (first-divergence localization) instead of adjusting a threshold.
+
+**Status:** Accepted
+**Supersedes:** D-017 ordering only
+**Decision:** After S03 correctness closes, execute an early Qwen results-first lane consisting of a reproducible baseline/profile, one profiler-selected bottleneck optimization, and a reproduced end-to-end speedup before S03F-02+ Flash-Next runtime implementation. S03F-01 research evidence remains retained. Flash-Next remains a required V0 architecture proof unless separately superseded.
+**Why:** The current highest-value uncertainty is whether SuperInfer's hardware-specialization thesis produces measurable end-to-end Qwen improvement. Flash-Next is a broad six-plan architecture expansion and is independently quality-constrained by D-019; placing it before the first Qwen performance feedback loop delays the most decision-useful evidence.
+**Consequence:** D-006 correctness remains binding. D-019 remains binding. The first internal Qwen baseline may be captured immediately after S03 closes; broad S04 work and full autoresearch remain deferred until the results-first loop reproduces one positive end-to-end Qwen improvement.
+
+## D-022 — Reuse-first RTX-5090 performance reset
+
+**Status:** Accepted  
+**Supersedes:** D-020 ordering after the completed R01/R02/R03 proof; the active incremental S04/P9 sequencing; any state note that defers linear/control-projection work pending P9.  
+**Preserves:** D-001 through D-006 architectural/correctness invariants, D-009 hot-path rules, D-010 evidence discipline, D-014 autonomy, D-019 Flash-Next evidence boundary, and D-021 model-level acceptance.
+
+**Decision:** SuperInfer enters an implementation-first performance reset. The immediate data plane may reuse, port, or wrap mature open-source RTX-5090 primitives rather than hand-reimplement them. E0a replaces the complete projection subsystem behind the existing command topology, allowing deterministic offline/load-time prepared layouts through StoragePolicy. E0b then adds proven role-level fusions through lowering/Physical Plan changes. External benchmarking is bounded to establishing a same-machine frontier and selecting donor implementations; it is not a separate research program.
+
+**Primary comparator:** SparkInfer, because SuperInfer's pinned Qwen derivative is from the same gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090 lineage. NInfer is the primary C++/CUDA decode-kernel donor/reference. FlashInfer and CUTLASS/CuTe are preferred dependencies/references where stronger or simpler.
+
+**P9 status:** Frozen. The P9 two-level implementation at 2983d28 does not perform its documented global_amax/(448*6) transformation before consuming s_global, so its negative quality conclusion is not accepted as a canonical NVFP4 verdict. Native SM120 NVFP4 MMA capability remains proven and retained for later multi-token/pre-fill/verification work. P9 repair is not on the current critical path because T=1 decode first uses a mature weight-only streaming path.
+
+**Performance gates:**
+- E0a target: projection subsystem <=20 ms/token and full model <=55 ms/token.
+- E0b survival gate: <=40 ms/token; target 30–35 ms/token.
+- E0b at 40–49 ms/token permits one bounded 12-hour diagnosis/fix window.
+- E0b >=50 ms/token, or >40 after the bounded diagnosis, triggers a runtime/data-plane pivot instead of another incremental kernel ladder.
+- One-week target: <=15 ms/token / >=67 tok/s ordinary decode and >=70% of the fastest qualified same-machine SparkInfer result. Stretch: <=12.5 ms/token / >=80 tok/s.
+
+**Experiment budget:** Default action is integration. Microbenchmarks are allowed only to select or verify implementations intended for immediate integration. No isolated kernel experiment earns continued work without end-to-end impact or a decisive rejection.
+
+**Consequence:** P7 remains fallback/oracle during replacement, but it is no longer an optimization target. Work on P9, persistent whole-model kernels, TP2, speculation, Flash-Next, generic serving/scheduling, and new IR abstractions is frozen until the ordinary-decode week gate. After parity, the specialization-compiler thesis must pass a retargeting-cost falsification test rather than being assumed.

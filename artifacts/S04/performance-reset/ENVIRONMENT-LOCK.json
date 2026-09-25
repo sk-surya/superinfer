@@ -1,0 +1,66 @@
+{
+  "schema": "superinfer.environment-lock.v1",
+  "captured_utc": "2026-09-25T19:18:23Z",
+  "git_sha": "7e49073e0ec6857a5b58b0385045cde9d71f0bcb",
+  "git_status_short": [
+    "?? artifacts/S03/qwen38-layer0-operation-localization-v17.json"
+  ],
+  "kernel_release": "Linux ai90 7.0.0-31-generic #31-Ubuntu SMP PREEMPT_DYNAMIC Sat Aug 1 04:26:38 UTC 2026 x86_64",
+  "gpu": {
+    "target_index": 1,
+    "target_uuid_prefix": "c8c0066b",
+    "target_name": "NVIDIA GeForce RTX 5090 sm_120",
+    "gpu0_owner": "user ninfer-serve pid 368383 (untouched)",
+    "gpu0_uuid_prefix": "a5407696"
+  },
+  "driver": {
+    "loaded_kernel_module_version": "595.84",
+    "on_disk_module_version": "595.91.07",
+    "userspace_nvml_version": "595.91",
+    "nvidia_smi_status": "FAILED: 'Failed to initialize NVML: Driver/library version mismatch'",
+    "installed_packages": [
+      "nvidia-driver-595-open 595.91.07-0ubuntu0.26.04.1",
+      "libnvidia-compute-595 595.91.07-0ubuntu0.26.04.1"
+    ],
+    "coherent": false
+  },
+  "cuda": {
+    "runtime_version_via_api": 13010,
+    "runtime_version_string": "13.1",
+    "driver_api_version_via_api": 13020,
+    "driver_api_version_string": "13.2",
+    "nvcc_version": "Cuda compilation tools, release 13.1, V13.1.115",
+    "nvcc_resolved_path": "/usr/local/cuda-13.1/bin/nvcc",
+    "cuda_visible_devices_observed": 2,
+    "cuda_initialization": "succeeds (cudaGetDeviceCount=2, both RTX 5090)",
+    "libcudart_path": "/usr/local/cuda-13.1/lib64/libcudart.so.13",
+    "libcudart_sha256": "9955aa41ec390676be408b6c615f3d94f067f64cb756ef3cdf2b656ac2a81900",
+    "libcuda_path": "/usr/lib/x86_64-linux-gnu/libcuda.so.1",
+    "libcuda_sha256": "4839b5da17cd8f58a8e9c57e97c9b61f3c41be7934479f48afc983416b2492c3",
+    "libstdcxx_path": "/usr/lib/x86_64-linux-gnu/libstdc++.so.6",
+    "libm_path": "/usr/lib/x86_64-linux-gnu/libm.so.6"
+  },
+  "provenance": {
+    "executable": "build/cuda-sm120a/tests/superinfer_sm120_qwen38_e2e_artifact",
+    "executable_sha256": "5ec2c66d0fef59b20275e068b4c2f386b4de377478bf3bf2ddc83774c8a6bf54",
+    "executable_built_utc": "2026-09-25 17:49:46 +0000",
+    "artifact": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+    "physical_plan_sha256": null,
+    "physical_plan_sha256_reason": "not computed: requires a GPU run, which the environment gate forbids",
+    "native_sm120a_cubin_present": true,
+    "native_cubin_files": [
+      "superinfer_sm120_qwen38_e2e_artifact.1.sm_120a.cubin"
+    ],
+    "ptx_present": true,
+    "ptx_files": [
+      "superinfer_sm120_qwen38_e2e_artifact.1.sm_120a.ptx"
+    ]
+  },
+  "gate": {
+    "verdict": "BLOCKED_ENVIRONMENT_REPAIR_REQUIRED",
+    "exact_mismatch": "loaded kernel module 595.84 vs on-disk module 595.91.07 vs userspace NVML 595.91; nvidia-smi cannot initialize NVML",
+    "required_repair": "reboot (or reload the nvidia kernel modules), then re-capture this lock file and confirm nvidia-smi works before any GPU qualification",
+    "note": "the running module predates the 595.91.07 driver package upgrade; no GPU correctness evidence may be produced until the stack is coherent"
+  }
+}

@@ -1,6 +1,8 @@
 #include <frontends/qwen38/frontend.hpp>
 #include <sm120/compiler/specializer.h>
 #include <sm120/kernels/baseline/provider.h>
+#include <sm120/kernels/experimental/e0a_gemv_provider.h>
+#include <sm120/kernels/experimental/native_nvfp4_provider.h>
 #include <sm120/runtime/cuda_plan_executor.cuh>
 #include <superinfer/artifact/plan_binding.hpp>
 #include <superinfer/artifact/sinf.hpp>
@@ -226,7 +228,20 @@ int main() {
     std::cerr << "lowering failed: " << lowered.error().message() << '\n';
     return 1;
   }
-  superinfer::sm120::BaselineProvider provider;
+  superinfer::sm120::BaselineProvider baseline_provider;
+  // Experiment-level A/B selector: read once here at specialization time, never in the token hot
+  // path. Unset -> the retained P7 baseline provider compiles the plan exactly as before.
+  const bool native_nvfp4 = std::getenv("SUPERINFER_QWEN38_NATIVE_NVFP4") != nullptr;
+  const bool native_two_level =
+      std::getenv("SUPERINFER_QWEN38_NATIVE_NVFP4_TWO_LEVEL") != nullptr;
+  superinfer::sm120::NativeNvfp4Provider native_provider{baseline_provider, native_two_level};
+  superinfer::sm120::E0aGemmProvider e0a_provider{baseline_provider};
+  const bool e0a_gemv = std::getenv("SUPERINFER_QWEN38_E0A_GEMV") != nullptr;
+  const superinfer::kernels::KernelProvider& provider =
+      e0a_gemv ? static_cast<const superinfer::kernels::KernelProvider&>(e0a_provider)
+               : (native_nvfp4
+                      ? static_cast<const superinfer::kernels::KernelProvider&>(native_provider)
+                      : static_cast<const superinfer::kernels::KernelProvider&>(baseline_provider));
   const bool disable_activation_reuse =
       std::getenv("SUPERINFER_QWEN38_DISABLE_ACTIVATION_REUSE") != nullptr;
   const auto specialized = superinfer::sm120::Specializer{}.compile(
@@ -1011,5 +1026,6 @@ int main() {
   if (capacity_rejected) std::cout << " capacity_rejection=pass";
   if (boundary_executed) std::cout << " boundary_position=4095 boundary_allocations=stable";
   std::cout << '\n';
+  superinfer::sm120::cuda_runtime::detail::rms_audit_report();
   return 0;
 }

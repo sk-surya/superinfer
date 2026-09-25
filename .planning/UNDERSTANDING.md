@@ -193,6 +193,22 @@ bounded-capacity deployment configuration.
 The packet covers the two persistent state representations, the exact Qwen head topology, and the
 stateful execution trace. It does not certify full-model generation or promote any performance claim.
 
+## Gate C.1 — Dense NVFP4 tensor cores
+
+| Field | Value |
+|---|---|
+| Level | L2 Gate C.1 (S04 mechanism transition: CUDA cores vs Tensor Cores for dense NVFP4) |
+| Implementation status | Reached |
+| User status | Packet presented; not passed on the user's behalf |
+| Evidence | Synthetic differential exact (`rel=0`); Arm A N=1 ~12.3 ms/token (~81 tok/s), Arm B N=8 ~1.7 ms/token (~591 tok/s) on the real shapes; activation-quantisation rel-L2 ~10% |
+| Packet | [understanding-packets/GATE-C1.md](understanding-packets/GATE-C1.md) |
+
+Reached by resolving the P8 false negative: the earlier classification-D rested on a malformed PTX
+probe (missing the trailing `.ue4m3` scale type), not on a hardware limitation. Quality (D-021) is the
+deciding open item between provisional classification A and B.
+
+
+
 ## Autonomous execution override
 
 On 2026-08-26 the user explicitly directed implementation to continue without waiting for

@@ -1,0 +1,52 @@
+{
+  "schema": "superinfer.benchmark.manifest.v1",
+  "id": "qwen38-results-first-v1",
+  "phase": "R01",
+  "model": {
+    "artifact": "build/evidence/qwen38-payload-v1-final-a.sinf",
+    "artifact_sha256": "e25022c8592875449968b9d0b1f56e6800971e0ba04d8a43eec980fe60dc65d5",
+    "correctness_contract": "D-021",
+    "correctness_evidence": "artifacts/S03R/"
+  },
+  "device": {
+    "kind": "1x RTX 5090 via CUDA_VISIBLE_DEVICES remap to device 0",
+    "exclusion": "no other workload may share the measured GPU during accepted samples"
+  },
+  "workloads": [
+    {
+      "id": "decode-60out",
+      "mode": "decode_replay",
+      "prompt_tokens": 60,
+      "output_tokens": 60,
+      "concurrency": 1,
+      "metrics": ["tpot_ms", "tokens_per_s", "token_latencies_ms"]
+    },
+    {
+      "id": "decode-103out",
+      "mode": "decode_replay",
+      "prompt_tokens": 103,
+      "output_tokens": 103,
+      "concurrency": 1,
+      "metrics": ["tpot_ms", "tokens_per_s", "token_latencies_ms"]
+    },
+    {
+      "id": "prefill-103",
+      "mode": "prefill",
+      "prompt_tokens": 103,
+      "concurrency": 1,
+      "metrics": ["ttft_ms", "prefill_tokens_per_s"]
+    }
+  ],
+  "policy": {
+    "warmup": "to stable clocks/latency, recorded per run",
+    "samples": "retain every raw sample; report median and p5/p95",
+    "separation": "cold load/materialization timed separately from prefill and steady-state decode",
+    "correctness_gate": "R01 samples are ineligible if S03/D-021 acceptance is not green on the measured build"
+  },
+  "profiling": {
+    "systems": "Nsight Systems first for critical-path structure",
+    "compute": "Nsight Compute only on leading actionable candidate regions",
+    "required_table": ["region", "decode_critical_path_pct", "launch_count", "resource_symptom", "e2e_ceiling_if_eliminated", "actionable_now"]
+  },
+  "status": "draft - R01 executes after S03 closes"
+}

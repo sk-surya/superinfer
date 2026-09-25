@@ -1,0 +1,18 @@
+P9-1 layer-3 / GDN (thresholds unchanged)
+gate,P7,one-level(k27),two-level(k28)
+layer3_max_abs,0.00106812,3.10462,1.65071
+layer3_mean_abs,3.55909e-05,0.14473,0.138151
+gdn_max_abs,0.000312805,6.044,5.89273
+gdn_mean_abs,3.07891e-06,0.0458481,0.0515523
+
+P9-3 layer-3 hybrid, one role native at a time (two-level)
+role,max_abs,mean_abs
+none,0.00106812,3.55909e-05
+k,0.00106812,3.55909e-05
+gate,0.0982971,0.0181044
+up,0.095384,0.0184475
+down,0.202816,0.0434517
+q,0.41349,0.0389822
+v,0.458445,0.0962891
+o,0.887596,0.0756109
+all,1.65071,0.138151

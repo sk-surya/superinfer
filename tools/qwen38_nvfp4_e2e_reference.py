@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import sys
 from pathlib import Path
 
 import torch
@@ -59,6 +60,43 @@ def _load_layer(model_dir: Path, index: dict[str, str], config: Qwen3_5TextConfi
     return layer
 
 
+def _load_layer_from_fns(load_tensor, load_nvfp4, config: Qwen3_5TextConfig,
+                         layer_index: int) -> Qwen3_5DecoderLayer:
+    """Load one decoder layer through caller-supplied weight closures.
+
+    The closures select the weight source (safetensors directory or `.sinf`
+    artifact); downstream layer math is unchanged.
+    """
+    import torch as _torch
+
+    layer = Qwen3_5DecoderLayer(config, layer_index).eval()
+    prefix = f"model.language_model.layers.{layer_index}."
+    probe = load_tensor(prefix + "input_layernorm.weight")
+    _ = probe
+    state: dict[str, _torch.Tensor] = {}
+    for key in layer.state_dict():
+        source_name = prefix + key
+        try:
+            packed_probe = load_tensor(source_name)
+            is_packed = (
+                packed_probe.dtype == _torch.uint8
+                and len(packed_probe.shape) == 2
+                and source_name.endswith(".weight")
+            )
+        except (KeyError, ValueError):
+            is_packed = False
+        if is_packed:
+            try:
+                load_tensor(source_name + "_scale")
+                state[key] = load_nvfp4(source_name)
+                continue
+            except (KeyError, ValueError):
+                pass
+        state[key] = load_tensor(source_name).to(_torch.float32)
+    layer.load_state_dict(state, strict=True)
+    return layer
+
+
 def _rms_norm(hidden: torch.Tensor, weight: torch.Tensor, epsilon: float) -> torch.Tensor:
     return hidden * torch.rsqrt(hidden.square().mean(dim=-1, keepdim=True) + epsilon) * (weight + 1.0)
 
@@ -67,6 +105,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--sinf-artifact", type=Path, default=None,
+                        help="when set, load packed weights from this .sinf artifact "
+                             "instead of the safetensors directory (same-artifact oracle)")
     parser.add_argument("--hidden-output", type=Path,
                         help="optional FP32 output path for the final normalized hidden row")
     parser.add_argument("--boundaries-output", type=Path,
@@ -87,11 +128,36 @@ def main() -> int:
     index = json.loads((args.model_dir / "model.safetensors.index.json").read_text())["weight_map"]
     torch.set_num_threads(max(1, min(32, torch.get_num_threads())))
 
+    sinf_weights = None
+    weight_provenance: dict[str, object] = {"source": "safetensors", "model_dir": str(args.model_dir)}
+    if args.sinf_artifact is not None:
+        sys_path = str(Path(__file__).resolve().parents[1])
+        if sys_path not in sys.path:
+            sys.path.insert(0, sys_path)
+        from tools.qwen38_sinf_weights import SinfWeights
+
+        sinf_weights = SinfWeights(args.sinf_artifact)
+        weight_provenance = {
+            "source": "sinf",
+            "artifact": str(args.sinf_artifact),
+            "tensor_count": sinf_weights.tensor_count(),
+        }
+
+    def load_tensor(name: str) -> torch.Tensor:
+        if sinf_weights is not None:
+            return sinf_weights.load(name)
+        return _tensor(args.model_dir, index, name)
+
+    def load_nvfp4(name: str) -> torch.Tensor:
+        if sinf_weights is not None:
+            return sinf_weights.nvfp4(name)
+        return _nvfp4(args.model_dir, index, name)
+
     tokens = ([int(value) for value in args.tokens.split(",") if value.strip()]
               if args.tokens is not None else [args.token])
     if not tokens:
         raise ValueError("--tokens must contain at least one token ID")
-    embedding = _tensor(args.model_dir, index, "model.language_model.embed_tokens.weight").to(torch.float32)
+    embedding = load_tensor("model.language_model.embed_tokens.weight").to(torch.float32)
     del embedding
     cache = DynamicCache(config=config)
     rotary = Qwen3_5TextRotaryEmbedding(config)
@@ -102,16 +168,19 @@ def main() -> int:
     with torch.inference_mode():
         boundaries = []
         for position, token in enumerate(tokens):
-            hidden = _tensor(args.model_dir, index,
-                             "model.language_model.embed_tokens.weight")[token].to(torch.float32)
+            hidden = load_tensor("model.language_model.embed_tokens.weight")[token].to(torch.float32)
             hidden = hidden.reshape(1, 1, -1)
             position_ids = torch.full((1, 1), position, dtype=torch.long)
             position_embeddings = rotary(hidden, position_ids)
-            causal_mask = torch.zeros((1, 1, 1, position + 1), dtype=torch.float32)
+            # No padding tokens in decode replay; transformers 5.16 applies a
+            # 2D-or-None padding mask directly to hidden states, so pass None.
             for layer_index in range(config.num_hidden_layers):
-                layer = _load_layer(args.model_dir, index, config, layer_index)
+                if sinf_weights is not None:
+                    layer = _load_layer_from_fns(load_tensor, load_nvfp4, config, layer_index)
+                else:
+                    layer = _load_layer(args.model_dir, index, config, layer_index)
                 output = layer(hidden, position_embeddings=position_embeddings,
-                               attention_mask=causal_mask, position_ids=position_ids,
+                               attention_mask=None, position_ids=position_ids,
                                past_key_values=cache)
                 hidden = output[0] if isinstance(output, tuple) else output
                 if args.round_activations:
@@ -121,12 +190,12 @@ def main() -> int:
                 del layer
                 gc.collect()
 
-            final_norm = _tensor(args.model_dir, index, "model.language_model.norm.weight").to(torch.float32)
+            final_norm = load_tensor("model.language_model.norm.weight").to(torch.float32)
             hidden = _rms_norm(hidden, final_norm, config.rms_norm_eps)
             del final_norm
             if args.hidden_output is not None:
                 hidden_rows.append(hidden.reshape(-1).contiguous().numpy().astype("float32"))
-            lm_head = _nvfp4(args.model_dir, index, "lm_head.weight")
+            lm_head = load_nvfp4("lm_head.weight")
             logits = F.linear(hidden.reshape(1, -1), lm_head)
             logit_rows.append(logits.reshape(-1).contiguous().numpy().astype("float32"))
             greedy_sequence.append(int(torch.argmax(logits, dim=-1).item()))
@@ -143,6 +212,7 @@ def main() -> int:
     args.output.write_bytes(values)
     diagnostics = {
         "model": "Qwen3.8-27B-NVFP4-RTX5090",
+        "weights": weight_provenance,
         "reference": "transformers Qwen3_5DecoderLayer streamed one layer at a time",
         "transformers_version": __import__("transformers").__version__,
         "tokens": tokens,

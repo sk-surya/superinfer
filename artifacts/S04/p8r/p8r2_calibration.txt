@@ -1,0 +1,37 @@
+E2M1 code -> D (A stimulus, B uniform code3, scale 0x38):
+hardware E2M1 code -> value (D = code * val(3), B uniform code 3):
+  code  0 -> D=0
+  code  1 -> D=3
+  code  2 -> D=6
+  code  3 -> D=9
+  code  4 -> D=12
+  code  5 -> D=18
+  code  6 -> D=24
+  code  7 -> D=36
+  code  8 -> D=0
+  code  9 -> D=-3
+  code 10 -> D=-6
+  code 11 -> D=-9
+  code 12 -> D=-12
+  code 13 -> D=-18
+  code 14 -> D=-24
+  code 15 -> D=-36
+
+scale byte -> D (A=B=code3):
+scale byte -> D (A=B=code3=1.5, so D = 2.25*sA*sB):
+  0x30 -> 9
+  0x31 -> 11.3906
+  0x32 -> 14.0625
+  0x33 -> 17.0156
+  0x34 -> 20.25
+  0x35 -> 23.7656
+  0x36 -> 27.5625
+  0x37 -> 31.6406
+  0x38 -> 36
+  0x39 -> 45.5625
+  0x3A -> 56.25
+  0x3B -> 68.0625
+  0x3C -> 81
+  0x3D -> 95.0625
+  0x3E -> 110.25
+  0x3F -> 126.562

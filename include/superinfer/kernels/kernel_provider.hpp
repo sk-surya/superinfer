@@ -17,13 +17,16 @@ struct KernelQuery final {
   KernelQuery(std::string_view operation_value, std::uint32_t target_capability_value,
               std::string_view storage_dtype_value = "f32", std::size_t operand_count_value = 0,
               std::vector<std::string_view> operand_dtypes_value = {},
-              bool attention_output_gate_value = false)
+              bool attention_output_gate_value = false, std::uint64_t activation_elements_value = 0,
+              std::uint64_t output_elements_value = 0)
       : operation(operation_value),
         target_capability(target_capability_value),
         storage_dtype(storage_dtype_value),
         operand_count(operand_count_value),
         operand_dtypes(std::move(operand_dtypes_value)),
-        attention_output_gate(attention_output_gate_value) {}
+        attention_output_gate(attention_output_gate_value),
+        activation_elements(activation_elements_value),
+        output_elements(output_elements_value) {}
 
   std::string_view operation;
   std::uint32_t target_capability;
@@ -35,6 +38,10 @@ struct KernelQuery final {
   std::vector<std::string_view> operand_dtypes;
   /** Minimal semantic compatibility bit; richer operation attributes remain an S04 concern. */
   bool attention_output_gate{false};
+  /** Reduction extent (K) of a projection, in elements, when the compiler knows it. */
+  std::uint64_t activation_elements{0};
+  /** Output extent (rows) of a projection, in elements, when the compiler knows it. */
+  std::uint64_t output_elements{0};
 };
 
 /** Describes a candidate's correctness and resource envelope before selection. */

@@ -1838,7 +1838,8 @@ inline cudaError_t launch_gated_delta_attention(
   // S04 reset phase 4: register-tiled recurrent transition for the model's 128-wide key geometry.
   // Same arithmetic and order as the incumbent; the state column stops round-tripping through
   // global memory on every pass.
-  if (dimensions.head_dimension == 128U && dimensions.value_heads != 0 &&
+  static const bool reference_gdn = std::getenv("SUPERINFER_QWEN38_REFERENCE_GDN") != nullptr;
+  if (!reference_gdn && dimensions.head_dimension == 128U && dimensions.value_heads != 0 &&
       dimensions.key_value_heads != 0 && block != 0 && dimensions.value_heads <= 65535U) {
     gated_delta_attention_register_f32<128U>
         <<<static_cast<std::uint32_t>(dimensions.value_heads),
@@ -2043,8 +2044,11 @@ inline cudaError_t launch_causal_conv_silu(const ir::physical::CommandDescriptor
   const auto& state = plan.buffers()[command.buffers[2].value()];
   const auto& output = plan.buffers()[command.buffers[3].value()];
   // S04 performance reset E0b: was <<<1,256>>>; the kernel is a grid-stride loop over channels.
-  const std::uint32_t conv_blocks = static_cast<std::uint32_t>(
-      (static_cast<std::size_t>(dimensions.channels) + 255U) / 256U);
+  static const bool reference_conv = std::getenv("SUPERINFER_QWEN38_REFERENCE_CONV") != nullptr;
+  const std::uint32_t conv_blocks =
+      reference_conv ? 1U
+                     : static_cast<std::uint32_t>(
+                           (static_cast<std::size_t>(dimensions.channels) + 255U) / 256U);
   causal_conv_silu_f32<<<(conv_blocks == 0U ? 1U : conv_blocks), 256, 0, stream>>>(
       static_cast<const float*>(buffer_pointer(plan, arena, input.id)),
       static_cast<const float*>(buffer_pointer(plan, arena, weights.id)),
@@ -2068,14 +2072,21 @@ inline cudaError_t launch_attention_bf16_cache(
   // the incumbent single-block kernel when the KV window cannot be cached.
   const std::size_t cached_bytes = 2U * dimensions.positions * sizeof(float);
   const std::size_t query_heads = dimensions.query_heads;
-  int maximum_shared_bytes = 0;
-  cudaDeviceGetAttribute(&maximum_shared_bytes, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0);
-  if (query_heads != 0 && cached_bytes <= static_cast<std::size_t>(maximum_shared_bytes)) {
-    if (cudaFuncSetAttribute(grouped_attention_bf16_cache_cached,
-                             cudaFuncAttributeMaxDynamicSharedMemorySize,
-                             static_cast<int>(cached_bytes)) != cudaSuccess) {
-      return cudaGetLastError();
+  // The cached window needs 2*positions*4 bytes of dynamic shared plus ~1 KiB of static shared.
+  // Qwen's declared capacity (4096 positions -> 32768 B) is comfortably inside the ordinary 48 KiB
+  // per-block limit, so this path must NOT opt in to oversized shared memory. Mutating a function's
+  // MaxDynamicSharedMemorySize on every launch is both unnecessary and a host-side call issued while
+  // earlier launches of the same function may still be in flight.
+  static const std::size_t kDefaultDynamicSharedLimit = [] {
+    int per_block = 0;
+    if (cudaDeviceGetAttribute(&per_block, cudaDevAttrMaxSharedMemoryPerBlock, 0) != cudaSuccess) {
+      return static_cast<std::size_t>(48U * 1024U);
     }
+    return static_cast<std::size_t>(per_block);
+  }();
+  static const bool reference_attention =
+      std::getenv("SUPERINFER_QWEN38_REFERENCE_ATTENTION") != nullptr;
+  if (!reference_attention && query_heads != 0 && cached_bytes <= kDefaultDynamicSharedLimit) {
     grouped_attention_bf16_cache_cached<<<static_cast<std::uint32_t>(query_heads), 256,
                                           cached_bytes, stream>>>(
         static_cast<const float*>(buffer_pointer(plan, arena, query.id)),
